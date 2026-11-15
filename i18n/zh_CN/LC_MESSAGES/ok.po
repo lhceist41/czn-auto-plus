@@ -336,6 +336,9 @@ msgstr "购买怪物卡"
 msgid "Meditate on Pinned Cards"
 msgstr "冥想重构钉选卡牌"
 
+msgid "Take Monster Card Rewards"
+msgstr "领取怪物卡奖励"
+
 msgid "Extract Spare Equipment"
 msgstr "提炼多余装备"
 

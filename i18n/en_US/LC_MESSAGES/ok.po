@@ -356,6 +356,9 @@ msgstr "Buy Monster Cards"
 msgid "Meditate on Pinned Cards"
 msgstr "Meditate on Pinned Cards"
 
+msgid "Take Monster Card Rewards"
+msgstr "Take Monster Card Rewards"
+
 msgid "Extract Spare Equipment"
 msgstr "Extract Spare Equipment"
 

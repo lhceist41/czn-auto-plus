@@ -262,9 +262,20 @@ class TestBuyMonsterCards(unittest.TestCase):
         self.assertIn(overrides.MEDITATE, task.config_description)
         self.assertFalse({"需要冥想的卡牌", "多少信用点以上冥想"} & set(keys))
 
+    def test_the_reward_and_extract_switches_sit_under_the_list_they_narrow(self):
+        # Anchored on upstream's keys, so a rename there would drop a switch from both modes without an error.
+        for key, default, anchor in overrides.ADDED_UNDER:
+            with self.subTest(key=key):
+                self.assertIn(anchor, mode_setting_keys())
+                task = reshaped({anchor: [], "只打第一层": True})
+                keys = list(task.default_config)
+                self.assertEqual(key, keys[keys.index(anchor) + 1])
+                self.assertIs(default, task.default_config[key])
+                self.assertIn(key, task.config_description)
+
     def test_the_label_reaches_the_ui_through_the_catalog(self):
         catalog = polib.pofile(str(REPO_ROOT / "i18n" / "zh_CN" / "LC_MESSAGES" / "ok.po"))
-        for label in (overrides.BUY_MONSTER_CARDS, overrides.MEDITATE):
+        for label in (overrides.BUY_MONSTER_CARDS, overrides.MEDITATE, *(key for key, _, _ in overrides.ADDED_UNDER)):
             with self.subTest(label=label):
                 self.assertIn(label, {entry.msgid for entry in catalog})
 
