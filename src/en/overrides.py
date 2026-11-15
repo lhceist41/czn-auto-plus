@@ -58,7 +58,7 @@ ADDED_UNDER = ((TAKE_MONSTER_REWARDS, True, "卡牌奖励优先级"), (EXTRACT_S
 # Two rules decide whether a setting can become a pick-list. The value must be compared against OCR text - card,
 # equipment and combatant names are, while Route Priority's values are internal labels produced from template
 # feature names (`enemy_in_map` -> `小怪`) and are only translated for display. And the match must be on a whole
-# name: Epiphany Priority, the Persona settings and Farm Starting Card are matched as subsequences of
+# name: Preferred Epiphany Keywords, the Persona settings and Farm Starting Card are matched as subsequences of
 # `name + description`, which is how a user targets an effect rather than a card, so they stay free text.
 LIST_OPTIONS = {
     "移除卡牌列表": CARDS,

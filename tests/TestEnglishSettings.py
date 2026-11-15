@@ -526,7 +526,7 @@ class TestReshape(unittest.TestCase):
         self.assertEqual(overrides.ROUTE_NODES, task.config_type["路线优先级"]["options_available"])
 
     def test_subsequence_settings_stay_free_text(self):
-        """Epiphany Priority matches fragments of a card's name and description, so a fixed list would break it."""
+        """Preferred Epiphany Keywords matches fragments of a card's name and description, so a fixed list would break it."""
         self.assertNotIn("闪光优先级", reshaped().config_type)
 
     def test_long_string_defaults_declare_a_line_edit(self):
