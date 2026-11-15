@@ -304,15 +304,16 @@ def team_after_hit(frame):
 
 
 @lru_cache(maxsize=8)
-def icon_template(path, height):
+def icon_template(path, height, mask=white_mask):
     """Load a status icon cut from a 1080p frame, scaled to a frame's size.
 
     Args:
         path: The icon's image file, such as `INVULNERABLE_IMAGE`.
         height: The frame height in pixels.
+        mask: Reduces the icon to the pixels it is matched on, the near-white ones unless the caller says otherwise.
 
     Returns:
-        The icon's white mask, or None when the image cannot be read.
+        The icon's mask, or None when the image cannot be read.
     """
     image = cv2.imread(str(path))
     if image is None:
@@ -321,7 +322,7 @@ def icon_template(path, height):
     scale = height / TEMPLATE_HEIGHT
     if scale != 1:
         image = cv2.resize(image, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
-    return white_mask(image)
+    return mask(image)
 
 
 def enemy_invulnerable(frame):

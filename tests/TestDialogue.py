@@ -17,17 +17,20 @@ import numpy as np
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from src.en.dialogue import (AFTER_TOGGLE, BETWEEN_TAPS, BUBBLE_AFTER_STUCK, MAX_TAPS, MAX_TEXT_BOXES,  # noqa: E402
-                            MEMORY_REGION, TAP_AREA, TOGGLE_POINT, TOGGLE_REGION, TOGGLE_RETRY, TOGGLED, advance_arrow_showing,
-                            handle_dialogue, narration_line, speech_line, speed_to_raise)
+from src.en.dialogue import (BETWEEN_TAPS, BUBBLE_AFTER_STUCK, MAX_TAPS, MAX_TEXT_BOXES, MEMORY_REGION, TAP_AREA,  # noqa: E402
+                            TOGGLE_RETRY, TOGGLED, advance_arrow_showing, handle_dialogue, narration_line, speech_line)
+from src.en.story import AFTER_HOVER, AFTER_TAP, FAST_FORWARD_RETRY, FAST_FORWARD_TAPPED, handle_auto_chat, handle_fast_forward, handle_skip_story, handle_team_formation, turning_auto_on  # noqa: E402
 from src.en.stuck import CLOCK  # noqa: E402
 
 WIDTH, HEIGHT = 1920, 1080
 
-# The neutral white the button is drawn in while it is off, sampled off the captured frames as OpenCV BGR.
-UNLIT = (168, 168, 168)
 # Where the corner crops in `tests/images/` were cut from, as the pixel at their top left.
 ARROW_CORNER = (1749, 900)
+# Where the Story dialogue bar crops were cut from, and the centres of its Skip and Auto icons, as screen fractions.
+STORY_BAR_CORNER = (1344, 0)
+SKIP_CENTRE = (0.767, 0.053)
+AUTO_CENTRE = (0.830, 0.053)
+FAST_FORWARD_CENTRE = (0.895, 0.053)
 
 # The line the run stalled on, and the two-line screen the mushroom event showed.
 SOLDIER = "The Soldier's eyes are fixed on the group. The Weapon in their hand is trembling."
@@ -56,6 +59,7 @@ class FakeTask:
     """
 
     width, height = WIDTH, HEIGHT
+    name = "StoryMode"
 
     def __init__(self, boxes, frame=None, later=()):
         self.all_texts = boxes
@@ -64,6 +68,8 @@ class FakeTask:
         self.taps = []
         self.moved = None
         self.slept = 0
+        self.notified = None
+        self.disabled = False
 
     def ocr(self):
         return self.later.pop(0) if self.later else []
@@ -81,33 +87,26 @@ class FakeTask:
     def log_info(self, message):
         pass
 
+    def notification(self, message, title=None, tray=False):
+        self.notified = message
 
-def frame_with_button(color):
-    """Build a capture whose auto-advance button is drawn in one colour.
-
-    Args:
-        color: The BGR the button is painted in.
-
-    Returns:
-        A `(height, width, 3)` BGR array.
-    """
-    left, top, right, bottom = TOGGLE_REGION
-    frame = np.zeros((HEIGHT, WIDTH, 3), dtype=np.uint8)
-    frame[int(top * HEIGHT):int(bottom * HEIGHT), int(left * WIDTH):int(right * WIDTH)] = color
-    return frame
+    def disable(self):
+        self.disabled = True
 
 
-def frame_with_crop(name):
-    """Build a capture holding a real crop of the auto-advance button.
+def with_bar(name):
+    """Put a crop of the top bar back into an otherwise black frame.
 
     Args:
-        name: The crop's suffix in `tests/images/fast_forward_*.png`.
+        name: The base name of the crop in `tests/images/`, cut from a 1080p capture at `STORY_BAR_CORNER`.
 
     Returns:
         A `(height, width, 3)` BGR array.
     """
     frame = np.zeros((HEIGHT, WIDTH, 3), dtype=np.uint8)
-    frame[20:100, 1640:1740] = cv2.imread(str(REPO_ROOT / "tests" / "images" / f"fast_forward_{name}.png"))
+    patch = cv2.imread(str(REPO_ROOT / "tests" / "images" / f"{name}.png"))
+    left, top = STORY_BAR_CORNER
+    frame[top:top + patch.shape[0], left:left + patch.shape[1]] = patch
     return frame
 
 
@@ -356,77 +355,120 @@ class TestAdvanceArrow(unittest.TestCase):
 
 
 class TestAutoAdvance(TapsInArea, unittest.TestCase):
-    """Reading the auto-advance button, and reaching for it before tapping the prose."""
+    """Reaching for the top bar's Auto before tapping the prose."""
 
-    def test_the_button_is_only_tapped_when_that_raises_the_speed(self):
-        """A tap at top speed wraps back to off, which a fade frame reading as off did on a live run."""
-        for crop, raises in (("off", True), ("first", True), ("top", False), ("top_fading", False), ("padlock", False), ("locked", False)):
+    def test_auto_is_only_tapped_while_it_is_off(self):
+        """The old ring's reader took the new bar for off even when Auto was lit, and tapped Fast-Forward instead."""
+        for crop, tapped in (("story_bar_off", True), ("story_bar_on", False), (None, False)):
             with self.subTest(crop=crop):
                 task = narration_screen()
-                task.frame = frame_with_crop(crop)
+                task.frame = None if crop is None else with_bar(crop)
                 self.assertTrue(handle_dialogue(task))
-                if raises:
-                    self.assertEqual([TOGGLE_POINT], task.taps)
+                if tapped:
+                    self.assertEqual(1, len(task.taps))
+                    self.assertAlmostEqual(AUTO_CENTRE[0], task.taps[0][0], delta=0.005)
+                    self.assertAlmostEqual(AUTO_CENTRE[1], task.taps[0][1], delta=0.005)
+                    self.assertEqual(AFTER_HOVER + AFTER_TAP, task.slept)
                 else:
                     self.assertTapsInArea(task.taps, 1)
 
-    def test_off_climbs_to_top_speed_without_waiting_out_the_retry(self):
-        """Each tap moves the button on one level, so the wait for a tap that did not take must not hold back the next."""
-        task = narration_screen()
-        for crop in ("off", "first"):
-            task.frame = frame_with_crop(crop)
-            task.taps.clear()
-            handle_dialogue(task)
-            self.assertEqual([TOGGLE_POINT], task.taps, crop)
-
-    def test_a_frame_the_reader_never_got_is_left_alone(self):
-        """No capture means no reading, and a reading that fails must not put a click somewhere unasked."""
-        self.assertIsNone(speed_to_raise(FakeTask([])))
-
-    def test_the_button_gets_the_pointer_before_the_tap(self):
-        """Upstream dwells on every button before clicking it, and this client drops a click that
-        arrives without one."""
-        task = narration_screen()
-        task.frame = frame_with_button(UNLIT)
-        handle_dialogue(task)
-        self.assertEqual(TOGGLE_POINT, task.moved)
-        self.assertEqual(2 * AFTER_TOGGLE, task.slept)
-
-    def test_a_button_that_will_not_turn_on_gives_way_to_tapping_the_line(self):
+    def test_auto_that_will_not_turn_on_gives_way_to_tapping_the_line_until_the_retry_wait_has_passed(self):
         """A live run tapped a button that never lit for over a minute and never advanced the line."""
         task = narration_screen()
-        task.frame = frame_with_button(UNLIT)
+        task.frame = with_bar("story_bar_off")
         handle_dialogue(task)
         task.taps.clear()
         self.assertTrue(handle_dialogue(task))
         self.assertTapsInArea(task.taps, 1)
-
-    def test_the_button_is_tried_again_once_the_retry_wait_has_passed(self):
-        task = narration_screen()
-        task.frame = frame_with_button(UNLIT)
-        handle_dialogue(task)
         task.taps.clear()
-        tapped_at, speed = getattr(task, TOGGLED)
-        setattr(task, TOGGLED, (tapped_at - TOGGLE_RETRY, speed))
+        # Tapping the line reads the screen again, and the fake reads blank once its passes run out.
+        task.all_texts = narration_screen().all_texts
+        setattr(task, TOGGLED, getattr(task, TOGGLED) - TOGGLE_RETRY)
         handle_dialogue(task)
-        self.assertEqual([TOGGLE_POINT], task.taps)
+        self.assertEqual(1, len(task.taps))
+        self.assertAlmostEqual(AUTO_CENTRE[0], task.taps[0][0], delta=0.005)
 
-    def test_a_memory_cutscene_is_tapped_through_without_reaching_for_the_button(self):
+    def test_a_memory_cutscene_is_tapped_through_without_reaching_for_auto(self):
         """The 11:31 memory cutscene is drawn in grey and ignores the button, so tapping it only wasted the frame."""
         task = narration_screen()
-        task.frame = frame_with_button(UNLIT)
+        task.frame = with_bar("story_bar_off")
         left, top, right, bottom = MEMORY_REGION
         task.frame[int(top * HEIGHT):int(bottom * HEIGHT), int(left * WIDTH):int(right * WIDTH)] = (131, 131, 131)
         self.assertTrue(handle_dialogue(task))
-        self.assertNotIn(TOGGLE_POINT, task.taps)
         self.assertTapsInArea(task.taps, 1)
 
-    def test_the_button_is_never_tapped_off_a_narration_screen(self):
-        """The corner is only read once the screen has been recognised, so nothing else can be reached for."""
+    def test_auto_is_never_tapped_off_a_narration_screen(self):
+        """The bar is only read once the screen has been recognised, so nothing else can be reached for."""
         task = option_screen()
-        task.frame = frame_with_button(UNLIT)
+        task.frame = with_bar("story_bar_off")
         self.assertFalse(handle_dialogue(task))
         self.assertEqual([], task.taps)
+
+
+class TestStoryBar(unittest.TestCase):
+
+    def test_skip_is_pressed_and_auto_only_turned_on(self):
+        """Story pressed nothing once the bar was redrawn, and a lit Auto tapped again would switch itself back off.
+
+        The tinted and dark crops are scenes a run played through without skipping, where Skip scored 0.85 and 0.80.
+        """
+        cases = (
+            ("story_bar_off", handle_skip_story, SKIP_CENTRE),
+            ("story_bar_on", handle_skip_story, SKIP_CENTRE),
+            ("story_bar_tinted", handle_skip_story, SKIP_CENTRE),
+            ("story_bar_dark", handle_skip_story, SKIP_CENTRE),
+            ("story_bar_off", handle_auto_chat, AUTO_CENTRE),
+            ("story_bar_on", handle_auto_chat, None),
+            (None, handle_skip_story, None),
+            (None, handle_auto_chat, None),
+        )
+        for crop, handler, centre in cases:
+            with self.subTest(crop=crop, handler=handler.__name__):
+                task = FakeTask([], None if crop is None else with_bar(crop))
+                self.assertEqual(centre is not None, handler(task))
+                self.assertEqual(0 if centre is None else 1, len(task.taps))
+                for x, y in task.taps:
+                    self.assertAlmostEqual(centre[0], x, delta=0.005)
+                    self.assertAlmostEqual(centre[1], y, delta=0.005)
+
+    def test_a_battle_only_has_auto_turned_on_when_it_is_off(self):
+        # Upstream reads Auto off a pixel the new bar leaves black, so no battle had Auto turned on.
+        for crop, on_battle, taps in (("story_bar_off", True, [AUTO_CENTRE]), ("story_bar_on", True, []), ("story_bar_off", False, [])):
+            with self.subTest(crop=crop, on_battle=on_battle):
+                task = FakeTask([], with_bar(crop))
+                self.assertEqual(on_battle, turning_auto_on(lambda _: on_battle)(task))
+                self.assertEqual(len(taps), len(task.taps))
+                for (x, y), (centre_x, centre_y) in zip(task.taps, taps):
+                    self.assertAlmostEqual(centre_x, x, delta=0.005)
+                    self.assertAlmostEqual(centre_y, y, delta=0.005)
+
+    def test_story_stops_on_a_team_formation_screen_with_an_empty_slot(self):
+        # Upstream pressed Enter on a team of one forever. The boxes sit where the live screen read them.
+        title = FakeBox("主战员配置", 0.154, 0.044, 0.08)
+        levels = [FakeBox("等级", x, 0.605, 0.02) for x in (0.056, 0.271, 0.486)]
+        for filled, stops in ((1, True), (2, True), (3, False)):
+            with self.subTest(filled=filled):
+                task = FakeTask([title, *levels[:filled]])
+                self.assertEqual(stops, handle_team_formation(task))
+                self.assertEqual(stops, task.disabled)
+                self.assertEqual(stops, task.notified is not None)
+        self.assertFalse(handle_team_formation(FakeTask(levels[:1])))
+
+    def test_fast_forward_is_turned_on_once_and_then_left_alone_for_the_retry_wait(self):
+        # The dark crop has it lit already, and a second tap on a lit button would switch it back off.
+        for crop, taps in (("story_bar_off", [FAST_FORWARD_CENTRE]), ("story_bar_tinted", [FAST_FORWARD_CENTRE]), ("story_bar_dark", []), (None, [])):
+            with self.subTest(crop=crop):
+                task = FakeTask([], None if crop is None else with_bar(crop))
+                self.assertEqual(bool(taps), handle_fast_forward(task))
+                self.assertEqual(len(taps), len(task.taps))
+                for (x, y), (centre_x, centre_y) in zip(task.taps, taps):
+                    self.assertAlmostEqual(centre_x, x, delta=0.005)
+                    self.assertAlmostEqual(centre_y, y, delta=0.005)
+        task = FakeTask([], with_bar("story_bar_off"))
+        handle_fast_forward(task)
+        self.assertFalse(handle_fast_forward(task))
+        setattr(task, FAST_FORWARD_TAPPED, getattr(task, FAST_FORWARD_TAPPED) - FAST_FORWARD_RETRY)
+        self.assertTrue(handle_fast_forward(task))
 
 
 if __name__ == "__main__":
