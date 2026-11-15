@@ -53,6 +53,10 @@ NO_COMBATANT = "(none)"
 # Season 4's Desire faction, added the same way and for the same reason: it postdates the settings upstream
 # ships. Desire cards only exist in Chaos, so it is anchored on `FARMED_COMBATANT` rather than a list Sortie shares.
 DESIRE_FACTION = "Desire Faction"
+# Extract a piece for Credits instead of handing it to a teammate. Here rather than in `src/en/equipment.py`, which imports this module.
+EXTRACT_SPARE = "Extract Spare Equipment"
+# Fork switches added right under the upstream list they narrow, as `(key, default, anchor)`. Both modes declare both anchors.
+ADDED_UNDER = ((EXTRACT_SPARE, False, "装备3号位优先级"),)
 # List settings the user picks from, keyed by config name -> the roster it draws on.
 # Two rules decide whether a setting can become a pick-list. The value must be compared against OCR text - card,
 # equipment and combatant names are, while Route Priority's values are internal labels produced from template
@@ -146,6 +150,7 @@ DESCRIPTIONS = {
     PAID_THRESHOLD: "Pay Credits to reroll the Dellang Shop once its free refreshes are used up, but only while holding more than this many. -1 never pays, and 0 pays whenever the price is affordable.",
     SHOP_SETTING: "Visit the Dellang Shop when a Safe Zone offers one. It pays to remove a card first, up to five a run, then buys from your Card Reward Priority and Equipment Slot lists.",
     BUY_MONSTER_CARDS: "Let the Dellang Shop buy Monster Cards. Turn it off to keep the Credits for card removals and equipment.",
+    EXTRACT_SPARE: "Extract equipment for Credits when the farmed combatant (the first combatant in Sortie) turns it down, instead of handing it to a teammate. Mythic pieces and anything in the Equipment Slot lists still go to a teammate.",
     MEDITATE: f"At a Safe Zone with HP at {MIN_HP_PERCENT}% or more and every combatant under {MAX_STRESS:.0%} Stress, pay for Meditation to re-roll the Epiphany on a card your build preset pinned. With no pinned card, or this off, the run rests.",
     "只打第一层": "Leave after the first floor instead of running the whole map.",
 }
@@ -223,6 +228,11 @@ def reshape(task):
         under = [key for key, _ in rows].index(SHOP_SETTING) + 1
         task.default_config.clear()
         task.default_config.update([*rows[:under], *added.items(), *rows[under:]])
+
+    for key, default, anchor in ADDED_UNDER:
+        if anchor in task.default_config:
+            task.default_config[key] = default
+            place_under(task.default_config, key, anchor)
 
     if FARMED_COMBATANT in task.default_config:
         task.default_config[DESIRE_FACTION] = DEFAULT_FACTION

@@ -1,6 +1,6 @@
-"""Decide who gets a piece of equipment, what is worth buying, and refuse to pass over a Mythic one.
+"""Decide who gets a piece of equipment, what is worth buying, what to extract, and refuse to pass over a Mythic one.
 
-Six narrow changes inside `handle_equipment`, the shop and the Tasks page. None copies a handler. The Equipment
+Seven narrow changes inside `handle_equipment`, the shop and the Tasks page. None copies a handler. The Equipment
 screen marks the row with a free slot of the right kind "Recommended", and upstream never reads it - it picks
 by the save-scum target instead, or by whoever is listed first on every Sortie run, since only Chaos carries
 that setting.
@@ -12,6 +12,7 @@ from src.en import rewards
 from src.en.dashboard import TEAM_GEAR
 from src.en.game_quality import EQUIPMENT_RARITY
 from src.en.handlers import StandIn, loaded, register, standing_in, wrap
+from src.en.overrides import EXTRACT_SPARE, FARMED_COMBATANT
 from src.en.quality import EQUIPMENT_INDEX, grade
 from src.en.rewards import EQUIPMENT_KEYS
 from src.en.screen import (COMBATANT_NAME_POINTS, PAGE_CLOSE, centre_of, combatant_names, combatant_slot_points,
@@ -53,6 +54,11 @@ PICK_TAG = "mythic pick"
 SELECTED_TAG = "recommended already selected"
 # The client's own grade for a Mythic piece, in `EQUIPMENT_RARITY`.
 MYTHIC_GRADE = "UNIQUE"
+EXTRACT_TAG = "spare extracted"
+# Upstream's Extract button and the band at the foot of the install screen it looks for it in, from the end of `handle_equipment`.
+# A shop's purchase screen has none, so finding it is what tells the two apart.
+EXTRACT = "提炼"
+EXTRACT_REGION = (0.522, 0.879, 0.999, 0.996)
 
 
 # Where the run keeps what it last saw of every combatant's three equipment slots, as a list per combatant.
@@ -452,6 +458,57 @@ def insisting_on_mythic(handler, utils):
     return wrapped
 
 
+def worth_keeping(task, piece):
+    """Say whether a piece should still go to a teammate rather than be extracted.
+
+    Args:
+        task: The running task, whose OCR pass carries the Mythic caption.
+        piece: The offered piece as `_equipment_info` reports it, whose `rank` is set when a slot list names it.
+
+    Returns:
+        True for a Mythic or a piece the user's Equipment Slot list names.
+    """
+    # The caption scan last, as the only one that walks the OCR pass.
+    return piece.get("rank") is not None or game_grade(piece) == MYTHIC_GRADE or mythic_offer(task)
+
+
+def extracting_spare(handler, utils):
+    """Wrap `handle_equipment` so a piece the save-data combatant turns down is extracted for Credits while `EXTRACT_SPARE` is on.
+
+    Once the combatant is bound, the rows upstream holds are cut down to that one, so it has no teammate to hand the piece to
+    and takes its own Extract branch. Unbound, and on a shop's purchase screen, which has no Extract, every row stays.
+
+    Args:
+        handler: The handler to wrap, upstream's or another patch's.
+        utils: The module holding `_equipment_info` and the save-data binding, the seams this reads through.
+
+    Returns:
+        The wrapped handler.
+    """
+    def wrapped(task):
+        if not utils._get_config_value(task, EXTRACT_SPARE, False):
+            return handler(task)
+        bind = utils._find_target_member_index
+        offered, noted = recording_offers(utils._equipment_info)
+        # Only Chaos carries a save-data combatant. Sortie hands a piece to its first row first.
+        farmed = FARMED_COMBATANT in getattr(task, "default_config", {})
+
+        def binding(task_, rows, *args, **kwargs):
+            index = bind(task_, rows, *args, **kwargs)
+            kept = index if farmed else 0
+            if kept is None or not rows or not offered or worth_keeping(task_, offered[-1]) or text_in_region(task_, EXTRACT, EXTRACT_REGION) is None:
+                return index
+            logger.info(f"{EXTRACT_SPARE} is on, so {offered[-1]['name']} is extracted unless combatant {kept + 1} takes it")
+            # In place: upstream picks the teammates out of this same list once the binding is read.
+            rows[:] = [rows[kept]]
+            return 0 if index is not None else None
+
+        with standing_in(utils, _equipment_info=noted, _find_target_member_index=binding):
+            return handler(task)
+
+    return wrapped
+
+
 def preferring_recommended(handler, utils):
     """Wrap `handle_equipment` so the recommended combatant is the one it gives to.
 
@@ -786,6 +843,8 @@ def install(utils, utils_chaos=None):
     # dropped last - after `remembering_slots` has recorded every combatant the screen actually shows.
     wrap(utils, "handle_equipment", lambda handler: offering_mythic_where_it_fits(handler, utils), PLACEMENT_TAG)
     wrap(utils, "handle_equipment", lambda handler: preferring_recommended(handler, utils), RECOMMENDED_TAG)
+    # Outside the recommended pick, so it records the cut-down binding and never stands the save-data combatant down for a row now gone.
+    wrap(utils, "handle_equipment", lambda handler: extracting_spare(handler, utils), EXTRACT_TAG)
     wrap(utils, "handle_equipment", lambda handler: insisting_on_mythic(handler, utils), MYTHIC_TAG)
     wrap(utils, "handle_equipment", lambda handler: remembering_slots(handler, utils), SLOT_TAG)
     # After it, so their taps are the last stand-ins called and `remembering_slots` still sees a handover that is skipped.

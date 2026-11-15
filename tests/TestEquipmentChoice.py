@@ -33,6 +33,7 @@ from src.en.equipment import (  # noqa: E402
     recommended_row, remembering_slots, slot_tier, team_equipment, worn_line,
 )
 from src.en.dashboard import TEAM_GEAR  # noqa: E402
+from src.en.overrides import EXTRACT_SPARE, FARMED_COMBATANT  # noqa: E402
 
 WIDTH, HEIGHT = 1920, 1080
 # Where each row's level tag sits, and where the banner sits when that row is the recommended one.
@@ -368,6 +369,69 @@ class TestStandingDownForTheRecommended(unittest.TestCase):
         task = self.chaos()
         task.all_texts = task.all_texts + [FakeBox(MYTHIC_CAPTION, CAPTION_X, CAPTION_Y)]
         self.assertEqual((True, "品质普通高于未安装"), self.decide(task))
+
+
+class TestExtractingSpare(unittest.TestCase):
+    """What happens to a piece the save-data combatant turns down, with every equipment patch installed."""
+
+    def run_screen(self, piece, bound=1, installs=False, extract=True, switch=True):
+        """Run a stand-in for upstream's install screen through every patch.
+
+        It follows upstream's own branches: install on the bound row when the piece is better, else hand it to a random
+        teammate, else extract it.
+
+        Args:
+            piece: The offered piece as `_equipment_info` reports it.
+            bound: The row the save-data combatant was found on, or None when it was not found.
+            installs: What upstream's comparison says about installing it on the bound row.
+            extract: Whether the Extract button is on screen, which a shop's purchase screen lacks.
+            switch: The value of `EXTRACT_SPARE`.
+
+        Returns:
+            What upstream did: "installed", "teammate" or "extracted".
+        """
+        def upstream(task_):
+            new = utils._equipment_info(task_, (0.2, 0.3, 0.4, 0.5))
+            rows = utils._find_member_level_tags(task_, (0.6, 0.3, 0.7, 0.8), page="安装装备页面")
+            index = utils._find_target_member_index(task_, rows, (0.6, 0.2, 0.7, 0.9))
+            if index is not None and utils._should_install_equipment(task_, "", "", new)[0]:
+                return "installed"
+            others = [row for at, row in enumerate(rows) if at != index]
+            return "teammate" if others and utils.random.choice(others) else "extracted"
+
+        upstream.__name__ = "handle_equipment"
+        utils = types.SimpleNamespace(
+            handle_equipment=upstream,
+            _get_config_value=lambda task_, key, default: {EXTRACT_SPARE: switch}.get(key, default),
+            _equipment_info=lambda task_, *regions: dict(piece),
+            _find_member_level_tags=lambda task_, *args, **kwargs: level_tags(),
+            _member_equipment_qualities=lambda task_, row: ["", "", ""],
+            _equipment_quality_at=lambda task_, point, allow_empty=False: ("", None),
+            _rgb_is_close=RGB._rgb_is_close,
+            _find_target_member_index=lambda task_, *args, **kwargs: bound,
+            _should_install_equipment=lambda *args: (installs, ""),
+            _move_and_click=lambda task_, x, y: None,
+            random=random,
+        )
+        install(utils)
+        # The banner on a teammate's row, so the save-data combatant would stand down if the cut-down binding were not the one recorded.
+        task = equipment_screen(recommended=0)
+        task.all_texts += [FakeBox("提炼", 1500, 1000)] if extract else []
+        task.default_config = {FARMED_COMBATANT: "Arabella"}
+        return utils.handle_equipment(task)
+
+    def test_only_a_known_spare_piece_is_extracted(self):
+        plain = dict(OFFERED)
+        cases = (("spare", plain, {}, "extracted"),
+                 ("an upgrade for the save-data combatant", plain, {"installs": True}, "installed"),
+                 ("named in a slot list", dict(plain, rank=0), {}, "teammate"),
+                 ("Mythic grade", dict(plain, name="Bangle of Valor"), {}, "teammate"),
+                 ("save-data combatant not found", plain, {"bound": None}, "teammate"),
+                 ("shop purchase screen", plain, {"extract": False}, "teammate"),
+                 ("switch off", plain, {"switch": False}, "teammate"))
+        for label, piece, options, expected in cases:
+            with self.subTest(label):
+                self.assertEqual(expected, self.run_screen(piece, **options))
 
 
 class TestMythicOffer(unittest.TestCase):
@@ -879,6 +943,7 @@ class TestPlacementReadsTheWholeScreen(unittest.TestCase):
 
         utils = types.SimpleNamespace(
             handle_equipment=upstream,
+            _get_config_value=lambda task_, key, default: default,
             _equipment_info=lambda task_, *regions: {"slot": 0},
             _find_member_level_tags=lambda task_, *args, **kwargs: list(colours),
             _member_equipment_qualities=lambda task_, row: [
