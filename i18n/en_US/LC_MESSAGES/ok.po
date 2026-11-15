@@ -334,10 +334,10 @@ msgid "复制卡牌列表"
 msgstr "Cards to Copy"
 
 msgid "闪光卡牌列表"
-msgstr "Epiphany Card List"
+msgstr "Cards to Epiphany"
 
 msgid "闪光优先级"
-msgstr "Epiphany Priority"
+msgstr "Preferred Epiphany Keywords"
 
 msgid "丢弃卡牌优先级"
 msgstr "Discard Priority"
@@ -426,7 +426,7 @@ msgid "生命值大于多少优先闪光(百分比)"
 msgstr "Epiphany First Above This Health (%)"
 
 msgid "主战员优先级"
-msgstr "Combatant Priority"
+msgstr "Combatant Pick Priority"
 
 msgid "出战主战员优先级"
 msgstr "Deployed Combatant Priority"
@@ -468,7 +468,7 @@ msgid "进入商店"
 msgstr "Enter Dellang Shop"
 
 msgid "几轮后停止(0为不停止)"
-msgstr "Stop After This Many Rounds (0 = never)"
+msgstr "Stop After This Many Runs (0 = never)"
 
 msgid "第几层boss前自动暂停"
 msgstr "Auto-Pause Before Boss on Floor"
@@ -489,7 +489,7 @@ msgid "拉黑任务"
 msgstr "Blocked Unidentified Area Options"
 
 msgid "领取奖励"
-msgstr "Claim Rewards"
+msgstr "Claim Chaos Loot"
 
 msgid "领取奖励(只使用验证卡)"
 msgstr "Claim Additional Loot with Loot Certification Cards"
@@ -532,7 +532,7 @@ msgstr "Increases this unit's total attack card damage by 30%."
 
 msgid "默认刷闪光优先级第一张，可刷神闪，第一层没刷出自动逃脱"
 msgstr ""
-"Farms the first entry in Epiphany Priority, so it can chase a Divine Epiphany. "
+"Farms the first entry in Preferred Epiphany Keywords, so it can chase a Divine Epiphany. "
 "Retreats automatically if floor 1 does not produce one."
 
 msgid "填写目标卡牌名称后反复刷新初始卡牌；不能与“刷空档”同时使用。"
