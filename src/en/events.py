@@ -138,6 +138,10 @@ PICKED = "_en_event_picked"
 SUBSTITUTES = "_en_event_substitutes"
 # The handler the substitute dialog is answered ahead of, so its Confirm is not pressed blindly.
 ANCHOR = "handle_center_confirm"
+# Upstream's Equipment title and where `handle_equipment` reads it. It hands its frame on after picking a row, and the rows' LEVEL tags can
+# match an event option template, so the event pass stays off that screen.
+EQUIPMENT_TITLE = "装备"
+EQUIPMENT_TITLE_POINT = (0.499, 0.126)
 
 _patched = False
 
@@ -654,6 +658,9 @@ def ranking(utils):
             return order(drop_unwanted(options, target), priority, utils.is_subsequence, target)
 
         def patched_handle_event_task(task):
+            title = utils.find_box_at_point(task, *EQUIPMENT_TITLE_POINT)
+            if title and title.name == EQUIPMENT_TITLE:
+                return False
             if open_a_chest(task, utils):
                 return True
             original_find_feature = task.find_feature
