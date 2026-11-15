@@ -578,6 +578,18 @@ msgstr "Auto"
 msgid "auto_analysis"
 msgstr "Auto Analysis"
 
+msgid "Game Language"
+msgstr "Game Language"
+
+msgid "The language the game itself shows, so the bot can read its screens. Use English for the Global client."
+msgstr "The language the game itself shows, so the bot can read its screens. Use English for the Global client."
+
+msgid "App Language"
+msgstr "App Language"
+
+msgid "The language of this app's menus and settings."
+msgstr "The language of this app's menus and settings."
+
 msgid "赞赏支持"
 msgstr "Sponsor"
 

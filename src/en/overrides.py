@@ -13,6 +13,7 @@ from src.en.desire import DEFAULT_FACTION, FACTIONS
 from src.en.etched_memory import BONUSES, ENTER_MEMORY_END, ETCHED_MEMORY, KEEP_BONUS, MEMORIES, MEMORY_BONUS
 from src.en.game_data import CARDS, COMBATANTS, EQUIPMENT
 from src.en.framework import import_ui
+from src.en.game_language import GAME_LANGUAGES, MODE_KEY
 from src.en.reobserve import DEFAULT_BLACKLIST, MODIFIER_BLACKLIST, MODIFIERS, REOBSERVE
 from src.en.meditation import MAX_STRESS, MEDITATE, MIN_HP_PERCENT
 from src.en.rest import SHOP_SETTING
@@ -29,9 +30,6 @@ VERSION_KEY = "_en_settings_version"
 # them. `ok.po` translates them for display, and ModifyListDialog stores the canonical value.
 ROUTE_NODES = ["休息", "事件", "小怪", "精英"]
 KEEPS_CHINESE = {"路线优先级"}
-# Game Language stays a real setting for the Chinese clients. English behaves like Simplified Chinese, since
-# `_get_game_text` falls back to the untranslated literal when a language has no map file.
-GAME_LANGUAGES = ["English", "简体中文", "繁体中文"]
 
 # A setting this fork adds rather than re-shapes, so its key is English like the rest of the fork's own
 # code. Play Priority is declared by Sortie alone, which makes it the marker for the only mode that has
@@ -81,7 +79,7 @@ LIST_OPTIONS = {
 }
 # Single-choice settings, keyed by config name -> the roster and the default to pick from it.
 SINGLE_CHOICE = {
-    "游戏语言": (GAME_LANGUAGES, "English"),
+    MODE_KEY: (GAME_LANGUAGES, "English"),
     FARMED_COMBATANT: ([NO_COMBATANT, *COMBATANTS], "Heidemarie"),
 }
 # Upstream defaults the fork overrides. A saved config keeps whatever it already holds. The shop's Credit threshold
@@ -102,7 +100,6 @@ MANAGED_KEYS = set(LIST_OPTIONS) | set(SINGLE_CHOICE) | set(CLEARED_TEXT) | set(
 
 # Help text, in the client's own wording.
 DESCRIPTIONS = {
-    "游戏语言": "Leave this on English for the Global client. The Chinese clients need Simplified or Traditional.",
     "路线优先级": "Which map node to head for first. Safe Zones restore health, Unidentified Areas run an event.",
     "移除卡牌列表": "Cards to delete from the deck whenever a removal is offered.",
     "复制卡牌列表": "Cards to duplicate whenever a copy is offered.",
@@ -197,6 +194,9 @@ def reshape(task):
         if key in task.default_config:
             task.config_type[key] = {"type": "drop_down", "options": options}
             task.default_config[key] = default
+    # Read from the Settings page by `game_language.py`, so the mode card no longer shows it.
+    if MODE_KEY in task.config_type:
+        task.config_type[MODE_KEY]["hidden"] = True
 
     for key in CLEARED_TEXT:
         if key in task.default_config:

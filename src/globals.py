@@ -18,8 +18,8 @@ class Globals(QObject):
         # Everything English-only lives under src/en/ so upstream's files stay untouched.
         from src.ui.SponsorDialog import install_sponsor_dialog
         from src.en import (  # noqa: E501
-            battle, boss, claims, cursor, dashboard, deck, desire, devices, dialogue, dice, draft, enter, epiphany, equipment, etched_memory, events, forms, frame_log, humanize, kept_forms,
-            log_text, meditation, memory_limit, monitors, navigation, obtain, observe, ocr_text, overrides, persona, picker, piles, pins, reobserve, remote, rest, rewards, sections,
+            battle, boss, claims, cursor, dashboard, deck, desire, devices, dialogue, dice, draft, enter, epiphany, equipment, etched_memory, events, forms, frame_log, game_language, humanize,
+            kept_forms, log_text, meditation, memory_limit, monitors, navigation, obtain, observe, ocr_text, overrides, persona, picker, piles, pins, reobserve, remote, rest, rewards, sections,
             reason, shell, shop, shutdown, story, summary, task_list, templates, notify, stuck, upload,
         )
 
@@ -66,6 +66,7 @@ class Globals(QObject):
         observe.apply()
         dialogue.apply()
         overrides.apply()
+        game_language.apply()
         upload.apply()
         notify.apply()
         stuck.apply()
