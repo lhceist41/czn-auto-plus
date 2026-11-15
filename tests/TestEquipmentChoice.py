@@ -30,9 +30,10 @@ from src.en.equipment import (  # noqa: E402
     HANDOVER_X, ROW_PITCH, SLOTS, SPREE_END, SPREE_START, bare_slots, buying_on_spree, has_room_for_mythic,
     insisting_on_mythic, leaving_recommended_selected, MYTHIC_TIER, picking_mythic, UNKNOWN_TIER, install, is_mythic_colour, mythic_offer,
     offering_mythic_where_it_fits, preferring_recommended, reading_the_team_gear, recommended_banner,
-    recommended_row, remembering_slots, slot_tier, team_equipment, worn_line,
+    recommended_row, remembering_slots, slot_tier, team_equipment, waiting_for_the_buttons, worn_line,
 )
 from src.en.dashboard import TEAM_GEAR  # noqa: E402
+from src.en.overrides import EXTRACT_SPARE  # noqa: E402
 
 WIDTH, HEIGHT = 1920, 1080
 # Where each row's level tag sits, and where the banner sits when that row is the recommended one.
@@ -56,6 +57,8 @@ MEASURED_ROWS = (((60, 75, 135), (159, 87, 69), (137, 82, 164)),
                  ((13, 15, 16), (12, 14, 15), (138, 83, 164)))
 # The same screen with the client's refusal toast drawn over the top row, which dims its slots.
 DIMMED_ROW = ((22, 24, 30), (52, 45, 43), (137, 82, 164))
+# Upstream's own quality ranks, so a rename there fails here rather than in a live run.
+UPSTREAM_RANKS = upstream._EQUIPMENT_QUALITY_RANKS
 # The colour compare the helpers reach for. Upstream's own, so its tolerance is the one being tested.
 RGB = types.SimpleNamespace(_rgb_is_close=lambda rgb, target, tolerance=30:
                             rgb is not None and all(abs(a - b) <= tolerance for a, b in zip(rgb, target)))
@@ -370,6 +373,99 @@ class TestStandingDownForTheRecommended(unittest.TestCase):
         self.assertEqual((True, "品质普通高于未安装"), self.decide(task))
 
 
+class TestUpgradesAndExtracting(unittest.TestCase):
+    """Who a piece is offered to once nobody has a free slot for it, and what `EXTRACT_SPARE` leaves, with every equipment patch installed."""
+
+    LISTED = ["Corroded Gauntlets"]
+    MYTHIC = dict(OFFERED, name="Bangle of Valor", quality=TOP_QUALITY)
+
+    def offered_to(self, piece, held=("史诗", "史诗", "史诗"), recommended=None, switch=False):
+        """Run a stand-in for upstream's install screen through every patch, and the shop's list read beside it.
+
+        Args:
+            piece: The offered piece as `_equipment_info` reports it.
+            held: What each row holds in the piece's slot, as upstream's quality bucket, or None for a slot that could not be read.
+            recommended: The row carrying the banner, or None for no banner.
+            switch: The value of `EXTRACT_SPARE`.
+
+        Returns:
+            A `(rows, listed)` pair: the rows upstream is left to choose from, by index, where none means it extracts the piece,
+            and the slot list the shop buys by.
+        """
+        tags = level_tags()
+
+        def screen(task_):
+            utils._equipment_info(task_, (0.2, 0.3, 0.4, 0.5))
+            rows = utils._find_member_level_tags(task_, (0.6, 0.3, 0.7, 0.8), page="安装装备页面")
+            return sorted(tags.index(row) for row in rows)
+
+        def qualities(task_, row):
+            worn = ["", "", ""]
+            worn[piece["slot"]] = held[tags.index(row)]
+            return worn
+
+        screen.__name__ = "handle_equipment"
+        utils = types.SimpleNamespace(
+            handle_equipment=screen,
+            _equipment_priority=lambda task_, slot: list(self.LISTED),
+            _EQUIPMENT_QUALITY_RANKS=UPSTREAM_RANKS,
+            _get_config_value=lambda task_, key, default: {EXTRACT_SPARE: switch}.get(key, default),
+            _equipment_info=lambda task_, *regions: dict(piece),
+            _find_member_level_tags=lambda task_, *args, **kwargs: tags,
+            _member_equipment_qualities=qualities,
+            _equipment_quality_at=lambda task_, point, allow_empty=False: ("", None),
+            _rgb_is_close=RGB._rgb_is_close,
+            _find_target_member_index=lambda task_, *args, **kwargs: None,
+            _should_install_equipment=lambda *args: (False, ""),
+            _move_and_click=lambda task_, x, y: None,
+            find_box_at_point=upstream.find_box_at_point,
+            random=random,
+        )
+        install(utils)
+        task = equipment_screen(recommended)
+        task.default_config = {}
+        return utils.handle_equipment(task), utils._equipment_priority(task, piece["slot"])
+
+    def test_a_piece_only_goes_where_it_upgrades(self):
+        cases = (("a free slot is left to the banner", OFFERED, {"recommended": 1}, [0, 1, 2]),
+                 ("only the combatants it upgrades", OFFERED, {"held": ("普通", "史诗", TOP_QUALITY)}, [0]),
+                 ("an empty slot is filled before an upgrade", OFFERED, {"held": ("普通", "", "史诗")}, [1]),
+                 ("an upgrade for nobody is extracted", OFFERED, {}, []),
+                 ("a slot that could not be read keeps its row", OFFERED, {"held": (None, "史诗", "史诗")}, [0]),
+                 ("a grade that could not be read changes nothing", dict(OFFERED, quality=""), {}, [0, 1, 2]),
+                 ("a listed piece is left to its list", dict(OFFERED, rank=0), {}, [0, 1, 2]),
+                 ("a Mythic is left to the Mythic patches", self.MYTHIC, {"held": (TOP_QUALITY,) * 3}, [0, 1, 2]))
+        for label, piece, options, expected in cases:
+            with self.subTest(label):
+                self.assertEqual((expected, self.LISTED), self.offered_to(piece, **options))
+
+    def test_extracting_offers_nothing_but_a_mythic(self):
+        cases = (("an upgrade", OFFERED, {"held": ("", "", "")}, []),
+                 ("a free slot", OFFERED, {"recommended": 1}, []),
+                 ("a listed piece", dict(OFFERED, rank=0), {}, []),
+                 ("a Mythic", self.MYTHIC, {}, [0, 1, 2]))
+        for label, piece, options, expected in cases:
+            with self.subTest(label):
+                # The shop buys by the slot lists, and never sells a Mythic, so they read empty too.
+                self.assertEqual((expected, []), self.offered_to(piece, switch=True, **options))
+
+
+class TestWaitingForTheButtons(unittest.TestCase):
+    """An install screen caught while it slides in, when the slots are mid-fade and upstream reads them all as its top grade."""
+
+    def test_the_screen_is_only_read_once_its_buttons_are_drawn(self):
+        hint = Box("请选择主战员", 0.921, 0.135)
+        cases = (("still sliding in", [hint], True, []),
+                 ("buttons drawn", [hint, Box("确认", 0.904, 0.922)], "handled", ["read"]),
+                 ("not the install screen", [], "handled", ["read"]))
+        for label, boxes, expected, reads in cases:
+            with self.subTest(label):
+                seen = []
+                handler = waiting_for_the_buttons(lambda task_: seen.append("read") or "handled", upstream)
+                self.assertEqual(expected, handler(FakeTask(boxes)))
+                self.assertEqual(reads, seen)
+
+
 class TestMythicOffer(unittest.TestCase):
     """Spotting a Mythic piece."""
 
@@ -669,6 +765,20 @@ class TestRememberingSlots(unittest.TestCase):
         self.assertEqual("-/Mythic/-, -/Mythic/Mythic, -/Mythic/-",
                          self.worn(task=mythic_screen(), piece=dict(OFFERED, quality=TOP_QUALITY), handed_to=1))
 
+    def test_the_slots_are_read_before_the_handler_taps(self):
+        # Upstream's Extract tap opens a dialog that dims every row, and a Rare read after it came back unknown.
+        utils, _ = self.stubs(piece=OFFERED)
+        handle = self.handler(utils)
+
+        def extracting(task_):
+            handled = handle(task_)
+            utils._equipment_quality_at = lambda task__, point, allow_empty=False: (TOP_QUALITY, DIMMED_ROW[0])
+            return handled
+
+        task = FakeTask([])
+        remembering_slots(extracting, utils)(task)
+        self.assertEqual("-/Mythic/-, -/Mythic/-, -/Mythic/-", getattr(task, TEAM_GEAR, None))
+
     def test_a_screen_that_gave_nothing_leaves_the_row_alone(self):
         # Nine unknowns are worth less than the reading the row already had.
         self.assertIsNone(self.worn(worn=(TOP_QUALITY,) * 3, colours=(DIMMED_ROW[0],) * 3))
@@ -866,19 +976,20 @@ class TestPlacementReadsTheWholeScreen(unittest.TestCase):
         seen = []
         colours = dict(zip(("row0", "row1", "row2"), MEASURED_ROWS))
 
-        def upstream(task_):
+        def screen(task_):
             utils._equipment_info(task_, (0.2, 0.3, 0.4, 0.5))
             seen.append(utils._find_member_level_tags(task_, (0.6, 0.3, 0.7, 0.8), page="安装装备页面"))
             return True
 
-        upstream.__name__ = "handle_equipment"
+        screen.__name__ = "handle_equipment"
 
         def quality_at(task_, point, allow_empty=False):
             rgb = colours[point[0]][point[1]]
             return ("传说" if RGB._rgb_is_close(rgb, (137, 82, 164)) else ""), rgb
 
         utils = types.SimpleNamespace(
-            handle_equipment=upstream,
+            handle_equipment=screen,
+            _get_config_value=lambda task_, key, default: default,
             _equipment_info=lambda task_, *regions: {"slot": 0},
             _find_member_level_tags=lambda task_, *args, **kwargs: list(colours),
             _member_equipment_qualities=lambda task_, row: [
@@ -888,6 +999,7 @@ class TestPlacementReadsTheWholeScreen(unittest.TestCase):
             _find_target_member_index=lambda task_, *args, **kwargs: None,
             _should_install_equipment=lambda *args: (False, ""),
             _move_and_click=lambda task_, x, y: None,
+            find_box_at_point=upstream.find_box_at_point,
             random=random,
         )
         return utils, seen

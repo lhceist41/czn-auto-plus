@@ -543,6 +543,24 @@ class TestUnavailableReward(unittest.TestCase):
         self.assertEqual([center_of(options[2])], tapped)
 
 
+class TestEquipmentScreen(unittest.TestCase):
+    """The Equipment screen is handed on after a row is picked, and its LEVEL tags can read as an event option."""
+
+    def test_the_event_pass_never_taps_the_equipment_screen(self):
+        # The 2026-11-15 Chaos run read row 3's tag as "60LEVELX" and tapped it, so the piece went past the Recommended row.
+        tapped = []
+        task = SimpleNamespace(width=WIDTH, height=HEIGHT, all_texts=[FakeBox("装备", 0.499, 0.126)], config={}, node_status={},
+                               name="自动卡厄思模式", sleep=lambda seconds: None, log_info=lambda message: None, frame=np.zeros((HEIGHT, WIDTH, 3), np.uint8),
+                               box_of_screen=lambda *region: region, find_feature=lambda *args, **kwargs: [], find_one=lambda *args, **kwargs: None,
+                               click=lambda x, y: tapped.append((x, y)))
+        level_tag = {"description": "60LEVELX", "x": 0.703, "y": 0.754, "description_region": (0.6, 0.7, 0.8, 0.8)}
+        with standing_in(utils, recognize_event_options=lambda task, **kwargs: [dict(level_tag)]):
+            handler = ranking(utils)(utils.handle_event_task)
+        with standing_in(utils, _move_and_click=lambda task, x, y: tapped.append((x, y))):
+            self.assertFalse(handler(task))
+        self.assertEqual([], tapped)
+
+
 class TestEnterButton(unittest.TestCase):
     """Upstream presses any "Enter" low on the screen, and the Global client now prints one as a key hint on most buttons."""
 

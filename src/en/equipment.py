@@ -1,6 +1,6 @@
-"""Decide who gets a piece of equipment, what is worth buying, and refuse to pass over a Mythic one.
+"""Decide who gets a piece of equipment, what is worth buying, what to extract, and refuse to pass over a Mythic one.
 
-Six narrow changes inside `handle_equipment`, the shop and the Tasks page. None copies a handler. The Equipment
+Nine narrow changes inside `handle_equipment`, the shop and the Tasks page. None copies a handler. The Equipment
 screen marks the row with a free slot of the right kind "Recommended", and upstream never reads it - it picks
 by the save-scum target instead, or by whoever is listed first on every Sortie run, since only Chaos carries
 that setting.
@@ -12,6 +12,7 @@ from src.en import rewards
 from src.en.dashboard import TEAM_GEAR
 from src.en.game_quality import EQUIPMENT_RARITY
 from src.en.handlers import StandIn, loaded, register, standing_in, wrap
+from src.en.overrides import EXTRACT_SPARE
 from src.en.quality import EQUIPMENT_INDEX, grade
 from src.en.rewards import EQUIPMENT_KEYS
 from src.en.screen import (COMBATANT_NAME_POINTS, PAGE_CLOSE, centre_of, combatant_names, combatant_slot_points,
@@ -43,6 +44,13 @@ MYTHIC_RGB = (137, 82, 164)
 # tap here is the piece changing hands - the one thing the screen cannot be read for, because the client has
 # not drawn it yet when the slots are read.
 HANDOVER_X = 0.756
+# Upstream's install-screen caption and where it reads it.
+INSTALL_HINT = "请选择主战员"
+INSTALL_HINT_POINT = (0.921, 0.135)
+# The bottom band upstream reads its buttons from, and the captions that show it has finished sliding in. Until then the slots
+# are mid-fade, and upstream reads any colour it does not know as its top grade.
+BUTTON_BAND = (0.013, 0.881, 0.992, 0.994)
+BUTTONS = ("提炼", "确认", "取消", "购买")
 # Names each change in the shared record of what a function already carries.
 RECOMMENDED_TAG = "recommended combatant"
 MYTHIC_TAG = "mythic equipment"
@@ -51,6 +59,9 @@ PLACEMENT_TAG = "mythic placement"
 TEAM_GEAR_TAG = "team equipment"
 PICK_TAG = "mythic pick"
 SELECTED_TAG = "recommended already selected"
+UPGRADE_TAG = "upgrades only"
+LISTS_TAG = "lists empty while extracting"
+DRAWN_TAG = "waits for the install screen"
 # The client's own grade for a Mythic piece, in `EQUIPMENT_RARITY`.
 MYTHIC_GRADE = "UNIQUE"
 
@@ -452,6 +463,109 @@ def insisting_on_mythic(handler, utils):
     return wrapped
 
 
+def is_mythic(task, piece):
+    """Say whether the piece on offer is Mythic, by the client's grade table or the caption under it.
+
+    Args:
+        task: The running task, whose OCR pass carries the Mythic caption.
+        piece: The offered piece as `_equipment_info` reports it.
+
+    Returns:
+        True for a Mythic.
+    """
+    # The caption scan last, as the only one that walks the OCR pass.
+    return game_grade(piece) == MYTHIC_GRADE or mythic_offer(task)
+
+
+def upgrading_only(handler, utils):
+    """Wrap `handle_equipment` so a piece only goes to a combatant it upgrades, and with `EXTRACT_SPARE` on only a Mythic goes anywhere.
+
+    Rows are withheld, as for a Mythic, so upstream's own branches finish the job: with none left it extracts the piece, or cancels
+    a shop's purchase. A free slot shows as the banner and a listed piece outranks rarity, so both are left to the patches placing them.
+
+    Args:
+        handler: The handler to wrap, upstream's or another patch's.
+        utils: The module holding the row reader, `_equipment_info`, the quality ranks and the config reader, the seams this reads through.
+
+    Returns:
+        The wrapped handler.
+    """
+    def wrapped(task):
+        find_rows = utils._find_member_level_tags
+        offered, noted = recording_offers(utils._equipment_info)
+
+        def upgraded(task_, *args, **kwargs):
+            rows = find_rows(task_, *args, **kwargs)
+            if not rows or not offered or is_mythic(task_, offered[-1]):
+                return rows
+            piece = offered[-1]
+            if utils._get_config_value(task_, EXTRACT_SPARE, False):
+                logger.info(f"{EXTRACT_SPARE} is on and {piece['name']} is not Mythic, so nobody is offered it")
+                return []
+            ranks = utils._EQUIPMENT_QUALITY_RANKS
+            # An unread grade leaves every row, rather than extracting a piece that may have been worth keeping.
+            if piece.get("rank") is not None or not piece.get("quality") or recommended_banner(task_) is not None:
+                return rows
+            qualities, _ = row_readings(task_, utils, rows)
+            slot, offered_rank = piece["slot"], ranks[piece["quality"]]
+            # Empty slots are filled before any worn piece is replaced.
+            empty = [row for row, held in zip(rows, qualities) if held[slot] == EMPTY_SLOT]
+            if empty:
+                if len(empty) < len(rows):
+                    logger.info(f"slot {slot + 1} is empty on {len(empty)} of {len(rows)} combatants, so only they are offered {piece['name']}")
+                return empty
+            # An unread slot keeps its row, as upstream would have offered it anyway.
+            kept = [row for row, held in zip(rows, qualities) if held[slot] is None or ranks.get(held[slot], 0) < offered_rank]
+            if len(kept) < len(rows):
+                logger.info(f"{piece['name']} upgrades slot {slot + 1} on {len(kept)} of {len(rows)} combatants, so only they are offered it")
+            return kept
+
+        with standing_in(utils, _equipment_info=noted, _find_member_level_tags=upgraded):
+            return handler(task)
+
+    return wrapped
+
+
+def waiting_for_the_buttons(handler, utils):
+    """Wrap `handle_equipment` so it skips an install screen whose buttons have not slid in yet.
+
+    The frame is claimed, so no later handler acts on the half-drawn screen either, and the next frame is read once it settles.
+
+    Args:
+        handler: The handler to wrap, upstream's or another patch's.
+        utils: The module holding `find_box_at_point`.
+
+    Returns:
+        The wrapped handler.
+    """
+    def wrapped(task):
+        hint = utils.find_box_at_point(task, *INSTALL_HINT_POINT)
+        if hint and INSTALL_HINT in hint.name and not any(text_in_region(task, button, BUTTON_BAND) for button in BUTTONS):
+            say_once(task, GEAR, "the install screen is still drawing, so it is read on the next frame")
+            return True
+        return handler(task)
+
+    return wrapped
+
+
+def listing_nothing_while_extracting(priority, utils):
+    """Wrap `_equipment_priority` so the Equipment Slot lists read empty while `EXTRACT_SPARE` is on.
+
+    Every non-Mythic piece is extracted then, so a listed one is too, and the Dellang Shop, which buys by these lists, never sells a Mythic.
+
+    Args:
+        priority: The list reader to wrap, upstream's or another patch's.
+        utils: The module holding the config reader.
+
+    Returns:
+        The wrapped reader.
+    """
+    def wrapped(task, slot):
+        return [] if utils._get_config_value(task, EXTRACT_SPARE, False) else priority(task, slot)
+
+    return wrapped
+
+
 def preferring_recommended(handler, utils):
     """Wrap `handle_equipment` so the recommended combatant is the one it gives to.
 
@@ -671,7 +785,7 @@ def remembering_slots(handler, utils):
     """
     def wrapped(task):
         find_rows, read_info, tap = utils._find_member_level_tags, utils._equipment_info, utils._move_and_click
-        rows, offered, handed_y = [], None, None
+        rows, readings, offered, handed_y = [], [], None, None
 
         def recorded(task_, *args, **kwargs):
             # The first read is the combatant column. The handler makes no other, and taking the first is
@@ -679,6 +793,8 @@ def remembering_slots(handler, utils):
             found = find_rows(task_, *args, **kwargs)
             if not rows and found:
                 rows.extend(found)
+                # Read now, before the handler taps: an Extract tap dims every row under its confirm dialog.
+                readings.append(row_readings(task_, utils, found))
             return found
 
         def noted(task_, *args, **kwargs):
@@ -697,8 +813,8 @@ def remembering_slots(handler, utils):
         with standing_in(utils, _find_member_level_tags=recorded, _equipment_info=noted,
                          _move_and_click=handed_over):
             handled = handler(task)
-        if rows:
-            qualities, colours = row_readings(task, utils, rows)
+        if readings:
+            qualities, colours = readings[0]
             setattr(task, SLOTS, qualities)
             worn = [[tier_of(utils, quality, rgb) for quality, rgb in zip(*slots)]
                     for slots in zip(qualities, colours)]
@@ -782,8 +898,10 @@ def install(utils, utils_chaos=None):
              lambda handler: reading_the_team_gear(handler, utils, utils_chaos), TEAM_GEAR_TAG)
     if utils is None:
         return
-    # First, which puts its row reader innermost of the three that stand in for one, so the rows it drops are
+    wrap(utils, "_equipment_priority", lambda priority: listing_nothing_while_extracting(priority, utils), LISTS_TAG)
+    # First, which puts their row readers innermost of those that stand in for one, so the rows they drop are
     # dropped last - after `remembering_slots` has recorded every combatant the screen actually shows.
+    wrap(utils, "handle_equipment", lambda handler: upgrading_only(handler, utils), UPGRADE_TAG)
     wrap(utils, "handle_equipment", lambda handler: offering_mythic_where_it_fits(handler, utils), PLACEMENT_TAG)
     wrap(utils, "handle_equipment", lambda handler: preferring_recommended(handler, utils), RECOMMENDED_TAG)
     wrap(utils, "handle_equipment", lambda handler: insisting_on_mythic(handler, utils), MYTHIC_TAG)
@@ -791,6 +909,8 @@ def install(utils, utils_chaos=None):
     # After it, so their taps are the last stand-ins called and `remembering_slots` still sees a handover that is skipped.
     wrap(utils, "handle_equipment", lambda handler: picking_mythic(handler, utils), PICK_TAG)
     wrap(utils, "handle_equipment", lambda handler: leaving_recommended_selected(handler, utils), SELECTED_TAG)
+    # Last, so nothing inside it taps a screen that is still sliding in.
+    wrap(utils, "handle_equipment", lambda handler: waiting_for_the_buttons(handler, utils), DRAWN_TAG)
 
 
 def apply():
