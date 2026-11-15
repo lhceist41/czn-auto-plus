@@ -12,6 +12,7 @@ import os
 import re
 import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -21,7 +22,7 @@ import polib
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from src.en import etched_memory, forms, overrides, picker, reobserve, sections, upload  # noqa: E402
+from src.en import etched_memory, forms, overrides, picker, row_hints, sections, shop, upload  # noqa: E402
 from src.en.game_data import CARDS, COMBATANTS, EQUIPMENT, NODE_TYPES  # noqa: E402
 from src.en.game_text import DESCRIPTIONS  # noqa: E402
 from src.en.framework import import_ui  # noqa: E402
@@ -81,21 +82,28 @@ class FakeTask:
         self.instructions = "placeholder"
 
 
-def mode_setting_keys():
-    """Read the settings the modes declare, straight from their source.
+def declared_keys(name):
+    """Read the settings one mode declares, straight from its source.
+
+    Args:
+        name: A mode file under `ok_tasks/`, one of `MODE_FILES`.
 
     Returns:
-        A set of config keys. Commented-out lines are skipped, so a setting upstream has parked does not count.
+        A list of config keys in declaration order. Commented-out lines are skipped, so a setting upstream has parked does not count.
     """
-    keys = set()
-    for name in MODE_FILES:
-        path = REPO_ROOT / "ok_tasks" / f"{name}.py"
-        if not path.exists():
-            continue
-        for line in path.read_text(encoding="utf-8").splitlines():
-            if not line.strip().startswith("#"):
-                keys.update(SETTING_KEY.findall(line))
-    return keys
+    path = REPO_ROOT / "ok_tasks" / f"{name}.py"
+    if not path.exists():
+        return []
+    return [key for line in path.read_text(encoding="utf-8").splitlines() if not line.strip().startswith("#") for key in SETTING_KEY.findall(line)]
+
+
+def mode_setting_keys():
+    """Read the settings every mode declares, straight from their source.
+
+    Returns:
+        A set of config keys.
+    """
+    return {key for name in MODE_FILES for key in declared_keys(name)}
 
 
 def upstream_described():
@@ -305,7 +313,7 @@ class TestSeasonFive(unittest.TestCase):
 
 
 class TestSeasonSections(unittest.TestCase):
-    """The collapsible headers that fold each season's settings away."""
+    """The collapsible headers that fold every mode setting into a group, and the rows they grey out."""
 
     @classmethod
     def setUpClass(cls):
@@ -320,7 +328,7 @@ class TestSeasonSections(unittest.TestCase):
         sections.apply()
         config_form = import_ui("tasks.config_form", "ConfigForm")
         assert config_form is not None, "ok-script no longer provides ConfigForm"
-        default = {"进入商店": False, "指定面具卡牌": "", "面具卡牌刻印": "", "几轮后停止(0为不停止)": 0}
+        default = {"进入商店": False, shop.BUY_MONSTER_CARDS: True, "指定面具卡牌": "", "面具卡牌刻印": "", "几轮后停止(0为不停止)": 0}
         cls.folder = tempfile.TemporaryDirectory()
         config = Config("ChaosMode", default, folder=cls.folder.name)
         cls.card = config_form(None, config, default, {}, {})
@@ -329,28 +337,71 @@ class TestSeasonSections(unittest.TestCase):
     def tearDownClass(cls):
         cls.folder.cleanup()
 
-    def test_every_folded_setting_is_still_declared_upstream(self):
-        # A renamed key is not folded and no error says so - the setting just reappears in the flat list.
-        declared = mode_setting_keys() | {overrides.DESIRE_FACTION, *SEASON_FIVE, reobserve.REOBSERVE, reobserve.MODIFIER_BLACKLIST}
-        for _, keys in sections.SECTIONS:
-            for key in keys:
-                with self.subTest(key=key):
-                    self.assertIn(key, declared)
+    def section(self, title):
+        return next(section for section in getattr(self.card, sections.SECTIONS_ATTR) if section.title == title)
+
+    def test_every_shown_setting_is_laid_out(self):
+        # A renamed key falls out of its place and no error says so - the row just floats above everything.
+        laid_out = sections.LAID_OUT
+        self.assertEqual(len(laid_out), len(set(laid_out)))
+        shown = set()
+        for name in ("ChaosMode", "SortieMode"):
+            task = reshaped({key: "" for key in declared_keys(name)})
+            shown |= {key for key in task.default_config if not key.startswith("_") and not task.config_type.get(key, {}).get("hidden")}
+        self.assertEqual(set(), shown - set(laid_out) - {upload.ROW_KEY})
+        self.assertEqual(set(), set(laid_out) - shown)
+
+    def test_every_rule_greys_a_row_under_its_controller(self):
+        # A rule whose controller is in another section, or below it, greys a row for a reason the user cannot see.
+        lists = [sections.TOP, *(keys for _, keys in sections.SECTIONS)]
+        for key, rule in row_hints.RULES.items():
+            with self.subTest(key=key):
+                (keys,) = [keys for keys in lists if key in keys]
+                self.assertLess(keys.index(rule.controller), keys.index(key))
 
     def test_the_titles_reach_the_ui_through_the_catalog(self):
         catalog = polib.pofile(str(REPO_ROOT / "i18n" / "zh_CN" / "LC_MESSAGES" / "ok.po"))
         msgids = {entry.msgid for entry in catalog}
-        for title, _ in sections.SECTIONS:
-            with self.subTest(title=title):
-                self.assertIn(title, msgids)
+        texts = (*(title for title, _ in sections.SECTIONS), sections.CHANGED, row_hints.CHANGED, *(rule.note for rule in row_hints.RULES.values() if rule.note))
+        for text in texts:
+            with self.subTest(text=text):
+                self.assertIn(text, msgids)
 
-    def test_a_reset_keeps_the_section_folded_under_its_header(self):
+    def test_a_reset_keeps_the_top_rows_first_and_each_section_folded_under_its_header(self):
         # Reset Config re-sorts every row to the top and shows them all.
-        (section,) = getattr(self.card, sections.SECTIONS_ATTR)
         self.card.update_config()
         layout = self.card.viewLayout
-        self.assertEqual(layout.indexOf(section.header) + 1, layout.indexOf(section.rows[0]))
-        self.assertTrue(all(row.isHidden() for row in section.rows))
+        sections_built = getattr(self.card, sections.SECTIONS_ATTR)
+        self.assertLess(layout.indexOf(self.card.config_widget_by_key["几轮后停止(0为不停止)"]), layout.indexOf(sections_built[0].header))
+        for section in sections_built:
+            with self.subTest(section=section.title):
+                self.assertEqual(layout.indexOf(section.header) + 1, layout.indexOf(section.rows[0]))
+                self.assertTrue(all(row.isHidden() for row in section.rows))
+
+    def test_every_tooltip_wraps_inside_the_width_and_keeps_its_words(self):
+        # Seven pixels a character stands in for the font, which only the running app has.
+        metrics = types.SimpleNamespace(horizontalAdvance=lambda text: 7 * len(text))
+        for key, text in overrides.TOOLTIPS.items():
+            with self.subTest(key):
+                lines = row_hints.wrapped(text, metrics, row_hints.TOOLTIP_MAX_WIDTH).splitlines()
+                self.assertEqual(text.split(), " ".join(lines).split())
+                self.assertTrue(all(metrics.horizontalAdvance(line) <= row_hints.TOOLTIP_MAX_WIDTH for line in lines))
+
+    def test_a_changed_row_is_marked_counted_and_unlocks_its_dependents(self):
+        shop_row = self.card.config_widget_by_key["进入商店"]
+        monster_row = self.card.config_widget_by_key[shop.BUY_MONSTER_CARDS]
+        pill, count = getattr(shop_row, row_hints.PILL_ATTR), self.section("Safe Zone").count
+        self.assertFalse(monster_row.isEnabled())
+        shop_row.update_config(True)
+        try:
+            self.assertFalse(pill.isHidden())
+            self.assertFalse(count.isHidden())
+            self.assertIn(sections.CHANGED.format(1), count.text())
+            self.assertTrue(monster_row.isEnabled())
+        finally:
+            shop_row.update_config(False)
+        self.assertTrue(pill.isHidden())
+        self.assertTrue(count.isHidden())
 
 
 class TestSettingsForm(unittest.TestCase):

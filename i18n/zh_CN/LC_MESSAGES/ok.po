@@ -591,6 +591,33 @@ msgstr "自动"
 msgid "Desire Faction"
 msgstr "Desire Faction"
 
+msgid "Map"
+msgstr "地图"
+
+msgid "Battle"
+msgstr "战斗"
+
+msgid "Cards"
+msgstr "卡牌"
+
+msgid "Equipment"
+msgstr "装备"
+
+msgid "Safe Zone"
+msgstr "安全区"
+
+msgid "Saves"
+msgstr "存档"
+
+msgid "Changed"
+msgstr "已修改"
+
+msgid "Needs an entry in {}."
+msgstr "需要先在“{}”中填写至少一项。"
+
+msgid "{} changed"
+msgstr "已改 {} 项"
+
 msgid "Season 3 - Persona"
 msgstr "第三赛季 - 人格面具"
 
@@ -608,9 +635,6 @@ msgstr "记忆加成"
 
 msgid "Enter End of Memory"
 msgstr "进入记忆之末"
-
-msgid "Re-observe"
-msgstr "再次观测"
 
 msgid "Re-observe Bad Modifiers"
 msgstr "再次观测拉黑词条"

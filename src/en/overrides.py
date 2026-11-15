@@ -40,8 +40,6 @@ PLAYS_ITS_OWN_CARDS = "出牌优先级"
 # Upstream settings taken off both modes. `Config` drops a saved key it no longer declares, so upstream reads its own default.
 # Upstream's Meditation list and threshold are replaced by `MEDITATE`. Its Credits switch is read as on by `heal.py`.
 DROPPED = ("优先移除基础牌", "需要冥想的卡牌", "多少信用点以上冥想", PAY_CREDITS)
-# Rows moved to sit right under another, as `(row, anchor)` pairs.
-PLACED_UNDER = ((SMART_CARD_PLAY, "游戏语言"), ("拉黑主战员", "主战员优先级"))
 # The combatant whose save data the run farms. `src/en/navigation.py` reads it to recognise the tab. Only Chaos
 # declares it, which makes it the marker for Chaos-only settings.
 FARMED_COMBATANT = "刷存档主战员"
@@ -111,13 +109,8 @@ DESCRIPTIONS = {
     "丢弃卡牌优先级": "Cards to throw away first when the run asks you to discard.",
     PLAYS_ITS_OWN_CARDS: "Order to play cards in battle. Needs shortcut key display turned on in the game's"
                          " settings.",
-    DESIRE_FACTION: "Which Desire faction to build towards. Every Desire card and event option is chosen to"
-                    " push this one higher, because reaching 3, 5 or 7 points in a single faction is worth"
-                    " far more than points spread across several.",
-    SMART_CARD_PLAY: "Choose battle cards on what they actually do - what they cost, what kind they are, and"
-                     " what their effect text says - rather than pressing every hotkey in turn and taking whatever"
-                     " plays. Your Play Priority list still comes first and is unaffected; this decides the"
-                     " cards it does not mention. Turn it off to go back to upstream's behaviour.",
+    DESIRE_FACTION: "Which Desire faction to build towards. Every Desire card and event option pushes this one higher.",
+    SMART_CARD_PLAY: "Choose battle cards by cost, type and effect text instead of pressing every hotkey in turn.",
     "装备1号位优先级": "Preferred equipment for the first slot, best first.",
     "装备2号位优先级": "Preferred equipment for the second slot, best first.",
     "装备3号位优先级": "Preferred equipment for the third slot, best first.",
@@ -127,30 +120,57 @@ DESCRIPTIONS = {
     FARMED_COMBATANT: f"The combatant whose save data is farmed. Pick {NO_COMBATANT} to favour no one.",
     "指定面具卡牌": "The Persona Card to hold out for, matched against its name and description.",
     "面具卡牌刻印": "The Engraving to hold out for on that Persona Card.",
-    "指定记忆卡牌": "Free text matched loosely against a Memory card's name and description, on every Memory screen: the Etched Memory to pick, the Processing option to take and the bonus Refinement holds out for. Leave it empty to use the three settings below instead.",
+    "指定记忆卡牌": "Free text matched loosely against a Memory card's name and description, on every Memory screen.",
     ETCHED_MEMORY: "Etched Memories to take at the Interior, best first. A page offering none of them is searched again while searches are left.",
-    MEMORY_BONUS: f"The bonus for the etched Memory Card. Memory Refinement spends its one Processing only when the card holds a different bonus, and takes a reroll only if one offers this. {KEEP_BONUS} never processes.",
-    REOBSERVE: "Spend event currency to Re-observe the Chaos start page while it carries a modifier from Modifier Blacklist. Once the currency runs short, the run is entered as it is.",
+    MEMORY_BONUS: f"The bonus to hold out for on the etched Memory Card. {KEEP_BONUS} never processes.",
+    REOBSERVE: "Spend event currency to Re-observe the Chaos start page while it carries a blacklisted modifier.",
     MODIFIER_BLACKLIST: "Modifiers to Re-observe away, matched at any level, so Plague covers Plague 1 to 4.",
-    ENTER_MEMORY_END: "Enter End of Memory after the final boss for the extra fight and its grade upgrade. Turn it off to end the run at the Settlement instead.",
+    ENTER_MEMORY_END: "Enter End of Memory after the final boss for the extra fight and its grade upgrade.",
     "刷初始卡牌": "Reroll the starting card until this one appears. Cannot be combined with Farm Gaps.",
-    "任务优先级": "Preferred options inside an Unidentified Area, best first, matched loosely against the option's description rather than its title - so prefer distinctive wording, since a short word matches far more than you expect. Your Equipment Slot priorities are tried ahead of this list, and an area that matches nothing is picked at random.",
-    "拉黑任务": "Never take an Unidentified Area option whose description matches one of these, so an entry like Curse skips anything handing you a Curse Card. If blocking would leave nothing to choose from, the list is ignored for that one screen.",
-    "领取奖励(只使用验证卡)": "Takes the Additional Loot the Settlement screen offers, spending one of the four Loot Certification Cards issued each week. Turns itself off once they run out, so a run never pays Aether for loot.",
-    "领取奖励": "Claims the Chaos Loot at the end of a Sortie with Reason. It never charges Reason with Aether, so once Reason runs out the rest of that run's loot is left.",
+    "任务优先级": "Preferred options inside an Unidentified Area, best first, matched loosely against the option's description.",
+    "拉黑任务": "Never take an Unidentified Area option whose description matches one of these.",
+    "领取奖励(只使用验证卡)": "Takes the Settlement's Additional Loot with one of the four weekly Loot Certification Cards.",
+    "领取奖励": "Claims the Chaos Loot at the end of a Sortie with Reason.",
     "治疗崩溃": "Visit the Epione Center when a Combatant hits a Mental Breakdown, instead of running on under the Stress.",
     "生命值大于多少优先闪光(百分比)": "Only spend an Epiphany while the Combatant's health is above this percentage.",
     "第几层boss前自动暂停": "Stop and hand back control before the boss on this floor. Never Pause runs the whole map unattended.",
     "几轮后停止(0为不停止)": "Stop the bot after this many finished runs. Zero keeps it going.",
-    "存储数据保存上限大于多少": "Only start a run whose Save Data Storage Limit reaches at least this much, re-rolling until one does. This picks the run, it never deletes anything.",
-    "保留大于多少TB的存档": "After a run, on the Save Data collection screen, delete each stored save worth this many TB or less to free its slot. Zero keeps every save. Not the same as Minimum Save Data Storage Limit, which picks the run before it starts.",
-    PAID_THRESHOLD: "Pay Credits to reroll the Dellang Shop once its free refreshes are used up, but only while holding more than this many. -1 never pays, and 0 pays whenever the price is affordable.",
-    SHOP_SETTING: "Visit the Dellang Shop when a Safe Zone offers one. It pays to remove a card first, up to five a run, then buys from your Card Reward Priority and Equipment Slot lists.",
+    "存储数据保存上限大于多少": "Only start a run whose Save Data Storage Limit reaches at least this much, re-rolling until one does.",
+    "保留大于多少TB的存档": "After a run, delete each stored save worth this many TB or less. Zero keeps every save.",
+    PAID_THRESHOLD: "Pay Credits to reroll the Dellang Shop after its free refreshes, only while holding more than this many.",
+    SHOP_SETTING: "Visit the Dellang Shop when a Safe Zone offers one.",
     BUY_MONSTER_CARDS: "Let the Dellang Shop buy Monster Cards. Turn it off to keep the Credits for card removals and equipment.",
-    TAKE_MONSTER_REWARDS: "Take Monster Cards from a battle's card reward. Turn it off to skip them. Only applies while the reward's priority list is empty, since a list you fill in is used as written.",
-    EXTRACT_SPARE: "Extract every piece of equipment for Credits instead of equipping it, except a Mythic. The Equipment Slot lists are ignored and the Dellang Shop buys no equipment while this is on.",
-    MEDITATE: f"At a Safe Zone with HP at {MIN_HP_PERCENT}% or more and every combatant under {MAX_STRESS:.0%} Stress, pay for Meditation to re-roll the Epiphany on a card your build preset pinned. With no pinned card, or this off, the run rests.",
+    TAKE_MONSTER_REWARDS: "Take Monster Cards from a battle's card reward. Turn it off to skip them.",
+    EXTRACT_SPARE: "Extract every piece of equipment for Credits instead of equipping it, except a Mythic.",
+    MEDITATE: "At a Safe Zone, pay for Meditation to re-roll the Epiphany on a card your build preset pinned.",
     "只打第一层": "Leave after the first floor instead of running the whole map.",
+}
+# The rest of a description trimmed to two lines, shown when the row is hovered.
+TOOLTIPS = {
+    "任务优先级": "Prefer distinctive wording, since a short word matches far more than you expect. Your Equipment Slot priorities are tried"
+                 " ahead of this list, and an area that matches nothing is picked at random.",
+    "拉黑任务": "An entry like Curse skips anything handing you a Curse Card. If blocking would leave nothing to choose from, the list is"
+               " ignored for that one screen.",
+    "指定记忆卡牌": "It picks the Etched Memory, the Processing option and the bonus Refinement holds out for. Leave it empty to use Etched"
+                  " Memory Priority and Memory Bonus instead.",
+    MEMORY_BONUS: "Memory Refinement spends its one Processing only when the card holds a different bonus, and takes a reroll only if one"
+                  " offers this.",
+    REOBSERVE: "Once the currency runs short, the run is entered as it is.",
+    ENTER_MEMORY_END: "Turn it off to end the run at the Settlement instead.",
+    DESIRE_FACTION: "Reaching 3, 5 or 7 points in a single faction is worth far more than points spread across several.",
+    SMART_CARD_PLAY: "Spends each turn's Action Points on the cards worth the most damage, shield and draw, and plays a combatant's cards in"
+                     " the order their kit needs. Cards named in Card Play Priority are still played first.",
+    "领取奖励(只使用验证卡)": "Turns itself off once they run out, so a run never pays Aether for loot.",
+    "领取奖励": "It never charges Reason with Aether, so once Reason runs out the rest of that run's loot is left.",
+    "存储数据保存上限大于多少": "This picks the run, it never deletes anything.",
+    "保留大于多少TB的存档": "Runs on the Save Data collection screen to free slots. Not the same as Minimum Save Data Storage Limit, which picks"
+                       " the run before it starts.",
+    PAID_THRESHOLD: "-1 never pays, and 0 pays whenever the price is affordable.",
+    SHOP_SETTING: "It pays to remove a card first, up to five a run, then buys from your Card Reward Priority and Equipment Slot lists.",
+    TAKE_MONSTER_REWARDS: "Only applies while Card Reward Priority is empty, since a list you fill in is used as written.",
+    EXTRACT_SPARE: "The Equipment Slot lists are ignored and the Dellang Shop buys no equipment while this is on.",
+    MEDITATE: f"Only with HP at {MIN_HP_PERCENT}% or more and every combatant under {MAX_STRESS:.0%} Stress. With no pinned card, or this off,"
+              " the run rests.",
 }
 # Setup a mode needs before its first run, shown behind its Instructions button. A mode with nothing to set up gets no button.
 INSTRUCTIONS = {"ChaosMode": "Turn on the event/dialogue Fast Forward in-game before starting a run."}
@@ -250,8 +270,6 @@ def reshape(task):
 
     for key in DROPPED:
         task.default_config.pop(key, None)
-    for key, anchor in PLACED_UNDER:
-        place_under(task.default_config, key, anchor)
 
     for key, text in DESCRIPTIONS.items():
         if key in task.default_config:

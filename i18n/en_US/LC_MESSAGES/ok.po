@@ -362,7 +362,34 @@ msgstr "Take Monster Card Rewards"
 msgid "Extract Spare Equipment"
 msgstr "Extract Spare Equipment"
 
-# Section headers this fork draws over the seasonal settings, English for the same reason.
+# Section headers this fork draws over the mode settings, English for the same reason.
+msgid "Map"
+msgstr "Map"
+
+msgid "Battle"
+msgstr "Battle"
+
+msgid "Cards"
+msgstr "Cards"
+
+msgid "Equipment"
+msgstr "Equipment"
+
+msgid "Safe Zone"
+msgstr "Safe Zone"
+
+msgid "Saves"
+msgstr "Saves"
+
+msgid "Changed"
+msgstr "Changed"
+
+msgid "Needs an entry in {}."
+msgstr "Needs an entry in {}."
+
+msgid "{} changed"
+msgstr "{} changed"
+
 msgid "Season 3 - Persona"
 msgstr "Season 3 - Persona"
 
@@ -381,9 +408,6 @@ msgstr "Memory Bonus"
 
 msgid "Enter End of Memory"
 msgstr "Enter End of Memory"
-
-msgid "Re-observe"
-msgstr "Re-observe"
 
 # The Re-observe settings this fork adds, English for the same reason.
 msgid "Re-observe Bad Modifiers"
