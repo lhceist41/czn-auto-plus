@@ -61,6 +61,8 @@ def value_under_label(original):
         self.control.layout().removeWidget(self.list_label)
         self._row_layout.itemAt(0).layout().addWidget(self.list_label)
         self.list_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        # Green, like the other marks of what the user picked.
+        self.list_label.setProperty("tone", "success")
         # `set_control` gave the holder a fixed width. With no minimum, the row's alignment shrinks it to the button.
         self.control.setMinimumWidth(0)
         self.update_value()
