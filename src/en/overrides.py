@@ -14,6 +14,7 @@ from src.en.etched_memory import BONUSES, ENTER_MEMORY_END, ETCHED_MEMORY, KEEP_
 from src.en.game_data import CARDS, COMBATANTS, EQUIPMENT
 from src.en.framework import import_ui
 from src.en.game_language import GAME_LANGUAGES, MODE_KEY
+from src.en.heal import PAY_CREDITS
 from src.en.reobserve import DEFAULT_BLACKLIST, MODIFIER_BLACKLIST, MODIFIERS, REOBSERVE
 from src.en.meditation import MAX_STRESS, MEDITATE, MIN_HP_PERCENT
 from src.en.rest import SHOP_SETTING
@@ -37,8 +38,8 @@ KEEPS_CHINESE = {"路线优先级"}
 SMART_CARD_PLAY = "Smart Card Play"
 PLAYS_ITS_OWN_CARDS = "出牌优先级"
 # Upstream settings taken off both modes. `Config` drops a saved key it no longer declares, so upstream reads its own default.
-# Upstream's Meditation list and threshold are replaced by `MEDITATE`.
-DROPPED = ("优先移除基础牌", "需要冥想的卡牌", "多少信用点以上冥想")
+# Upstream's Meditation list and threshold are replaced by `MEDITATE`. Its Credits switch is read as on by `heal.py`.
+DROPPED = ("优先移除基础牌", "需要冥想的卡牌", "多少信用点以上冥想", PAY_CREDITS)
 # Rows moved to sit right under another, as `(row, anchor)` pairs.
 PLACED_UNDER = ((SMART_CARD_PLAY, "游戏语言"), ("拉黑主战员", "主战员优先级"))
 # The combatant whose save data the run farms. `src/en/navigation.py` reads it to recognise the tab. Only Chaos
@@ -143,7 +144,6 @@ DESCRIPTIONS = {
     "几轮后停止(0为不停止)": "Stop the bot after this many finished runs. Zero keeps it going.",
     "存储数据保存上限大于多少": "Only start a run whose Save Data Storage Limit reaches at least this much, re-rolling until one does. This picks the run, it never deletes anything.",
     "保留大于多少TB的存档": "After a run, on the Save Data collection screen, delete each stored save worth this many TB or less to free its slot. Zero keeps every save. Not the same as Minimum Save Data Storage Limit, which picks the run before it starts.",
-    "优先使用金币治疗": "Always pay Credits for counselling at the Epione Center. Left off, a Communication Pass is spent when you have one and Credits only when you do not.",
     PAID_THRESHOLD: "Pay Credits to reroll the Dellang Shop once its free refreshes are used up, but only while holding more than this many. -1 never pays, and 0 pays whenever the price is affordable.",
     SHOP_SETTING: "Visit the Dellang Shop when a Safe Zone offers one. It pays to remove a card first, up to five a run, then buys from your Card Reward Priority and Equipment Slot lists.",
     BUY_MONSTER_CARDS: "Let the Dellang Shop buy Monster Cards. Turn it off to keep the Credits for card removals and equipment.",

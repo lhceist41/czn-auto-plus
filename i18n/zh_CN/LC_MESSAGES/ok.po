@@ -312,9 +312,6 @@ msgstr "主战员优先级"
 msgid "任务优先级"
 msgstr "任务优先级"
 
-msgid "优先使用金币治疗"
-msgstr "优先使用金币治疗"
-
 msgid "优先移除基础牌"
 msgstr "优先移除基础牌"
 

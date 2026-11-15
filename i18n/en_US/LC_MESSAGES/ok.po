@@ -494,9 +494,6 @@ msgstr "Claim Chaos Loot"
 msgid "领取奖励(只使用验证卡)"
 msgstr "Claim Additional Loot with Loot Certification Cards"
 
-msgid "优先使用金币治疗"
-msgstr "Prefer Paying Credits to Heal"
-
 msgid "治疗崩溃"
 msgstr "Treat Breakdown"
 
