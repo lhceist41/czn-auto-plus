@@ -44,6 +44,8 @@ MONSTER_TAG = "monster cards left"
 PAID_THRESHOLD = "商店刷新信用点阈值"
 # The fork's switch for buying Monster Cards in the shop. On by default, which is how upstream shops.
 BUY_MONSTER_CARDS = "Buy Monster Cards"
+# The fork's switch for taking Monster Cards off a battle's card reward, which `src/en/rewards.py` reads. On by default, as upstream takes them.
+TAKE_MONSTER_REWARDS = "Take Monster Card Rewards"
 
 _patched = False
 
