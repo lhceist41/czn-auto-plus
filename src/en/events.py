@@ -6,16 +6,15 @@ pick decide almost every event between them, and the user's own priority list ra
 """
 
 import re
-from functools import lru_cache
-from pathlib import Path
 
 import cv2
+import numpy as np
 from ok import Logger
 
 from src.en import desire
 from src.en.handlers import StandIn, insert_before, loaded, register, standing_in, wrap
 from src.en.memory_limit import CANCEL, CANCEL_REGION
-from src.en.screen import centre_of, frame_of, lines_in, patch_of, text_in_region, white_mask
+from src.en.screen import centre_of, frame_of, lines_in, text_in_region, white_mask
 
 logger = Logger.get_logger(__name__)
 
@@ -89,20 +88,34 @@ MIN_MARKER_LENGTH = 2
 # written as whole phrases and held to a longer floor.
 MIN_LATIN_MARKER_LENGTH = 4
 
-# Upstream's `treasure` template: the download arrow drawn over an unopened chest, cropped in pixels from the
-# image its annotations name. An opened chest loses the arrow, so every arrow still on screen is a chest to open.
-TREASURE_IMAGE = Path(__file__).resolve().parents[2] / "ok_tasks" / "assets" / "images" / "0.png"
-TREASURE_CROP = (1205, 481, 1268, 551)
-# Where upstream looks for that arrow. It already spans all three chests, it just never matched two of them.
-TREASURE_REGION = (0.477, 0.336, 0.841, 0.540)
-# The template is the arrow on the gold pile behind the middle chest, and the side chests draw it on dark purple,
-# so upstream's colour match scored them 0.648 and 0.675 against its 0.7 cutoff. Matching only the near-white
-# pixels drops the background: the two arrows in `tests/images/treasure_band.png` score 0.731 and 0.795, while
-# the best hit in the same region across 703 other captured frames is 0.550.
-ARROW_MIN_SCORE = 0.65
-# Pixels between two hits for them to count as separate arrows. The chests sit ~530px apart, the arrow is 63px.
-ARROW_SEPARATION = 60
-# Chests are only opened on the event screen, which always offers "End the event" while any are left.
+# The marker the client pins over anything that can be tapped in a scene, such as a chest: a badge whose art changes by
+# event, a dotted stem, and a solid white square on the object. Only the badge takes a tap. Sizes are pixels of a 1080p frame.
+PIN_HEIGHT = 1080
+# A stem dot is 2-3px across, and the dots sit ~7.5px apart.
+PIN_DOT_AREA = (3, 12)
+PIN_DOT_SIZE = 4
+PIN_DOT_GAP = (6, 9.5)
+PIN_DOT_RADIUS = 2.6
+# How far before the nearest dot the square's centre may sit. A diagonal stem sits it closer.
+PIN_SQUARE_BACK = (12, 13, 14, 15)
+# Half the side of the square's core, which must be solid white. The square can touch white art behind it, such as a
+# chest lid, so only the core is checked.
+PIN_SQUARE_CORE = 3
+PIN_SQUARE_FILL = 0.95
+# Every channel of a real square reads 244 or more. Lilac and pink highlights that pass `white_mask` read 235 or less.
+PIN_SQUARE_WHITE = 240
+# The stem runs from the square's edge to just past its second dot, and nothing but the dots may be white this far to
+# either side of it.
+PIN_STEM_START = 5.5
+PIN_STEM_PAST = 3
+PIN_STEM_WIDTH = 5
+# How far past the square, along the stem, the badge's centre sits.
+PIN_BADGE = 75
+# Clicks a pin gets at one spot while pins stay on screen, so one that never goes away cannot hold the run.
+PIN_TRIES = 2
+# Set on the task: how often each pin spot was clicked, cleared once a frame shows none.
+PIN_CLICKS = "_en_pin_clicks"
+# The option that leaves an event. A chest room may offer it beside its chests, and nothing else.
 LEAVE_MARKERS = ("离开", *QUIT)
 # Set in `task.node_status` by upstream once Memory Refinement is visited. Upstream then leaves on "就此离开", which the
 # Global client prints as "Leave / End the event".
@@ -401,81 +414,126 @@ def order(options, priority_keywords, is_subsequence, target=None):
     return [option for _, option in sorted(enumerate(options), key=key)]
 
 
-@lru_cache(maxsize=1)
-def arrow_mask():
-    """Build the arrow template once, from the same crop upstream matches in colour.
+def pin_square(mask, frame, dot, step):
+    """Find the solid white square a stem dot leads back to.
+
+    Args:
+        mask: The frame's `white_mask`.
+        frame: The 1080p frame the mask was taken from.
+        dot: The stem dot nearest the square, as `(x, y)` pixels.
+        step: The unit vector from that dot towards the next one, away from the square.
 
     Returns:
-        The white mask of the arrow, or None when the image cannot be read.
+        The square's centre as `(x, y)` pixels, or None when no pure white square sits there.
     """
-    image = cv2.imread(str(TREASURE_IMAGE))
-    if image is None:
-        logger.warning(f"could not read the treasure template from {TREASURE_IMAGE}")
+    best_fill, best = 0, None
+    for back in PIN_SQUARE_BACK:
+        centre = dot - step * back
+        x, y = np.rint(centre).astype(int)
+        core = mask[max(0, y - PIN_SQUARE_CORE):y + PIN_SQUARE_CORE + 1, max(0, x - PIN_SQUARE_CORE):x + PIN_SQUARE_CORE + 1]
+        fill = (core > 0).mean() if core.shape == (2 * PIN_SQUARE_CORE + 1,) * 2 else 0
+        if fill > best_fill:
+            best_fill, best = fill, centre
+    if best_fill < PIN_SQUARE_FILL:
         return None
-    left, top, right, bottom = TREASURE_CROP
-    return white_mask(image[top:bottom, left:right])
+    x, y = np.rint(best).astype(int)
+    inner = PIN_SQUARE_CORE - 1
+    # The colour check skips the core's rim, which JPEG blurs into the background.
+    if frame[y - inner:y + inner + 1, x - inner:x + inner + 1].min() < PIN_SQUARE_WHITE:
+        return None
+    return best
 
 
-def find_chests(frame):
-    """Find the arrows over the chests that have not been opened yet.
+def stem_is_clear(mask, square, step, dots):
+    """Check that nothing but its two dots is white along the stem.
+
+    Args:
+        mask: The frame's `white_mask`.
+        square: The square's centre as `(x, y)` pixels.
+        step: The unit vector from the square along the stem.
+        dots: The stem's two dots as `(x, y)` pixels, nearest first.
+
+    Returns:
+        True when the stem looks like a pin's.
+    """
+    end = float(np.dot(dots[1] - square, step)) + PIN_STEM_PAST
+    reach = int(np.ceil(end + PIN_STEM_WIDTH))
+    left, top = max(0, int(square[0]) - reach), max(0, int(square[1]) - reach)
+    window = mask[top:int(square[1]) + reach, left:int(square[0]) + reach] > 0
+    ys, xs = np.mgrid[top:top + window.shape[0], left:left + window.shape[1]]
+    along = (xs - square[0]) * step[0] + (ys - square[1]) * step[1]
+    across = np.abs((ys - square[1]) * step[0] - (xs - square[0]) * step[1])
+    on_stem = (along >= PIN_STEM_START) & (along <= end)
+    on_dot = np.min([np.hypot(xs - x, ys - y) for x, y in dots], axis=0) <= PIN_DOT_RADIUS
+    return not np.any(window & on_stem & (across <= PIN_STEM_WIDTH) & ~on_dot)
+
+
+def find_pins(frame):
+    """Find the markers pinned over the things in a scene that can be tapped.
+
+    Each pin is found from two dots of its stem and the square they lead back to, since the badge's art changes by event.
 
     Args:
         frame: The frame to read, or None when there is none.
 
     Returns:
-        A list of `(x, y)` arrow centres in fractions of the frame, left to right. Empty when there is no frame.
+        A list of `(x, y)` badge centres in fractions of the frame, left to right. Empty when there is no frame.
     """
-    patch = patch_of(frame, TREASURE_REGION)
-    template = arrow_mask()
-    if patch is None or template is None:
+    if frame is None or frame.size == 0:
         return []
-    scores = cv2.matchTemplate(white_mask(patch), template, cv2.TM_CCOEFF_NORMED)
-    frame_height, frame_width = frame.shape[:2]
-    template_height, template_width = template.shape
-    left, top = TREASURE_REGION[0] * frame_width, TREASURE_REGION[1] * frame_height
-    centres = []
-    # Take the best hit, blank the arrow it sits on, and repeat until nothing left clears the cutoff.
-    while True:
-        _, best, _, (x, y) = cv2.minMaxLoc(scores)
-        if best < ARROW_MIN_SCORE:
-            break
-        centres.append(((left + x + template_width / 2) / frame_width, (top + y + template_height / 2) / frame_height))
-        scores[max(0, y - ARROW_SEPARATION):y + ARROW_SEPARATION, max(0, x - ARROW_SEPARATION):x + ARROW_SEPARATION] = -1
-    return sorted(centres)
-
-
-def offers_leave(task):
-    """Report whether the frame's OCR shows the option that ends an event.
-
-    Args:
-        task: The running task, whose `all_texts` holds the current OCR pass.
-
-    Returns:
-        True when "End the event", or the catalog's rewrite of it, is on screen.
-    """
-    return any(contains(fold(box.name), LEAVE_MARKERS) for box in getattr(task, "all_texts", None) or [])
+    height, width = frame.shape[:2]
+    if height != PIN_HEIGHT:
+        frame = cv2.resize(frame, (round(width * PIN_HEIGHT / height), PIN_HEIGHT))
+        width = frame.shape[1]
+    mask = white_mask(frame)
+    _, _, stats, centres = cv2.connectedComponentsWithStats(mask, connectivity=8)
+    area, box_width, box_height = stats[1:, 4], stats[1:, 2], stats[1:, 3]
+    dots = centres[1:][(area >= PIN_DOT_AREA[0]) & (area <= PIN_DOT_AREA[1]) & (box_width <= PIN_DOT_SIZE) & (box_height <= PIN_DOT_SIZE)]
+    squares = []
+    # One dot at a time rather than a full pair matrix, which a busy frame of ~1,700 dots would grow to ~45MB.
+    for near in dots:
+        steps = dots - near
+        gaps = np.hypot(steps[:, 0], steps[:, 1])
+        for far in np.flatnonzero((gaps >= PIN_DOT_GAP[0]) & (gaps <= PIN_DOT_GAP[1])):
+            step = steps[far] / gaps[far]
+            square = pin_square(mask, frame, near, step)
+            if square is None or any(np.hypot(*(square - seen)) < 2 * PIN_SQUARE_CORE for seen, _ in squares):
+                continue
+            if stem_is_clear(mask, square, step, (near, dots[far])):
+                squares.append((square, step))
+    badges = [np.clip((square + step * PIN_BADGE) / (width, PIN_HEIGHT), 0, 1) for square, step in squares]
+    return sorted((float(x), float(y)) for x, y in badges)
 
 
 def open_a_chest(task, utils):
-    """Click the next unopened chest on a Treasure Trove screen.
+    """Click the next unopened chest on a Treasure Trove screen, or any other pin when leaving is all the event offers.
 
-    Upstream checks for chests only after its upper-half shortcut, which clicks "End the event" first whenever
-    that option is detected high enough, so this has to run before upstream does.
+    Upstream's upper-half shortcut clicks "End the event" before it ever looks for chests, so this has to run before
+    upstream does. An event with a real choice keeps it, so a pin that only inspects the scene is left to upstream.
 
     Args:
         task: The running task.
-        utils: Upstream's `utils` module, for its `_move_and_click`.
+        utils: Upstream's `utils` module, for `recognize_event_options` and `_move_and_click`.
 
     Returns:
-        True when a chest was clicked.
+        True when a pin was clicked.
     """
-    if not offers_leave(task):
+    pins = find_pins(frame_of(task))
+    clicks = task.__dict__.setdefault(PIN_CLICKS, {})
+    if not pins:
+        clicks.clear()
         return False
-    chests = find_chests(frame_of(task))
-    if not chests:
+    # Rounded to 0.01 of the screen, so the same pin read a pixel apart is still one spot.
+    spots = {(round(x, 2), round(y, 2)): (x, y) for x, y in pins}
+    key = next((key for key in spots if clicks.get(key, 0) < PIN_TRIES), None)
+    if key is None:
         return False
-    x, y = chests[0]
-    logger.info(f"{len(chests)} unopened chest(s) left, opening the one at ({x:.3f}, {y:.3f})")
+    options = utils.recognize_event_options(task)
+    if any(not contains(fold(option.get("description", "")), LEAVE_MARKERS) for option in options or []):
+        return False
+    clicks[key] = clicks.get(key, 0) + 1
+    x, y = spots[key]
+    logger.info(f"{len(pins)} pin(s) on screen, tapping the badge at ({x:.3f}, {y:.3f})")
     utils._move_and_click(task, x, y)
     task.sleep(2)
     return True

@@ -29,7 +29,7 @@ from StoryMode import StoryMode  # noqa: E402
 from src.en.events import (  # noqa: E402
     ATTACK, ATTACK_RANK, BESIDES_CREDITS, CREDIT_RANK, CURSE_RANK, DESIRE_RANK, DIALOGUE, DIALOGUE_RANK, ENCOUNTER, ENCOUNTER_RANK, HEALTH_COST,
     HEALTH_COST_RANK, MIN_LATIN_MARKER_LENGTH, MIN_MARKER_LENGTH, OFF_FACTION_RANK, QUIT, QUIT_RANK,
-    REFINED, REWARD_RANK, RankingChoice, SPARK, SPARK_RANK, center_of, double_clicking, drop_unwanted, find_chests, fold,
+    REFINED, REWARD_RANK, RankingChoice, SPARK, SPARK_RANK, center_of, double_clicking, drop_unwanted, find_pins, fold,
     handle_unavailable_reward, leave_after_refinement, open_a_chest, order, rank, ranking, take_substitute,
 )
 from src.en.enter import OPTION_TEMPLATES, on_the_button  # noqa: E402
@@ -381,45 +381,83 @@ class TestDesireOptions(unittest.TestCase):
 
 
 class TestTreasureChests(unittest.TestCase):
-    """The Treasure Trove offers three chests, and a live run opened one and then ended the event."""
+    """The Treasure Trove marks each unopened chest with a pin, and the client redraws the pin's badge between layouts."""
 
     @staticmethod
-    def frame_with_band():
-        """Paste the captured chest band back where it came from, in an otherwise black frame.
+    def frame_with(name, left, top):
+        """Paste a captured crop back where it came from, in an otherwise black frame.
+
+        Args:
+            name: The crop's file name in `tests/images/`.
+            left: The crop's left edge on the 1080p capture, in pixels.
+            top: The crop's top edge on the 1080p capture, in pixels.
 
         Returns:
-            A 1920x1080 frame showing the two chests left unopened after the middle one was taken.
+            A 1920x1080 frame showing only the crop.
         """
         frame = np.zeros((HEIGHT, WIDTH, 3), np.uint8)
-        band = cv2.imread(str(REPO_ROOT / "tests" / "images" / "treasure_band.png"))
-        frame[362:362 + band.shape[0], 915:915 + band.shape[1]] = band
+        crop = cv2.imread(str(REPO_ROOT / "tests" / "images" / name))
+        frame[top:top + crop.shape[0], left:left + crop.shape[1]] = crop
         return frame
 
-    def test_both_side_chests_are_found(self):
-        # Upstream's colour template scores these two 0.648 and 0.675 and matches neither.
-        chests = find_chests(self.frame_with_band())
-        self.assertEqual(2, len(chests))
-        for (x, y), expected_x in zip(chests, (0.523, 0.800)):
-            self.assertAlmostEqual(expected_x, x, delta=0.01)
-            self.assertAlmostEqual(0.43, y, delta=0.02)
+    def new_layout(self):
+        """The mascot layout: a badge over each of three chests, the left square touching its lid, and no option."""
+        return self.frame_with("treasure_pins.png", 940, 340)
 
-    def test_a_frame_without_chests_finds_none(self):
-        frame = cv2.imread(str(REPO_ROOT / "tests" / "images" / "main.png"))
-        self.assertEqual([], find_chests(frame))
+    def test_the_pins_are_found_whatever_the_badge_shows(self):
+        # The arrow template this replaced matched only the old badge. Each point is the badge, as a tap on the square does nothing.
+        layouts = (("mascot badge", self.new_layout(), [(0.523, 0.491), (0.682, 0.377), (0.801, 0.474)]),
+                   ("arrow badge", self.frame_with("treasure_band.png", 915, 362), [(0.524, 0.425), (0.801, 0.430)]))
+        for layout, frame, expected in layouts:
+            with self.subTest(layout):
+                pins = find_pins(frame)
+                self.assertEqual(len(expected), len(pins))
+                for (x, y), (expected_x, expected_y) in zip(pins, expected):
+                    self.assertAlmostEqual(expected_x, x, delta=0.005)
+                    self.assertAlmostEqual(expected_y, y, delta=0.005)
 
-    def test_a_chest_is_opened_before_upstream_can_end_the_event(self):
-        # Upstream's upper-half shortcut clicks "End the event" before it ever looks for chests.
+    def test_a_frame_without_pins_finds_none(self):
+        # A false pin is tapped wherever it is, so stem-like dots beside a lilac highlight must not pass.
+        frames = (("main menu", cv2.imread(str(REPO_ROOT / "tests" / "images" / "main.png"))),
+                  ("lilac art", self.frame_with("pin_lookalike_art.png", 937, 436)))
+        for case, frame in frames:
+            with self.subTest(case):
+                self.assertEqual([], find_pins(frame))
+
+    def run_screen(self, options, frame=None, task=None):
+        """Offer the chest opener one frame, and report where it clicked.
+
+        Args:
+            options: The option descriptions upstream reads on the frame.
+            frame: The frame, the new layout when None.
+            task: A task to reuse across frames, a new one when None.
+
+        Returns:
+            The clicks made, as `(x, y)` fractions.
+        """
         clicks = []
-        task = SimpleNamespace(frame=self.frame_with_band(), all_texts=[FakeBox("End the event", 0.44, 0.84)],
-                               sleep=lambda seconds: None)
-        utils = SimpleNamespace(_move_and_click=lambda _, x, y: clicks.append((x, y)))
-        self.assertTrue(open_a_chest(task, utils))
-        self.assertEqual(1, len(clicks))
+        task = task or SimpleNamespace(sleep=lambda seconds: None)
+        task.frame = self.new_layout() if frame is None else frame
+        utils_ = SimpleNamespace(recognize_event_options=lambda task_: [{"description": text} for text in options],
+                                 _move_and_click=lambda _, x, y: clicks.append((x, y)))
+        open_a_chest(task, utils_)
+        return clicks
 
-    def test_chests_are_left_alone_off_the_event_screen(self):
-        task = SimpleNamespace(frame=self.frame_with_band(), all_texts=[], sleep=lambda seconds: None)
-        utils = SimpleNamespace(_move_and_click=lambda *_: self.fail("clicked off the event screen"))
-        self.assertFalse(open_a_chest(task, utils))
+    def test_a_pin_is_clicked_only_when_leaving_is_the_only_choice(self):
+        # Upstream's upper-half shortcut clicks "End the event" before it ever looks for chests.
+        cases = (("no options", [], 1), ("only Leave", ["LeaveEnd the event"], 1),
+                 ("a real choice", ["LeaveEnd the event", "Investigate the surroundingsIncrease Credits by 120"], 0))
+        for case, options, expected in cases:
+            with self.subTest(case):
+                self.assertEqual(expected, len(self.run_screen(options)))
+
+    def test_a_pin_that_never_goes_away_stops_being_clicked(self):
+        task = SimpleNamespace(sleep=lambda seconds: None)
+        clicked = [self.run_screen([], task=task) for _ in range(8)]
+        # Two tries at each of the three pins, then the frame is handed on rather than clicked forever.
+        self.assertEqual([1, 1, 1, 1, 1, 1, 0, 0], [len(clicks) for clicks in clicked])
+        self.run_screen([], frame=np.zeros((HEIGHT, WIDTH, 3), np.uint8), task=task)
+        self.assertEqual(1, len(self.run_screen([], task=task)))
 
 
 class TestOptionDoubleClick(unittest.TestCase):
