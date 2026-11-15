@@ -10,18 +10,19 @@ keeps the frame around it, and a card the Play Priority list names is still play
 import collections
 import math
 import re
+from pathlib import Path
 
 import cv2
 import numpy as np
 from ok import Logger
 
-from src.en import board, cards, ego, kits, tested
+from src.en import board, cards, ego, kits, story, tested
 from src.en.game_battle import CARD_TARGET
 from src.en.handlers import StandIn, insert_before, loaded, register, replace, standing_in
 from src.en.kits.kit import base_name
 from src.en.overrides import SMART_CARD_PLAY
 from src.en.quality import fold, one_edit_apart
-from src.en.screen import centre_of, colour_share, frame_of, in_region, patch_of, text_in_region
+from src.en.screen import centre_of, frame_of, hsv_of, in_region, patch_of, text_in_region
 
 logger = Logger.get_logger(__name__)
 
@@ -114,12 +115,16 @@ BATTLE_SCREENS = ("handle_battle_crash", "handle_discard_hand_card", "handle_bat
                   "handle_battle_page")
 # Story's Auto handler, which the borrowed screens sit behind. Matched as a prefix, because the recorder renames it.
 AUTO_CHECK = "handle_battle_auto_check"
-# The Auto button, and the flat grey of the padlock it shows where a fight does not allow Auto. The padlock covers 0.096-0.100
-# of the box on three locked fights, and Auto lit gold or any other screen covers at most 0.027.
-AUTO_BUTTON = (0.855, 0.020, 0.900, 0.085)
+# The padlock a fight that does not allow Auto shows in Auto's place, cut from a 1080p capture, and the slot around it as
+# `(left, top, right, bottom)` screen fractions.
+LOCK_IMAGE = Path(__file__).with_name("images") / "story_auto_locked.png"
+AUTO_SLOT = (0.805, 0.010, 0.855, 0.095)
+# The flat grey the padlock is drawn in, as OpenCV HSV bounds.
 LOCK_LOW = np.array((0, 0, 120), dtype=np.uint8)
 LOCK_HIGH = np.array((180, 30, 215), dtype=np.uint8)
-MIN_LOCK = 0.05
+# How closely the padlock has to match. It scored 1.00 on the fight it was cut from, at most 0.32 on any dialogue bar with Auto
+# off or lit, and at most 0.23 over the 847 pre-update captures.
+LOCK_MATCH = 0.6
 # A button this bright is drawn plainly: the padlock peaks at 170, and Auto lit gold or white at 255. A prompt's shade drops the
 # padlock to 74, too dim to tell from the gold, so a shaded button keeps the answer its last plain reading gave. With no plain
 # reading yet, the prompt screens get to look, since Auto's own check would only wait on a prompt.
@@ -1452,6 +1457,10 @@ def install():
         elif count == 0 and turn is not None and turn.ended:
             # The hand is discarded at end turn, so the next deal is a new turn even when it is no bigger than what was left.
             turn.hand_count = 0
+        if count == 0 and (turn is None or turn.ended):
+            # The counter reads 00/10 under the Start Turn banner, before the deal. Live, upstream ended a Story fight's first turn on it.
+            task.log_info("the hand counter reads 0 before the deal, so it gets a frame to settle")
+            return True
         if count:
             turn = turn_of(task, count)
             if getattr(task, TEAM_WANTED, False) and not (turn.played or turn.attempted):
@@ -1529,6 +1538,18 @@ def install():
     logger.info("sortie battles now pick a card instead of pressing every key")
 
 
+def padlock_mask(patch):
+    """Keep only the padlock's flat grey, so it matches whatever the fight draws behind it.
+
+    Args:
+        patch: The pixels to reduce, in BGR.
+
+    Returns:
+        A single-channel image, 255 where the pixel is the padlock's grey and 0 elsewhere.
+    """
+    return cv2.inRange(hsv_of(patch), LOCK_LOW, LOCK_HIGH)
+
+
 def auto_locked(task):
     """Say whether the fight shows the padlock of one that does not allow Auto, remembering it through a shaded prompt.
 
@@ -1538,10 +1559,11 @@ def auto_locked(task):
     Returns:
         True when the last plainly drawn Auto button was the padlock, or when none has been drawn plainly yet.
     """
-    patch = patch_of(frame_of(task), AUTO_BUTTON)
+    frame = frame_of(task)
+    patch = patch_of(frame, AUTO_SLOT)
     # The brightest channel is the HSV value, so this needs no conversion.
     if patch is not None and patch.size and patch.max() >= PLAIN_BUTTON:
-        setattr(task, AUTO_LOCKED, colour_share(patch, LOCK_LOW, LOCK_HIGH) >= MIN_LOCK)
+        setattr(task, AUTO_LOCKED, story.find_icon(frame, LOCK_IMAGE, LOCK_MATCH, AUTO_SLOT, padlock_mask) is not None)
     return getattr(task, AUTO_LOCKED, True)
 
 

@@ -548,7 +548,7 @@ class TestInstalling(unittest.TestCase):
             self.assertEqual([gate, picker, prompt, battle.handle_cards_left, confirm], utils_story.PAGE_HANDLERS)
             self.assertIsNot(picker, utils_sortie.handle_battle_page)
             self.assertIsNot(prompt, utils_sortie.handle_battle_hand_select)
-            left, top, _, _ = battle.AUTO_BUTTON
+            left, top, _, _ = battle.AUTO_SLOT
             # A prompt shades the padlock too dim to read, so the fight has to be remembered from before it. Started on
             # the prompt, there is nothing to remember, and Auto's check would only wait on it.
             task = FakeTask(flat(0))
@@ -1029,6 +1029,16 @@ class TestCallingBackTheTurn(unittest.TestCase):
             for _ in range(battle.SETTLE_WAIT + 1):
                 page(task)
             self.assertEqual(len(utils_sortie.asked), 1)
+
+    def test_an_empty_counter_before_the_deal_does_not_end_the_turn(self):
+        # Live, a Story fight opened on 00/10 under the Start Turn banner, and upstream ended its first turn before the cards came.
+        for case, ended in (("first turn", None), ("next turn", True), ("cards all played", False)):
+            with self.subTest(case), upstream([]) as (utils_sortie, task):
+                battle.install()
+                if ended is not None:
+                    battle.turn_of(task, 3).ended = ended
+                handlers_of(utils_sortie)["handle_battle_page"](task)
+                self.assertEqual(len(utils_sortie.asked), 0 if ended in (None, True) else 1)
 
     def test_a_card_passed_over_for_cost_is_tried_once_the_game_says_it_plays(self):
         # Live, Rossweisse's Sword Resonance showed 0 AP against the data's 1, and was held at 0 AP for good.

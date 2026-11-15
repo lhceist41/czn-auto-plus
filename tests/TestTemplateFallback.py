@@ -183,6 +183,13 @@ class TestTemplateFallback(unittest.TestCase):
         self.assertEqual(["Harmonization: Moon of Destruction", "Distortion: Financial Therapy", "Dark Condensation"],
                          [card["name"] for card in cards])
 
+    def test_a_loose_template_is_held_to_its_higher_score(self):
+        # At upstream's 0.85 the battle entrance matched dialogue frames and the field was tapped mid-fight.
+        for name, kwargs, threshold in (("enterbattle", {"threshold": 0.85}, 0.95), ("enterbattle", {}, 0.95),
+                                        ("enterbattle", {"threshold": 0.97}, 0.97), ("enterstory", {"threshold": 0.85}, 0.85)):
+            with self.subTest(name=name, kwargs=kwargs):
+                self.assertEqual(threshold, templates.floored(name, kwargs).get("threshold"))
+
     def test_the_patch_is_idempotent(self):
         from ok.task.task import FindFeature
 

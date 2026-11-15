@@ -3,6 +3,7 @@
 `ok_tasks/assets/` ships 79 templates and nearly all of them match the Global client unchanged. `leveltag` is a
 crop of 等级, the caption the client draws as "LEVEL" beside a combatant portrait, and the camp's free Epiphany icon
 comes in more sizes than the two templates upstream ships for it. A card-type icon can also match the sparkle beside a party card's portrait.
+The chapter map's battle entrance also matches dialogue and battle frames at the threshold upstream asks for.
 """
 
 import cv2
@@ -31,6 +32,12 @@ TEXT_TEMPLATES = {
 EXTRA_SIZES = {
     "special_flash_luosi": 1.1,
     "special_flash_luosi2": 1.1,
+}
+# Each template that matches the wrong screens at the threshold upstream asks for, and the lowest score it may count at.
+# Real battle entrances scored 0.99-1.00, and upstream's 0.85 let dialogue and battle frames through at 0.85-0.89, which
+# tapped the field mid-fight every few seconds.
+MIN_MATCH = {
+    "enterbattle": 0.95,
 }
 
 # The function every card recognizer reads through, and the name of this change on it.
@@ -89,6 +96,22 @@ def resolve(found, feature_name, task, region):
     if fallback:
         logger.debug(f"{feature_name} template found nothing, matched {len(fallback)} boxes on {captions}")
     return fallback
+
+
+def floored(feature_name, kwargs):
+    """Raise a search's threshold to the lowest score its template may count at on the Global client.
+
+    Args:
+        feature_name: The template, or list of templates, the caller searched for.
+        kwargs: The caller's own search arguments.
+
+    Returns:
+        The search arguments, with `threshold` raised where `MIN_MATCH` sets a higher one.
+    """
+    floor = MIN_MATCH.get(feature_name) if isinstance(feature_name, str) else None
+    if floor is None or (kwargs.get("threshold") or 0) >= floor:
+        return kwargs
+    return {**kwargs, "threshold": floor}
 
 
 def find_at_any_size(find, get_feature, feature_name, **kwargs):
@@ -177,7 +200,7 @@ def install(utils):
 
 
 def apply():
-    """Fall back to the English caption when a Chinese-text template finds nothing, and read past nameless icon matches."""
+    """Fall back to English captions, hold loose templates to a higher score, and read past nameless icon matches."""
     global _patched
     if _patched:
         return
@@ -188,6 +211,7 @@ def apply():
 
     def patched_find_feature(self, feature_name=None, *args, **kwargs):
         find = lambda name, **inner: original_find_feature(self, name, *args, **inner)
+        kwargs = floored(feature_name, kwargs)
         found = find_at_any_size(find, self.get_feature_by_name, feature_name, **kwargs)
         return resolve(found, feature_name, self, kwargs.get("box"))
 
