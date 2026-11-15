@@ -16,7 +16,9 @@ from src.en.battle import PARTY
 from src.en.dashboard import COMBATANTS, UNREAD
 from src.en.handlers import insert_before, loaded, register, replace, standing_in
 from src.en.navigation import team_pending
+from src.en.game_quality import MONSTER_CARDS
 from src.en.overrides import FARMED_COMBATANT
+from src.en.shop import TAKE_MONSTER_REWARDS
 from src.en.screen import combatant_names, same_line
 
 logger = Logger.get_logger(__name__)
@@ -190,7 +192,7 @@ def on_screen(task):
     return list(names.values())
 
 
-def generated_list(task, key, farmed="", free=False):
+def generated_list(task, key, farmed="", free=False, monsters=True):
     """Build the priority list for a setting the user left empty.
 
     Args:
@@ -199,6 +201,7 @@ def generated_list(task, key, farmed="", free=False):
         farmed: The combatant whose save data the run is farming, who is the one equipment is bought for.
             Empty leaves equipment in the order rarity alone puts it.
         free: True on a reward screen, where a team member's own card is worth having at any grade.
+        monsters: False to leave Monster Cards out of the list, from `TAKE_MONSTER_REWARDS` on a reward screen.
 
     Returns:
         The names worth taking, best first, or None when this key is not one we fill in.
@@ -220,6 +223,11 @@ def generated_list(task, key, farmed="", free=False):
             taken += [card for card in held + picked(names, lambda card: cards.owner(card) in party) if card not in taken]
             # A free Upgrade such as Mutation: Iron Wall still beats skipping the reward.
             taken = taken or picked(names, lambda card: cards.category(card) == cards.SETUP_CATEGORY and quality.usable_by(card, classes))
+        if not monsters:
+            skipped = [card for card in taken if card in MONSTER_CARDS]
+            if skipped:
+                logger.debug(f"{TAKE_MONSTER_REWARDS} is off, so the reward leaves {skipped}")
+            taken = [card for card in taken if card not in MONSTER_CARDS]
         # A card the deck already holds adds less than one it lacks, so it goes after every card the deck lacks, at any grade.
         return sorted(taken, key=lambda card: card in cards.DECK)
     # Ordered by who is going to wear it. Rarity still decides, so this only separates pieces that were
@@ -245,7 +253,8 @@ def filling_in(original, task_module, free=False):
             return configured
         # Through `original` rather than the module attribute, which is this function for the length of the
         # call - asking through that would come straight back here.
-        generated = generated_list(task, key, original(task, FARMED_COMBATANT, ""), free)
+        monsters = not free or original(task, TAKE_MONSTER_REWARDS, True)
+        generated = generated_list(task, key, original(task, FARMED_COMBATANT, ""), free, monsters)
         if not generated:
             return configured
         logger.info(f"{task_module}: {key} is empty, offering {generated}")

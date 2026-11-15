@@ -21,6 +21,7 @@ from src.en.dashboard import COMBATANTS as COMBATANTS_ROW  # noqa: E402
 from src.en.game_data import COMBATANTS  # noqa: E402
 from src.en.game_text import DESCRIPTIONS, EPIPHANIES  # noqa: E402
 from src.en.overrides import FARMED_COMBATANT  # noqa: E402
+from src.en.shop import TAKE_MONSTER_REWARDS  # noqa: E402
 from src.en.game_quality import (  # noqa: E402
     CARD_CLASSES, CARD_RARITY, COMBATANT_CLASS, EQUIPMENT_RARITY, EQUIPMENT_SLOT,
 )
@@ -161,6 +162,14 @@ class TestRewardQuality(unittest.TestCase):
         for free, expected in ((True, ["Gale Strike", "Unknown: Mutant Sample"]), (False, ["Gale Strike"])):
             with self.subTest(free=free):
                 self.assertEqual(expected, rewards.generated_list(FakeTask(offer, set()), rewards.SORTIE_CARD_KEY, free=free))
+
+    def test_a_monster_card_reward_is_left_while_its_switch_is_off(self):
+        # Live, Chaos card rewards offered Evil Spirit Dullahan, a Legend Monster Card the auto-filled list took.
+        offer = ["Evil Spirit Dullahan", "Gale Strike"]
+        for takes, expected in ((True, ["Gale Strike", "Evil Spirit Dullahan"]), (False, ["Gale Strike"])):
+            with self.subTest(takes=takes):
+                reader = rewards.filling_in(lambda task, key, default: {TAKE_MONSTER_REWARDS: takes}.get(key, default), "utils", free=True)
+                self.assertEqual(expected, reader(FakeTask(offer, set()), rewards.CARD_KEY, []))
 
     def test_a_card_the_deck_holds_ranks_after_one_it_lacks(self):
         # Live, a second Gale Strike was taken over Unknown: Mutant Sample because its rarity ranked it first.
