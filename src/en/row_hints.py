@@ -61,6 +61,24 @@ class Rule:
         return self.idle is operator.not_
 
 
+# Dependent row key -> its `Rule`. Farm Starting Card is not greyed by Farm Gaps in return, so a config saved with both set
+# still leaves one row the user can clear.
+RULES = {
+    BUY_MONSTER_CARDS: Rule(SHOP_SETTING, operator.not_),
+    PAID_THRESHOLD: Rule(SHOP_SETTING, operator.not_),
+    "装备1号位优先级": Rule(EXTRACT_SPARE, bool),
+    "装备2号位优先级": Rule(EXTRACT_SPARE, bool),
+    "装备3号位优先级": Rule(EXTRACT_SPARE, bool),
+    MODIFIER_BLACKLIST: Rule(REOBSERVE, operator.not_),
+    "刷空档": Rule("刷初始卡牌", bool),
+    TAKE_MONSTER_REWARDS: Rule("卡牌奖励优先级", bool),
+    # Upstream marks the Epiphany found only on a match with this list's first entry, so an empty list restarts every run.
+    "首层刷特定闪光": Rule("闪光优先级", operator.not_, NEEDS_AN_ENTRY),
+    ETCHED_MEMORY: Rule(MEMORY_CARD, bool),
+    MEMORY_BONUS: Rule(MEMORY_CARD, bool),
+}
+
+
 def wrapped(text, metrics, width):
     """Break text into lines no wider than `width`, splitting only between words.
 
@@ -116,8 +134,7 @@ class HoverCard(QWidget):
 class InfoMark(QWidget):
     """The small info icon after a row's title, opening its text in a `HoverCard` while the pointer rests on it.
 
-    Not a Qt tooltip, which starts closing whenever the pointer crosses any widget's edge and is not stopped by coming back with the
-    same text. On a 14px icon that made it vanish and reopen.
+    Drawn here rather than as a Qt tooltip, which starts closing whenever the pointer crosses any widget's edge.
     """
 
     def __init__(self, text, parent=None):
@@ -190,22 +207,30 @@ class InfoMark(QWidget):
             self.card.hide()
 
 
-# Dependent row key -> its `Rule`. Farm Starting Card is not greyed by Farm Gaps in return, so a config saved with both set
-# still leaves one row the user can clear.
-RULES = {
-    BUY_MONSTER_CARDS: Rule(SHOP_SETTING, operator.not_),
-    PAID_THRESHOLD: Rule(SHOP_SETTING, operator.not_),
-    "装备1号位优先级": Rule(EXTRACT_SPARE, bool),
-    "装备2号位优先级": Rule(EXTRACT_SPARE, bool),
-    "装备3号位优先级": Rule(EXTRACT_SPARE, bool),
-    MODIFIER_BLACKLIST: Rule(REOBSERVE, operator.not_),
-    "刷空档": Rule("刷初始卡牌", bool),
-    TAKE_MONSTER_REWARDS: Rule("卡牌奖励优先级", bool),
-    # Upstream marks the Epiphany found only on a match with this list's first entry, so an empty list restarts every run.
-    "首层刷特定闪光": Rule("闪光优先级", operator.not_, NEEDS_AN_ENTRY),
-    ETCHED_MEMORY: Rule(MEMORY_CARD, bool),
-    MEMORY_BONUS: Rule(MEMORY_CARD, bool),
-}
+
+def changed(card, key):
+    """Say whether a row's saved value differs from the mode's default.
+
+    Args:
+        card: The settings card holding the row.
+        key: The row's config key.
+
+    Returns:
+        True when the value was moved off its default.
+    """
+    return card.config.get(key) != card.default_config.get(key)
+
+
+def _column(row):
+    """Return the text column a settings row keeps its title and description in.
+
+    Args:
+        row: A settings row.
+
+    Returns:
+        The column's `QVBoxLayout`.
+    """
+    return row.layout().itemAt(0).layout()
 
 
 def _title_line(row):
@@ -219,7 +244,7 @@ def _title_line(row):
     """
     line = getattr(row, TITLE_LINE_ATTR, None)
     if line is None:
-        column = row.layout().itemAt(0).layout()
+        column = _column(row)
         line = QHBoxLayout()
         line.setSpacing(6)
         column.removeWidget(row.title_label)
@@ -244,19 +269,18 @@ def decorate(card, keys):
         if row is None:
             continue
         line = _title_line(row)
-        if key in TOOLTIPS:
-            mark = InfoMark(TOOLTIPS[key], row)
-            line.insertWidget(line.count() - 1, mark, 0, Qt.AlignmentFlag.AlignVCenter)
         pill = Pill(og.app.tr(CHANGED), "success", row)
         pill.hide()
-        line.insertWidget(line.count() - 1, pill, 0, Qt.AlignmentFlag.AlignVCenter)
+        for widget in (InfoMark(TOOLTIPS[key], row) if key in TOOLTIPS else None, pill):
+            if widget is not None:
+                line.insertWidget(line.count() - 1, widget, 0, Qt.AlignmentFlag.AlignVCenter)
         setattr(row, PILL_ATTR, pill)
         rule = RULES.get(key)
         if rule is not None and rule.note:
             note = Label("", "secondary", row, word_wrap=True)
             note.setMaximumWidth(row.description_label.maximumWidth())
             note.hide()
-            column = row.layout().itemAt(0).layout()
+            column = _column(row)
             column.insertWidget(column.indexOf(row.description_label) + 1, note)
             setattr(row, NOTE_ATTR, note)
 
@@ -270,7 +294,7 @@ def refresh(card):
     for row in card.config_widgets:
         pill = getattr(row, PILL_ATTR, None)
         if pill is not None:
-            pill.setVisible(card.config.get(row.key) != card.default_config.get(row.key))
+            pill.setVisible(changed(card, row.key))
     for key, rule in RULES.items():
         row = card.config_widget_by_key.get(key)
         if row is None or rule.controller not in card.config_widget_by_key:

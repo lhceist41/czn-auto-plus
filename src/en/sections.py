@@ -104,7 +104,7 @@ def _label(card, section):
         card: The settings card holding the section.
         section: The `Section` whose count is updated.
     """
-    changed = sum(1 for row in section.rows if card.config.get(row.key) != card.default_config.get(row.key))
+    changed = sum(1 for row in section.rows if row_hints.changed(card, row.key))
     section.count.setText(f"· {og.app.tr(CHANGED).format(changed)}")
     section.count.setVisible(bool(changed))
 
@@ -147,7 +147,8 @@ def place_sections(card):
     """
     layout = card.viewLayout
     top = [card.config_widget_by_key[key] for key in TOP if key in card.config_widget_by_key]
-    start = min((layout.indexOf(widget) for widget in card.config_widgets if layout.indexOf(widget) >= 0), default=0)
+    indexes = [layout.indexOf(widget) for widget in card.config_widgets]
+    start = min((index for index in indexes if index >= 0), default=0)
     for row in top:
         layout.removeWidget(row)
     for index, row in enumerate(top, start):
@@ -187,7 +188,7 @@ def add_sections(card):
     # The framework's own re-sort follows `config_keys`, so the top rows lead it and the section rows trail it.
     top = [key for key in laid_out if key in TOP]
     rest = [key for key in card.config_keys if key not in laid_out]
-    card.config_keys[:] = [*top, *rest, *(key for key in laid_out if key not in TOP)]
+    card.config_keys[:] = [*top, *rest, *laid_out[len(top):]]
     sections = []
     for title, keys in SECTIONS:
         present = [key for key in keys if key in card.config_widget_by_key]

@@ -541,7 +541,7 @@ class TestHealing(unittest.TestCase):
         # Against upstream's own handler, so a renamed switch fails here. Unwrapped it takes the pass, which shows the switch is what moves it.
         credits, pass_ = (0.702, 0.924), (0.798, 0.924)
         for handler, expected in ((heal.paying_credits(utils_chaos.handle_trauma_center, utils_chaos), credits), (utils_chaos.handle_trauma_center, pass_)):
-            with self.subTest(wrapped=expected is credits):
+            with self.subTest("wrapped" if expected is credits else "unwrapped"):
                 clicked = []
                 task = SimpleNamespace(config={}, default_config={}, log_info=lambda message: None, sleep=lambda seconds: None,
                                        ocr=lambda *region: [FakeBox("1", 0.95, 0.92)])
