@@ -25,10 +25,10 @@ from src.en.shop import BUY_MONSTER_CARDS, PAID_THRESHOLD, TAKE_MONSTER_REWARDS
 
 logger = Logger.get_logger(__name__)
 
-# The settings shown first and never folded, in this order: the farmed combatant and the loot claim, the rest of the party,
-# then the run, then what rerolls the Chaos start page. Chaos claims through the first loot key and Sortie through the second.
-TOP = [FARMED_COMBATANT, "领取奖励(只使用验证卡)", "领取奖励", "出战主战员优先级", "主战员优先级", "拉黑主战员",
-       "几轮后停止(0为不停止)", "第几层boss前自动暂停", "只打第一层",
+# The settings shown first and never folded, in this order: the farmed combatant and the loot claim, then the run, then the
+# rest of the party, then what rerolls the Chaos start page. Chaos claims through the first loot key and Sortie through the second.
+TOP = [FARMED_COMBATANT, "领取奖励(只使用验证卡)", "领取奖励", "几轮后停止(0为不停止)", "第几层boss前自动暂停", "只打第一层",
+       "出战主战员优先级", "主战员优先级", "拉黑主战员",
        SAVE_LIMIT_KEY, REOBSERVE, MODIFIER_BLACKLIST, "刷初始卡牌", "刷空档"]
 # Header title -> the settings folded under it, in the order they are shown. Both modes share the lists and a card draws only
 # the keys it carries, so a section with none of them is not drawn. A key in neither list stays above everything.
