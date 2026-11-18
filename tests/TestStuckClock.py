@@ -472,18 +472,19 @@ class TestMeditation(unittest.TestCase):
                 handler(task)
                 self.assertEqual(meditates, self.ICON in clicked)
 
-    def card_screen(self, pinned, again_active):
+    def card_screen(self, pinned, again_active, way_out="取消"):
         """Build a task on the card screen Meditation opens, one card on it.
 
         Args:
             pinned: Whether the card carries the build preset's pin.
             again_active: Whether "Epiphany Again" is lit, meaning a card is already chosen.
+            way_out: The back-out button's label: Cancel after a Safe Zone, Skip when a battle reward opens the screen.
 
         Returns:
             A `(task, tapped, stand_ins)` trio: the task, every box or point tapped, and the upstream helpers to patch into `utils`.
         """
         tapped = []
-        again, cancel = FakeBox("重新闪光", 0.9, 0.93, width=300), FakeBox("取消", 0.72, 0.93)
+        again, cancel = FakeBox("重新闪光", 0.9, 0.93, width=300), FakeBox(way_out, 0.77, 0.93)
         task = SimpleNamespace(width=1920, height=1080, all_texts=[FakeBox("冥想重构卡牌", 0.27, 0.05, width=700), again, cancel],
                                log_info=lambda message: None, sleep=lambda seconds: None, click_box=tapped.append)
         stand_ins = dict(
@@ -493,14 +494,14 @@ class TestMeditation(unittest.TestCase):
             _move_and_click=lambda task_, x, y: tapped.append((x, y)))
         return task, tapped, stand_ins
 
-    def test_a_pinned_card_is_taken_and_none_backs_out_to_rest(self):
+    def test_a_pinned_card_is_taken_and_none_backs_out(self):
         # Patched onto the real `utils`, so a rename upstream fails here. A chosen card is left to upstream's Epiphany Again, since
         # tapping it again would only un-choose it.
-        for why, pinned, again_active, claimed, expected, meditating in (
-                ("pinned", True, False, True, [(0.355, 0.3)], None), ("none pinned", False, False, True, ["取消"], False),
-                ("already chosen", True, True, False, [], None)):
+        for why, pinned, again_active, way_out, claimed, expected, meditating in (
+                ("pinned", True, False, "取消", True, [(0.355, 0.3)], None), ("none pinned", False, False, "取消", True, ["取消"], False),
+                ("none pinned, reward screen", False, False, "跳过", True, ["跳过"], False), ("already chosen", True, True, "取消", False, [], None)):
             with self.subTest(why):
-                task, tapped, stand_ins = self.card_screen(pinned, again_active)
+                task, tapped, stand_ins = self.card_screen(pinned, again_active, way_out)
                 with mock.patch.multiple(utils, **stand_ins):
                     self.assertIs(claimed, meditation.pick_handler(utils)(task))
                 self.assertEqual(expected, [getattr(item, "name", item) for item in tapped])

@@ -10,6 +10,7 @@ import numpy as np
 
 from ok import Logger
 
+from src.en.desire import SKIP
 from src.en.handlers import insert_before, loaded, register, standing_in, wrap
 from src.en.reobserve import number_in
 from src.en.rest import interactions_left
@@ -48,7 +49,8 @@ POPUP_BUTTONS = (0.15, 0.6, 0.85, 0.75)
 PICK = "冥想重构卡牌"
 PICK_TAIL = "an Epiphany again"
 PICK_CAPTION = (0.08, 0.0, 0.65, 0.09)
-# The screen's buttons along the bottom right: Cancel, and "Epiphany Again" which `ocr.po` rewrites to upstream's literal.
+# The screen's buttons along the bottom right: a way out, and "Epiphany Again" which `ocr.po` rewrites to upstream's literal. The way out
+# reads Cancel after a Safe Zone's Meditation and Skip when a battle reward opens the same screen.
 PICK_CANCEL = (0.62, 0.88, 0.81, 0.98)
 EPIPHANY_AGAIN = "重新闪光"
 EPIPHANY_AGAIN_POINT = (0.945, 0.918)
@@ -197,7 +199,7 @@ def handle_meditation_popup(task):
 
 
 def pick_handler(utils):
-    """Build the handler for the card screen, which takes the first pinned card and otherwise backs out to Rest.
+    """Build the handler for the card screen, which takes the first pinned card and otherwise backs out with Cancel or Skip.
 
     Args:
         utils: Upstream's `utils` module.
@@ -226,12 +228,12 @@ def pick_handler(utils):
             setattr(task, SCROLLS, scrolls + 1)
             utils._scroll_card_page(task, *SCROLL_POINT, -3, "meditation")
             return True
-        cancel = text_in_region(task, CANCEL, PICK_CANCEL)
-        if cancel is None:
+        way_out = text_in_region(task, CANCEL, PICK_CANCEL) or text_in_region(task, SKIP, PICK_CANCEL)
+        if way_out is None:
             return False
-        task.log_info(f"no pinned card among {[card['name'] for card in cards]}, so resting instead")
+        task.log_info(f"no pinned card among {[card['name'] for card in cards]}, so backing out")
         decide(task, False)
-        task.click_box(cancel)
+        task.click_box(way_out)
         task.sleep(1)
         return True
 
