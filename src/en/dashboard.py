@@ -5,6 +5,8 @@ version and language that never change, three boss flags, and a team and its gea
 `present` turns each upstream write into the rows actually drawn.
 """
 
+import time
+
 from ok import Logger
 
 from src.en.framework import import_ui
@@ -21,6 +23,8 @@ COMBATANTS = "Combatants"
 UNREAD = "-"
 # The framework's own row for the last logged line.
 LOG = "Log"
+# How long the last run took, drawn above Log once it ends. The header shows the live clock while a run is going.
+ELAPSED = "Time Elapsed"
 # Upstream's equipment row, and where the run keeps the reading that fills the team rows instead. Upstream fills its
 # row from a ledger of what the run installed, so `src/en/equipment.py` reads the screens that show the whole team and
 # leaves a line like `Legend/Rare/Mythic, -/Rare/Legend` here, one column per combatant.
@@ -55,10 +59,10 @@ YES_NO = {"True": "Yes", "False": "No", True: "Yes", False: "No"}
 # What every meditation row's key starts with once translated. One row per card, so they rank as a group.
 MEDITATING = TEMPLATES["冥想：{}"].split("{0}")[0]
 # Top to bottom: what moves during a run, then the Target flags. The team's rows rank where `COMBATANTS` does.
-ORDER = (LOG, FLOOR_ROW, MESSAGES["当前信用点"], RUNS, COMBATANTS, DECK, MEDITATING, TARGET_EPIPHANY, TARGET_PORTRAIT)
+ORDER = (ELAPSED, LOG, FLOOR_ROW, MESSAGES["当前信用点"], RUNS, COMBATANTS, DECK, MEDITATING, TARGET_EPIPHANY, TARGET_PORTRAIT)
 # The rows every Chaos or Sortie run fills, seeded blank at the start. The Target rows depend on settings and the
 # meditation rows are one per configured card, so those arrive with the first status report.
-STARTED = tuple(key for key in ORDER if key not in (MEDITATING, TARGET_EPIPHANY, TARGET_PORTRAIT))
+STARTED = tuple(key for key in ORDER if key not in (ELAPSED, MEDITATING, TARGET_EPIPHANY, TARGET_PORTRAIT))
 # Each ranked row's position in `ORDER`.
 RANKS = {key: position for position, key in enumerate(ORDER)}
 
@@ -226,6 +230,8 @@ def seeding_the_table(original):
     """
     def info_clear_seeded(self):
         original(self)
+        # The last run's start, so a task stopped while still queued has no time to stamp. The header reads 0 as no run too.
+        self.start_time = 0
         # The last run's team, so its rows are not redrawn before this run reads its own.
         setattr(self, TEAM_NAMES, None)
         # `node_status` is built in a mode's `__init__`, so it is there to be asked long before a Start. Story
@@ -236,6 +242,27 @@ def seeding_the_table(original):
             self.info[key] = UNREAD
 
     return info_clear_seeded
+
+
+def stamping_elapsed(original, format_elapsed):
+    """Wrap `disable` so a run that ends - stopped, finished or crashed - leaves its running time as the top Info row.
+
+    The next Start clears the table, so the row is gone again while that run's clock is in the header.
+
+    Args:
+        original: The unbound `disable` being replaced.
+        format_elapsed: ok-script's own clock formatter, so the row reads like the header did.
+
+    Returns:
+        The replacement.
+    """
+    def disable_stamped(self):
+        started = getattr(self, "start_time", 0)
+        if self.enabled and started:
+            self.info_set(ELAPSED, format_elapsed(time.time() - started))
+        return original(self)
+
+    return disable_stamped
 
 
 def headless(original):
@@ -267,6 +294,9 @@ def apply():
     else:
         BaseTask.info_set = ordering(BaseTask.info_set)
         BaseTask.info_clear = seeding_the_table(BaseTask.info_clear)
+        format_elapsed = import_ui("shell.run_bar", "format_elapsed")
+        if format_elapsed is not None:
+            BaseTask.disable = stamping_elapsed(BaseTask.disable, format_elapsed)
 
     task_detail = import_ui("tasks.tasks_page", "TaskDetail")
     if task_detail is not None:

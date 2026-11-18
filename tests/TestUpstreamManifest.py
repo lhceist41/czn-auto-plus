@@ -123,6 +123,8 @@ class TestUpstreamManifest(unittest.TestCase):
 
         self.assertTrue(hasattr(BaseTask, "after_init"))
         self.assertTrue(hasattr(BaseTask, "load_config"))
+        # dashboard.py stamps the Time Elapsed row on `disable`, the one call every way a run ends goes through.
+        self.assertTrue(hasattr(BaseTask, "disable"))
 
     def test_every_ui_class_the_patches_look_up_still_exists(self):
         # `import_ui` skips a patch when a class is gone and only logs it, so the feature vanishes with no error to see.
