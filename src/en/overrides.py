@@ -83,9 +83,9 @@ SINGLE_CHOICE = {
 }
 # Upstream defaults the fork overrides. A saved config keeps whatever it already holds. The shop's Credit threshold
 # is `NEVER_PAY`, so a run never pays to reroll unless the user raises it. Both loot claims start on. Chaos's is safe
-# since upstream switches it off once the Loot Certification Cards run out.
+# since upstream switches it off once the Loot Certification Cards run out. First Floor Only starts off in both modes.
 NEVER_PAY = -1
-FORCED_DEFAULTS = {SHOP_SETTING: True, PAID_THRESHOLD: NEVER_PAY, "领取奖励(只使用验证卡)": True, "领取奖励": True}
+FORCED_DEFAULTS = {SHOP_SETTING: True, PAID_THRESHOLD: NEVER_PAY, "领取奖励(只使用验证卡)": True, "领取奖励": True, "只打第一层": False}
 # Number settings whose range the fork pins. ok-script opens a negative default's range to -999999 and floors a positive
 # one at 1, which would stop the save threshold reaching its keep-everything 0.
 NUMBER_RANGES = {PAID_THRESHOLD: {"min": NEVER_PAY}, "保留大于多少TB的存档": {"min": 0}}
