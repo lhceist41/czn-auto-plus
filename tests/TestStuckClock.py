@@ -25,7 +25,7 @@ import utils  # noqa: E402
 import utils_chaos  # noqa: E402
 import utils_sortie  # noqa: E402
 
-from src.en import meditation, notify, obtain, rest, stuck  # noqa: E402
+from src.en import heal, meditation, notify, obtain, rest, stuck  # noqa: E402
 from tests.fakes import FakeBox  # noqa: E402
 
 # Small enough to keep the detector's resize and diff cheap, large enough to survive dividing by four.
@@ -532,6 +532,24 @@ class TestMeditation(unittest.TestCase):
                 with self.subTest(module=module.__name__, handler=handler):
                     anchor = next(name for name in anchors if name in names)
                     self.assertLess(names.index(handler), names.index(anchor))
+
+
+class TestHealing(unittest.TestCase):
+    """The Trauma Center pays Credits even with a Communication Pass in hand."""
+
+    def test_credits_are_paid_while_a_pass_is_held(self):
+        # Against upstream's own handler, so a renamed switch fails here. Unwrapped it takes the pass, which shows the switch is what moves it.
+        credits, pass_ = (0.702, 0.924), (0.798, 0.924)
+        for handler, expected in ((heal.paying_credits(utils_chaos.handle_trauma_center, utils_chaos), credits), (utils_chaos.handle_trauma_center, pass_)):
+            with self.subTest("wrapped" if expected is credits else "unwrapped"):
+                clicked = []
+                task = SimpleNamespace(config={}, default_config={}, log_info=lambda message: None, sleep=lambda seconds: None,
+                                       ocr=lambda *region: [FakeBox("1", 0.95, 0.92)])
+                with mock.patch.multiple(utils_chaos, find_box_at_point=lambda *args: FakeBox("创伤中心", 0.125, 0.049),
+                                         _get_game_text=lambda task_, text: text, find_text=lambda *args: None,
+                                         _move_and_click=lambda task_, x, y: clicked.append((x, y))):
+                    self.assertIs(True, handler(task))
+                self.assertEqual(expected, clicked[-1])
 
 
 if __name__ == "__main__":

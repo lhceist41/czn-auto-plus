@@ -334,10 +334,10 @@ msgid "复制卡牌列表"
 msgstr "Cards to Copy"
 
 msgid "闪光卡牌列表"
-msgstr "Epiphany Card List"
+msgstr "Cards to Epiphany"
 
 msgid "闪光优先级"
-msgstr "Epiphany Priority"
+msgstr "Preferred Epiphany Keywords"
 
 msgid "丢弃卡牌优先级"
 msgstr "Discard Priority"
@@ -362,7 +362,34 @@ msgstr "Take Monster Card Rewards"
 msgid "Extract Spare Equipment"
 msgstr "Extract Spare Equipment"
 
-# Section headers this fork draws over the seasonal settings, English for the same reason.
+# Section headers this fork draws over the mode settings, English for the same reason.
+msgid "Map"
+msgstr "Map"
+
+msgid "Battle"
+msgstr "Battle"
+
+msgid "Cards"
+msgstr "Cards"
+
+msgid "Equipment"
+msgstr "Equipment"
+
+msgid "Safe Zone"
+msgstr "Safe Zone"
+
+msgid "Saves"
+msgstr "Saves"
+
+msgid "Changed"
+msgstr "Changed"
+
+msgid "Needs an entry in {}."
+msgstr "Needs an entry in {}."
+
+msgid "{} changed"
+msgstr "{} changed"
+
 msgid "Season 3 - Persona"
 msgstr "Season 3 - Persona"
 
@@ -381,9 +408,6 @@ msgstr "Memory Bonus"
 
 msgid "Enter End of Memory"
 msgstr "Enter End of Memory"
-
-msgid "Re-observe"
-msgstr "Re-observe"
 
 # The Re-observe settings this fork adds, English for the same reason.
 msgid "Re-observe Bad Modifiers"
@@ -426,7 +450,7 @@ msgid "生命值大于多少优先闪光(百分比)"
 msgstr "Epiphany First Above This Health (%)"
 
 msgid "主战员优先级"
-msgstr "Combatant Priority"
+msgstr "Combatant Pick Priority"
 
 msgid "出战主战员优先级"
 msgstr "Deployed Combatant Priority"
@@ -468,7 +492,7 @@ msgid "进入商店"
 msgstr "Enter Dellang Shop"
 
 msgid "几轮后停止(0为不停止)"
-msgstr "Stop After This Many Rounds (0 = never)"
+msgstr "Stop After This Many Runs (0 = never)"
 
 msgid "第几层boss前自动暂停"
 msgstr "Auto-Pause Before Boss on Floor"
@@ -489,13 +513,10 @@ msgid "拉黑任务"
 msgstr "Blocked Unidentified Area Options"
 
 msgid "领取奖励"
-msgstr "Claim Rewards"
+msgstr "Claim Chaos Loot"
 
 msgid "领取奖励(只使用验证卡)"
 msgstr "Claim Additional Loot with Loot Certification Cards"
-
-msgid "优先使用金币治疗"
-msgstr "Prefer Paying Credits to Heal"
 
 msgid "治疗崩溃"
 msgstr "Treat Breakdown"
@@ -532,7 +553,7 @@ msgstr "Increases this unit's total attack card damage by 30%."
 
 msgid "默认刷闪光优先级第一张，可刷神闪，第一层没刷出自动逃脱"
 msgstr ""
-"Farms the first entry in Epiphany Priority, so it can chase a Divine Epiphany. "
+"Farms the first entry in Preferred Epiphany Keywords, so it can chase a Divine Epiphany. "
 "Retreats automatically if floor 1 does not produce one."
 
 msgid "填写目标卡牌名称后反复刷新初始卡牌；不能与“刷空档”同时使用。"
@@ -577,6 +598,18 @@ msgstr "Auto"
 
 msgid "auto_analysis"
 msgstr "Auto Analysis"
+
+msgid "Game Language"
+msgstr "Game Language"
+
+msgid "The language the game itself shows, so the bot can read its screens. Use English for the Global client."
+msgstr "The language the game itself shows, so the bot can read its screens. Use English for the Global client."
+
+msgid "App Language"
+msgstr "App Language"
+
+msgid "The language of this app's menus and settings."
+msgstr "The language of this app's menus and settings."
 
 msgid "赞赏支持"
 msgstr "Sponsor"

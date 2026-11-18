@@ -312,9 +312,6 @@ msgstr "主战员优先级"
 msgid "任务优先级"
 msgstr "任务优先级"
 
-msgid "优先使用金币治疗"
-msgstr "优先使用金币治疗"
-
 msgid "优先移除基础牌"
 msgstr "优先移除基础牌"
 
@@ -594,6 +591,33 @@ msgstr "自动"
 msgid "Desire Faction"
 msgstr "Desire Faction"
 
+msgid "Map"
+msgstr "地图"
+
+msgid "Battle"
+msgstr "战斗"
+
+msgid "Cards"
+msgstr "卡牌"
+
+msgid "Equipment"
+msgstr "装备"
+
+msgid "Safe Zone"
+msgstr "安全区"
+
+msgid "Saves"
+msgstr "存档"
+
+msgid "Changed"
+msgstr "已修改"
+
+msgid "Needs an entry in {}."
+msgstr "需要先在“{}”中填写至少一项。"
+
+msgid "{} changed"
+msgstr "已改 {} 项"
+
 msgid "Season 3 - Persona"
 msgstr "第三赛季 - 人格面具"
 
@@ -611,9 +635,6 @@ msgstr "记忆加成"
 
 msgid "Enter End of Memory"
 msgstr "进入记忆之末"
-
-msgid "Re-observe"
-msgstr "再次观测"
 
 msgid "Re-observe Bad Modifiers"
 msgstr "再次观测拉黑词条"
@@ -650,6 +671,18 @@ msgstr "Survival"
 
 msgid "auto_analysis"
 msgstr "自动分析"
+
+msgid "Game Language"
+msgstr "游戏语言"
+
+msgid "The language the game itself shows, so the bot can read its screens. Use English for the Global client."
+msgstr "游戏本身显示的语言，用于让脚本正确识别画面。国际服请选择 English。"
+
+msgid "App Language"
+msgstr "应用语言"
+
+msgid "The language of this app's menus and settings."
+msgstr "本程序菜单与设置使用的语言。"
 
 msgid "Auto Analysis"
 msgstr "自动分析"

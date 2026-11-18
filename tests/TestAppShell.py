@@ -16,7 +16,7 @@ from ok.util.config import Config  # noqa: E402
 
 from src import config as src_config  # noqa: E402
 from src.config import config  # noqa: E402
-from src.en import devices, kept_forms, monitors, shell, shutdown, task_list  # noqa: E402
+from src.en import devices, game_language, kept_forms, monitors, shell, shutdown, task_list  # noqa: E402
 from src.en.framework import import_ui  # noqa: E402
 from tests.fakes import EchoApp  # noqa: E402
 
@@ -416,6 +416,29 @@ class TestTasksPage(unittest.TestCase):
         self.assertEqual("Modes", page.onetime_section.title_label.text())
         self.assertEqual(task_list.LIST_WIDTH, page.onetime_section.parentWidget().width())
         self.assertEqual((True, ""), (row.description_label.isHidden(), row.description_label.text()))
+
+
+class TestSettingsPage(unittest.TestCase):
+    """Game Language sits under App Config on the real Settings page, which a rename there would silently undo."""
+
+    def test_game_language_sits_right_under_the_app_language(self):
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        from PySide6.QtWidgets import QApplication
+        from ok import og
+
+        app = QApplication.instance() or QApplication([])
+        game_language.apply()
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        saved = Config(game_language.CONFIG_NAME, game_language.language_option.default_config, folder=folder.name)
+        fake_global = types.SimpleNamespace(get_config=lambda option: saved)
+        with mock.patch.object(og, "app", EchoApp()), mock.patch.object(og, "executor", None), mock.patch.object(og, "global_config", fake_global, create=True):
+            page = import_ui("settings.settings_page", "SettingsPage")()
+            rows = page.appearance_section.findChildren(import_ui("kit.cards", "SettingRow"))
+            titles = [row.title_label.text() for row in rows]
+        self.assertIsNotNone(app)
+        self.assertEqual([game_language.APP_LABEL, game_language.LABEL], titles[-2:])
+        self.assertEqual(game_language.ENGLISH, rows[-1].combo_box.currentText())
 
 
 class TestEmulatorConnect(unittest.TestCase):
