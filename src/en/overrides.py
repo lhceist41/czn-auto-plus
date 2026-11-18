@@ -82,8 +82,8 @@ SINGLE_CHOICE = {
     FARMED_COMBATANT: ([NO_COMBATANT, *COMBATANTS], NO_COMBATANT),
 }
 # Upstream defaults the fork overrides. A saved config keeps whatever it already holds. The shop's Credit threshold
-# is `NEVER_PAY`, so a run never pays to reroll unless the user raises it. Both loot claims start on. Chaos's is safe
-# since upstream switches it off once the Loot Certification Cards run out. First Floor Only starts off in both modes.
+# is `NEVER_PAY`, so a run never pays to reroll unless the user raises it. Both loot claims start on, and neither one
+# spends Aether - `src/en/loot_cards.py` and `src/en/reason.py` skip the loot instead. First Floor Only starts off in both modes.
 NEVER_PAY = -1
 FORCED_DEFAULTS = {SHOP_SETTING: True, PAID_THRESHOLD: NEVER_PAY, "领取奖励(只使用验证卡)": True, "领取奖励": True, "只打第一层": False}
 # Number settings whose range the fork pins. ok-script opens a negative default's range to -999999 and floors a positive
@@ -160,7 +160,7 @@ TOOLTIPS = {
     DESIRE_FACTION: "Reaching 3, 5 or 7 points in a single faction is worth far more than points spread across several.",
     SMART_CARD_PLAY: "Spends each turn's Action Points on the cards worth the most damage, shield and draw, and plays a combatant's cards in"
                      " the order their kit needs. Cards named in Card Play Priority are still played first.",
-    "领取奖励(只使用验证卡)": "Turns itself off once they run out, so a run never pays Aether for loot.",
+    "领取奖励(只使用验证卡)": "Once they run out, the rest of that run's Additional Loot is left. It never pays Aether for loot.",
     "领取奖励": "It never charges Reason with Aether, so once Reason runs out the rest of that run's loot is left.",
     "存储数据保存上限大于多少": "This picks the run, it never deletes anything.",
     "保留大于多少TB的存档": "Runs on the Save Data collection screen to free slots. Not the same as Minimum Save Data Storage Limit, which picks"
