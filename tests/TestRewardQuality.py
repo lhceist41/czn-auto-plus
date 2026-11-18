@@ -11,11 +11,12 @@ sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(REPO_ROOT / "ok_tasks"))
 
 # The real module, so the Settlement check fails if upstream stops reading the claim setting the way the fork stands in for it.
+import utils_chaos  # noqa: E402
 import utils_sortie  # noqa: E402
 # Held here rather than looked up by name, since other modules in the same run stand stubs in for it.
 import utils  # noqa: E402
 
-from src.en import cards, dashboard, navigation, piles, reason, rewards  # noqa: E402
+from src.en import cards, dashboard, loot_cards, navigation, piles, reason, rewards  # noqa: E402
 from src.en.battle import PARTY  # noqa: E402
 from src.en.dashboard import COMBATANTS as COMBATANTS_ROW  # noqa: E402
 from src.en.game_data import COMBATANTS  # noqa: E402
@@ -776,3 +777,32 @@ class TestObtainNeedsReason(unittest.TestCase):
                 with standing_in(utils_sortie, _move_and_click=lambda task_, x, y: clicks.append((x, y))):
                     reason.with_reason_only(utils_sortie.handle_sortie_reward_claim, utils_sortie)(task)
                 self.assertEqual([point], clicks)
+
+
+class TestLootCardsRunOut(unittest.TestCase):
+    """Chaos's Additional Loot setting, which upstream saved as off for good the first time the cards read 0."""
+
+    def test_a_claim_with_no_cards_is_cancelled_and_the_setting_kept(self):
+        # Any other count is left to upstream's own handler, which claims with the card.
+        for counter, handled in (("0/3", True), ("2/3", False)):
+            with self.subTest(counter):
+                clicks = []
+                task = types.SimpleNamespace(all_texts=[FakeBox("获得", *loot_cards.CLAIM_POINT), FakeBox(counter, *loot_cards.CARD_COUNTER_POINT, width=40)],
+                                             width=WIDTH, height=HEIGHT, config={loot_cards.CLAIMING: True}, node_status={},
+                                             log_info=lambda message: None, sleep=lambda seconds: None)
+                with standing_in(utils_chaos, _move_and_click=lambda task_, x, y: clicks.append((x, y))):
+                    self.assertIs(handled, loot_cards.no_cards_handler(utils_chaos)(task))
+                self.assertEqual([loot_cards.CANCEL_POINT] if handled else [], clicks)
+                self.assertIs(handled, task.node_status.get(loot_cards.OUT_OF_CARDS, False))
+
+    def test_obtain_is_skipped_for_the_rest_of_a_run_out_of_cards(self):
+        # Without this the Settlement presses Obtain again, the claim is cancelled again, and the run never leaves.
+        for out_of_cards in (False, True):
+            with self.subTest(out_of_cards=out_of_cards):
+                pressed = []
+                task = types.SimpleNamespace(all_texts=[FakeBox("结算", 0.552, 0.067), FakeBox("获得", 0.851, 0.389)], width=WIDTH, height=HEIGHT,
+                                             config={loot_cards.CLAIMING: True}, node_status={loot_cards.OUT_OF_CARDS: out_of_cards},
+                                             click_box=lambda box: pressed.append(box.name), log_info=lambda message: None, sleep=lambda seconds: None)
+                with standing_in(utils_chaos, _finish_only_first_layer=lambda task_: True):
+                    loot_cards.with_cards_only(utils_chaos.handle_chaos_reward_settlement, utils_chaos)(task)
+                self.assertEqual([] if out_of_cards else ["获得"], pressed)
