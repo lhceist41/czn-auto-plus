@@ -120,21 +120,27 @@ class TestReporting(unittest.TestCase):
                 self.echoed.append(key)
             self.info[key] = value
 
-    def report(self, task, rows):
+    @staticmethod
+    def report(task, rows):
         """Put rows through the patched `info_set`.
 
         Args:
             task: The fake task to report on.
             rows: `(key, value)` pairs, in order.
+
+        Returns:
+            The task's rows.
         """
-        patched = log_text.reporting(self.Task.info_set)
+        log_text._compile_templates()
+        patched = log_text.reporting(TestReporting.Task.info_set)
         for key, value in rows:
             patched(task, key, value)
+        return task.info
 
     def test_a_row_that_did_not_move_is_not_echoed_again(self):
         task = self.Task()
-        self.report(task, [("版本号", "dev")] * 5)
-        self.assertEqual(["Version"], task.echoed)
+        self.report(task, [("当前信用点", "203")] * 5)
+        self.assertEqual(["Credits"], task.echoed)
 
     def test_a_row_that_moved_is_echoed(self):
         task = self.Task()
@@ -144,8 +150,8 @@ class TestReporting(unittest.TestCase):
     def test_the_tab_still_gets_every_row_whether_or_not_it_moved(self):
         # Withholding the echo must never withhold the row: the tab reads `info`, not the log.
         task = self.Task()
-        self.report(task, [("版本号", "dev")] * 3 + [("是否已逃脱", "False")])
-        self.assertEqual({"Version": "dev", "Escaped": "No"}, task.info)
+        self.report(task, [("当前信用点", "203")] * 3 + [("是否已逃脱", "False"), ("版本号", "dev")])
+        self.assertEqual({"Credits": "203"}, task.info, "a hidden row is never drawn")
 
     def test_the_rows_a_catalog_could_not_reach_are_english(self):
         # These three are composed at runtime, so `og.app.tr` could never have matched them whole.
@@ -201,47 +207,72 @@ class TestSayOnce(unittest.TestCase):
 
 
 class TestReadingOrder(unittest.TestCase):
-    """The Info rows as drawn, once every row has been written in upstream's order."""
+    """The Info rows as drawn, once every row has been written out of order."""
 
-    def test_upstream_write_order_comes_out_in_reading_order(self):
-        # Every dashboard row gets a rank of its own. One that falls through to the bottom would mean ORDER
-        # stopped naming it, which is what an added or re-keyed upstream row would look like.
+    def test_rows_come_out_in_reading_order(self):
+        # A row that falls through to the bottom would mean ORDER stopped naming it.
         meditations = ["Meditating on Shock", "Meditating on Rally"]
-        written = ["Log", *(MESSAGES[key] for key in DASHBOARD_KEYS[:-1]), *meditations, MESSAGES["当前胜率"],
-                   dashboard.COMBATANTS, "Something new"]
+        team = ["Hugo", "Owen"]
+        written = [dashboard.TARGET_PORTRAIT, dashboard.DECK, *meditations, "Something new", dashboard.RUNS, *team,
+                   MESSAGES["当前信用点"], dashboard.FLOOR_ROW, dashboard.LOG]
         task = TestReporting.Task()
+        setattr(task, dashboard.TEAM_NAMES, team)
         info_set = dashboard.ordering(TestReporting.Task.info_set)
         for key in written:
             info_set(task, key, "")
 
-        position = dashboard.RANKS[dashboard.MEDITATING]
-        expected = [*dashboard.ORDER[:position], *meditations, *dashboard.ORDER[position + 1:], "Something new"]
+        expected = [dashboard.LOG, dashboard.FLOOR_ROW, MESSAGES["当前信用点"], dashboard.RUNS, *team, dashboard.DECK,
+                    *meditations, dashboard.TARGET_PORTRAIT, "Something new"]
         self.assertEqual(expected, list(task.info))
 
 
-class TestRespelledRows(unittest.TestCase):
-    """The Info values reworded for the table, and the once-a-tick echo that rewording would otherwise cause."""
+class TestPresentedRows(unittest.TestCase):
+    """Upstream's row writes, as the rows the table draws."""
+
+    class Task(TestReporting.Task):
+        """A task carrying the run state and settings the rows are composed from."""
+
+        def __init__(self, config=None, **status):
+            super().__init__()
+            self.config = config or {}
+            self.node_status = status
 
     def test_rows_read_in_plain_words(self):
         # Each value is upstream's row as written, so a reworded upstream row fails here.
-        task = TestReporting.Task()
-        info_set = log_text.reporting(TestReporting.Task.info_set)
-        for key, written, shown in ((dashboard.WIN_RATE, "0/0 NaN", dashboard.NO_RUNS),
-                                    (dashboard.WIN_RATE, "3/4 (75%)", "3 of 4 (75%)"),
-                                    (dashboard.FLOOR, "第1层，第0节点，", "Floor 1, node 0"),
-                                    (dashboard.FLOOR, "第2层，第5节点，精英", "Floor 2, node 5, Elite Battle Area"),
-                                    (MESSAGES["是否已逃脱"], "False", "No")):
+        for status, config, key, written, row, shown in (
+                ({}, {}, "所处层数，节点，类型", "第1层，第0节点，", "Floor", "Floor 1, node 0"),
+                ({}, {}, "所处层数，节点，类型", "第2层，第5节点，精英", "Floor", "Floor 2, node 5, Elite Battle Area"),
+                ({"final_boss_battle": True, "reach_final_boss": True}, {}, "所处层数，节点，类型", "第3层，第7节点，精英", "Floor",
+                 "Floor 3, boss fight"),
+                ({"total_rounds": 0, "success_rounds": 0}, {"几轮后停止(0为不停止)": 5}, "当前胜率", "0/0 NaN", "Runs", "0 of 5 done"),
+                ({"total_rounds": 4, "success_rounds": 3}, {"几轮后停止(0为不停止)": 0}, "当前胜率", "3/4 (75%)", "Runs", "4 done, 3 won"),
+                ({"removed_card_count": 2, "neutral_card_count": 1}, {}, "本局已移除卡牌", 2, "Deck this run", "2 removed, 1 Neutral taken"),
+                ({}, {"刷存档主战员": "Hugo"}, "获取刷存档主战员头像", False, "Target portrait captured", "No")):
             with self.subTest(written):
-                info_set(task, key, written)
-                self.assertEqual(shown, task.info[key])
+                self.assertEqual(shown, TestReporting.report(self.Task(config, **status), [(key, written)])[row])
+
+    def test_the_target_rows_only_show_while_their_setting_is_on(self):
+        # Sortie declares neither setting, so before this its table carried two rows that could only ever say No.
+        rows = [("是否已获得特定闪光", False), ("获取刷存档主战员头像", False)]
+        for config in ({}, {"刷存档主战员": "(none)", "首层刷特定闪光": False}):
+            with self.subTest(config):
+                self.assertEqual({}, TestReporting.report(self.Task(config), rows))
+        shown = TestReporting.report(self.Task({"刷存档主战员": "Hugo", "首层刷特定闪光": True}), rows)
+        self.assertEqual({dashboard.TARGET_EPIPHANY: "No", dashboard.TARGET_PORTRAIT: "No"}, shown)
 
     def test_an_unchanged_row_is_echoed_once(self):
-        # `log_text` compares upstream's "False" with the stored "No", so it hands the row on every tick.
-        task = TestReporting.Task()
-        info_set = log_text.reporting(TestReporting.Task.info_set)
-        for _ in range(3):
-            info_set(task, MESSAGES["是否已逃脱"], "False")
-        self.assertEqual([MESSAGES["是否已逃脱"]], task.echoed)
+        # The floor row is rewritten, so it only settles if the rewrite lands before `log_text` compares.
+        task = self.Task()
+        TestReporting.report(task, [("所处层数，节点，类型", "第1层，第0节点，")] * 3)
+        self.assertEqual(["Floor"], task.echoed)
+
+    def test_runs_counts_a_run_that_stopped_the_task(self):
+        # Upstream counts the run and stops the task before it rewrites its win rate, so a 1-run limit read "0 of 1 done".
+        task = self.Task({"几轮后停止(0为不停止)": 1}, total_rounds=0, success_rounds=0)
+        TestReporting.report(task, [("当前胜率", "0/0 NaN")])
+        task.node_status.update(total_rounds=1, success_rounds=1)
+        rows = TestReporting.report(task, [(dashboard.LOG, "stopping")])
+        self.assertEqual("1 of 1 done, 1 won", rows[dashboard.RUNS])
 
 
 class TestSeededTable(unittest.TestCase):
@@ -296,55 +327,34 @@ class TestSeededTable(unittest.TestCase):
         self.assertEqual({}, self.cleared(story))
 
 
-class TestEquipmentRow(unittest.TestCase):
-    """The Equipment row, which upstream fills from a ledger rather than from the screen.
+class TestTeamRows(unittest.TestCase):
+    """One row per combatant with their gear, in place of upstream's team and equipment rows.
 
-    That ledger is blank at the start of every run, written only by an install, and kept for the save-data
-    combatant alone, so a team visibly wearing gear reported three empty slots. Substituting as the row is
-    written, rather than restating it after, is what keeps `reporting`'s suppression of unchanged rows working
-    - two writes per tick with different values would both get through, and both are logged at INFO.
+    Upstream's equipment row is a ledger of installs, blank at the start of every run, so the gear comes from what
+    `src/en/equipment.py` read off the screen instead.
     """
 
-    def row(self, reading=None):
-        """Write upstream's ledger value to the row and report what lands there.
+    LEDGER = "1号位：空，2号位：空，3号位：空"
 
-        Args:
-            reading: What the Combatants screen was read as, or None for a run that has not reached it.
-
-        Returns:
-            The `(task, value)` pair, so a caller can write again.
-        """
+    def test_the_placeholder_holds_until_the_team_is_read(self):
         task = TestReporting.Task()
-        if reading is not None:
-            setattr(task, dashboard.TEAM_GEAR, reading)
-        info_set = dashboard.showing_what_is_worn(TestReporting.Task.info_set)
-        info_set(task, dashboard.GEAR, "slot 1 empty, slot 2 empty, slot 3 empty")
-        return task, task.info[dashboard.GEAR]
+        setattr(task, dashboard.TEAM_GEAR, "Rare/Legend/Mythic")
+        self.assertEqual({dashboard.COMBATANTS: dashboard.UNREAD}, TestReporting.report(task, [("装备信息", self.LEDGER)]))
 
-    def test_the_reading_replaces_the_ledger(self):
-        worn = "Rare/Legend/Mythic, -/Mythic/-, -/-/Mythic"
-        self.assertEqual(worn, self.row(reading=worn)[1])
-
-    def test_the_row_says_unread_until_the_screen_has_been_read(self):
-        # Not the ledger: it reads as three empty slots, and a team carries its gear into a run, so leaving
-        # it there would repeat the very claim this replaces.
-        self.assertEqual(dashboard.UNREAD, self.row()[1])
-
-    def test_the_row_settles_so_an_unchanged_one_stops_being_logged(self):
-        # The point of writing at the row rather than after it. `reporting` only suppresses a row whose value
-        # equals the last, so a value that alternates every tick is a row that never stops reporting.
-        worn = "Rare/Legend/Mythic, -/Mythic/-, -/-/Mythic"
-        task, first = self.row(reading=worn)
-        info_set = dashboard.showing_what_is_worn(TestReporting.Task.info_set)
-        info_set(task, dashboard.GEAR, "slot 1 empty, slot 2 empty, slot 3 empty")
-        self.assertEqual(first, task.info[dashboard.GEAR])
-
-    def test_every_other_row_is_left_alone(self):
+    def test_each_combatant_gets_their_own_gear(self):
         task = TestReporting.Task()
-        setattr(task, dashboard.TEAM_GEAR, "Rare/Legend/Mythic, -/Mythic/-, -/-/Mythic")
-        info_set = dashboard.showing_what_is_worn(TestReporting.Task.info_set)
-        info_set(task, dashboard.COMBATANTS, "Arabella, Adelheid, Narja")
-        self.assertEqual("Arabella, Adelheid, Narja", task.info[dashboard.COMBATANTS])
+        setattr(task, dashboard.TEAM_NAMES, ["Hugo", "Owen", "Mika"])
+        setattr(task, dashboard.TEAM_GEAR, "Rare/Legend/Mythic, -/Mythic/-")
+        rows = TestReporting.report(task, [(dashboard.COMBATANTS, dashboard.UNREAD), ("装备信息", self.LEDGER)])
+        self.assertEqual({"Hugo": "Rare, Legend, Mythic", "Owen": "empty, Mythic, empty", "Mika": dashboard.UNREAD}, rows)
+
+    def test_an_unchanged_reading_stops_being_logged(self):
+        # Upstream writes its ledger every tick, so a row that never settles is logged at INFO on every one.
+        task = TestReporting.Task()
+        setattr(task, dashboard.TEAM_NAMES, ["Hugo"])
+        setattr(task, dashboard.TEAM_GEAR, "Rare/Legend/Mythic")
+        TestReporting.report(task, [("装备信息", self.LEDGER)] * 3)
+        self.assertEqual(["Hugo"], task.echoed)
 
 
 class TestUpstreamStillWritesWhatWeTranslate(unittest.TestCase):
@@ -364,8 +374,15 @@ class TestUpstreamStillWritesWhatWeTranslate(unittest.TestCase):
                 key = node.args[0]
                 if isinstance(key, ast.Constant) and isinstance(key.value, str):
                     written.add(key.value)
-        # The zero-round win rate is matched on upstream's suffix, so a reworded one would show NaN again.
-        self.assertIn(f"}}{dashboard.UNDIVIDED}\")", source)
+        # The rows composed from run state and settings rather than from upstream's text.
+        modes = "".join((REPO_ROOT / "ok_tasks" / name).read_text(encoding="utf-8") for name in ("ChaosMode.py", "SortieMode.py"))
+        for key in (dashboard.STOP_AFTER, dashboard.FARM_EPIPHANY):
+            with self.subTest(key):
+                self.assertIn(f"'{key}'", modes.replace('"', "'"))
+        for flag in ("total_rounds", "success_rounds", "removed_card_count", "neutral_card_count",
+                     *(name for name, _ in dashboard.BOSS_FLAGS)):
+            with self.subTest(flag):
+                self.assertIn(f"'{flag}'", source.replace('"', "'"))
         for key in DASHBOARD_KEYS:
             with self.subTest(key):
                 self.assertIn(key, written)
