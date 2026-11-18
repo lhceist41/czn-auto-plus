@@ -79,7 +79,7 @@ LIST_OPTIONS = {
 # Single-choice settings, keyed by config name -> the roster and the default to pick from it.
 SINGLE_CHOICE = {
     MODE_KEY: (GAME_LANGUAGES, "English"),
-    FARMED_COMBATANT: ([NO_COMBATANT, *COMBATANTS], "Heidemarie"),
+    FARMED_COMBATANT: ([NO_COMBATANT, *COMBATANTS], NO_COMBATANT),
 }
 # Upstream defaults the fork overrides. A saved config keeps whatever it already holds. The shop's Credit threshold
 # is `NEVER_PAY`, so a run never pays to reroll unless the user raises it. Loot is safe to claim by default, since

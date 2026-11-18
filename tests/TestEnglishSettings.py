@@ -493,8 +493,10 @@ class TestReshape(unittest.TestCase):
 
     def test_the_farmed_combatant_can_be_left_unset(self):
         """Upstream skips the Combatants screen for an empty name, and binds whichever name the value is a substring of."""
-        opt_out = reshaped().config_type[overrides.FARMED_COMBATANT]["options"][0]
+        task = reshaped()
+        opt_out = task.config_type[overrides.FARMED_COMBATANT]["options"][0]
         self.assertEqual(overrides.NO_COMBATANT, opt_out)
+        self.assertEqual(opt_out, task.default_config[overrides.FARMED_COMBATANT], "a fresh config favours no one")
         self.assertTrue(opt_out, "an empty opt-out would stop the team being read")
         self.assertEqual([], [name for name in COMBATANTS if opt_out in name or name in opt_out])
 
