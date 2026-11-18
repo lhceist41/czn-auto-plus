@@ -200,6 +200,9 @@ def present(task, key, value):
         return {FLOOR_ROW: f"{value.split(', ')[0]}, {flag}" if flag else value.removesuffix(UNTYPED)}
     if key == WIN_RATE:
         return {RUNS: runs(task)}
+    if key == LOG and RUNS in (getattr(task, "info", None) or {}):
+        # Upstream counts a finished run and can stop the task before it rewrites its win rate, so every log line refreshes Runs.
+        return {LOG: value, RUNS: runs(task)}
     if key in CARD_COUNTS:
         return {DECK: f"{status.get('removed_card_count', 0)} removed, {status.get('neutral_card_count', 0)} Neutral taken"}
     if key in (TARGET_EPIPHANY, TARGET_PORTRAIT):

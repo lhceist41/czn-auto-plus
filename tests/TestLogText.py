@@ -266,6 +266,14 @@ class TestPresentedRows(unittest.TestCase):
         TestReporting.report(task, [("所处层数，节点，类型", "第1层，第0节点，")] * 3)
         self.assertEqual(["Floor"], task.echoed)
 
+    def test_runs_counts_a_run_that_stopped_the_task(self):
+        # Upstream counts the run and stops the task before it rewrites its win rate, so a 1-run limit read "0 of 1 done".
+        task = self.Task({"几轮后停止(0为不停止)": 1}, total_rounds=0, success_rounds=0)
+        TestReporting.report(task, [("当前胜率", "0/0 NaN")])
+        task.node_status.update(total_rounds=1, success_rounds=1)
+        rows = TestReporting.report(task, [(dashboard.LOG, "stopping")])
+        self.assertEqual("1 of 1 done, 1 won", rows[dashboard.RUNS])
+
 
 class TestSeededTable(unittest.TestCase):
     """The Info table over the first seconds of a run.
