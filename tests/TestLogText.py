@@ -214,14 +214,14 @@ class TestReadingOrder(unittest.TestCase):
         meditations = ["Meditating on Shock", "Meditating on Rally"]
         team = ["Hugo", "Owen"]
         written = [dashboard.TARGET_PORTRAIT, dashboard.DECK, *meditations, "Something new", dashboard.RUNS, *team,
-                   MESSAGES["当前信用点"], dashboard.FLOOR_ROW, dashboard.LOG]
+                   MESSAGES["当前信用点"], dashboard.FLOOR_ROW, dashboard.LOG, dashboard.ELAPSED]
         task = TestReporting.Task()
         setattr(task, dashboard.TEAM_NAMES, team)
         info_set = dashboard.ordering(TestReporting.Task.info_set)
         for key in written:
             info_set(task, key, "")
 
-        expected = [dashboard.LOG, dashboard.FLOOR_ROW, MESSAGES["当前信用点"], dashboard.RUNS, *team, dashboard.DECK,
+        expected = [dashboard.ELAPSED, dashboard.LOG, dashboard.FLOOR_ROW, MESSAGES["当前信用点"], dashboard.RUNS, *team, dashboard.DECK,
                     *meditations, dashboard.TARGET_PORTRAIT, "Something new"]
         self.assertEqual(expected, list(task.info))
 
@@ -319,6 +319,19 @@ class TestSeededTable(unittest.TestCase):
     def test_the_meditation_rows_are_left_to_arrive(self):
         # One row per configured card rather than a key, so there is nothing to seed under that rank.
         self.assertNotIn(dashboard.MEDITATING, self.cleared())
+
+    def test_an_ended_run_says_how_long_it_took(self):
+        # Stamped on `disable`, so a task stopped while queued must not inherit the last run's start time.
+        task = self.Task()
+        task.start_time = 1000.0
+        task.enabled = True
+        dashboard.seeding_the_table(type(task).info_clear)(task)
+        disable = dashboard.stamping_elapsed(lambda _: None, lambda seconds: "stamped")
+        disable(task)
+        self.assertNotIn(dashboard.ELAPSED, task.info)
+        task.start_time = 1000.0
+        disable(task)
+        self.assertEqual("stamped", task.info[dashboard.ELAPSED])
 
     def test_a_mode_that_fills_none_of_them_is_left_empty(self):
         # Story runs neither status handler, so seeded rows there would stay blank for the whole run.
