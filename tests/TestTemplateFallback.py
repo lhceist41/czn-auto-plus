@@ -7,6 +7,7 @@ returned boxes' coordinates, so a box from the wrong part of the screen would bi
 combatant.
 """
 
+import inspect
 import sys
 import unittest
 from pathlib import Path
@@ -22,7 +23,7 @@ from ok.feature.FeatureSet import FeatureSet  # noqa: E402
 
 import utils  # noqa: E402
 
-from src.en import templates  # noqa: E402
+from src.en import route, templates  # noqa: E402
 from src.en.handlers import standing_in  # noqa: E402
 from tests.fakes import FakeBox  # noqa: E402
 
@@ -36,6 +37,14 @@ CAMP_TEMPLATES = ["special_flash_luosi", "special_flash_luosi2"]
 CAMP_REGION = Box(420, 225, 1089, 654)
 # Upstream's `default_threshold` in `src/config.py`, which `handle_rest` matches the icon against.
 THRESHOLD = 0.8
+# The bottom-left of a 2026-11-18 route screen, cut from (0, 600), where the foot of Mei Lin in the 2nd combatant slot covers the minimap's zoom icon.
+ROUTE_COVERED = REPO_ROOT / "tests" / "images" / "route_icon_covered.png"
+ROUTE_CORNER = (0, 600)
+# Upstream's zoom-in icon region in `handle_route_selection`, and its zoom-in and expanded-map zoom-out icons from the template sheet.
+ICON_REGION = (0.335, 0.568, 0.453, 0.751)
+TEMPLATE_SHEET = REPO_ROOT / "ok_tasks" / "assets" / "images" / "0.png"
+ICON_TEMPLATE = (736, 689, 51, 43)
+EXPANDED_ICON = (123, 974, 69, 59)
 # The icon matches upstream found on the 2026-10-27 Obtain Card screen, as (centre x, centre y, confidence) per template.
 # Each Upgrade match is the sparkle beside a party card's portrait, just above the Skill icon on that card.
 REWARD_ICONS = {
@@ -49,6 +58,9 @@ REWARD_TEXTS = [
     ("Distortion: Financial Therapy", 0.5208, 0.313), ("技能", 0.4849, 0.3454), ("Heal 264%", 0.505, 0.679),
     ("Dark Condensation", 0.798, 0.313), ("技能", 0.7552, 0.3454), ("Select 1 Attack Card(s)", 0.78, 0.648),
 ]
+
+# Upstream's templates, loaded once for every test that matches them against a frame.
+FEATURES = FeatureSet(False, str(REPO_ROOT / "ok_tasks" / "assets" / "coco_annotations.json"), 0.002, 0.002, THRESHOLD)
 
 
 class FakeTask:
@@ -89,6 +101,49 @@ class RewardScreen:
 
     def log_info(self, message):
         pass
+
+
+class RouteScreen:
+    """Stands in for a task looking at one frame, matching upstream's real templates against it."""
+
+    width, height = 1920, 1080
+
+    def __init__(self, frame):
+        self.frame = frame
+
+    def find_feature(self, feature_name=None, box=None, threshold=0):
+        return FEATURES.find_feature(self.frame, feature_name, box=box, threshold=threshold or THRESHOLD)
+
+    def box_of_screen(self, x1, y1, x2, y2):
+        return Box(x1 * self.width, y1 * self.height, (x2 - x1) * self.width, (y2 - y1) * self.height)
+
+
+def from_sheet(frame, rect):
+    """Copy one template from the sheet onto a frame, at the spot it sits on the sheet.
+
+    Args:
+        frame: The 1920x1080 frame to draw on.
+        rect: The template's (x, y, width, height) on `TEMPLATE_SHEET`.
+
+    Returns:
+        The same frame.
+    """
+    x, y, w, h = rect
+    frame[y:y + h, x:x + w] = cv2.imread(str(TEMPLATE_SHEET))[y:y + h, x:x + w]
+    return frame
+
+
+def route_frame():
+    """Build a full frame holding the covered-icon route screen crop at the spot it was cut from.
+
+    Returns:
+        A 1920x1080 BGR frame.
+    """
+    frame = np.zeros((1080, 1920, 3), np.uint8)
+    crop = cv2.imread(str(ROUTE_COVERED))
+    x, y = ROUTE_CORNER
+    frame[y:y + crop.shape[0], x:x + crop.shape[1]] = crop
+    return frame
 
 
 def caption(name, x, y):
@@ -164,13 +219,12 @@ class TestTemplateFallback(unittest.TestCase):
 
     def test_every_size_of_the_camp_epiphany_icon_is_found(self):
         """Resizing a template in place lost the size it matched as is, so the free Epiphany at camp was walked past."""
-        feature_set = FeatureSet(False, str(REPO_ROOT / "ok_tasks" / "assets" / "coco_annotations.json"), 0.002, 0.002, THRESHOLD)
         for path in CAMP_EPIPHANIES:
             with self.subTest(icon=path.name):
                 frame = np.zeros((1080, 1920, 3), np.uint8)
                 frame[310:470, 640:800] = cv2.imread(str(path))
-                find = lambda name, **kwargs: feature_set.find_feature(frame, name, **kwargs)
-                get_feature = lambda name: feature_set.get_feature_by_name(frame, name)
+                find = lambda name, **kwargs: FEATURES.find_feature(frame, name, **kwargs)
+                get_feature = lambda name: FEATURES.get_feature_by_name(frame, name)
                 self.assertTrue(templates.find_at_any_size(find, get_feature, CAMP_TEMPLATES, box=CAMP_REGION))
 
     def test_a_sparkle_beside_a_portrait_does_not_hide_the_card(self):
@@ -197,6 +251,31 @@ class TestTemplateFallback(unittest.TestCase):
         once = FindFeature.find_feature
         templates.apply()
         self.assertIs(once, FindFeature.find_feature)
+
+
+class TestRoutePin(unittest.TestCase):
+
+    def search(self, frame):
+        screen = RouteScreen(frame)
+        return screen, route.finding_the_pin(screen, screen.find_feature)(feature_name=route.ICON, box=screen.box_of_screen(*ICON_REGION))
+
+    def test_a_covered_zoom_icon_still_marks_the_route_screen(self):
+        """The zoom icon scored 0.717 under Mei Lin's foot in the 2nd combatant slot, so the run sat on this screen tapping stray event matches."""
+        self.assertTrue(self.search(route_frame())[1])
+
+    def test_the_zoom_icon_alone_is_not_the_route_screen(self):
+        """A fade-in frame shows the icon over an empty minimap, and upstream would read its empty node list as the boss."""
+        self.assertFalse(self.search(from_sheet(np.zeros((1080, 1920, 3), np.uint8), ICON_TEMPLATE))[1])
+
+    def test_a_frame_without_the_minimap_is_not_the_route_screen(self):
+        self.assertFalse(self.search(np.zeros((1080, 1920, 3), np.uint8))[1])
+
+    def test_the_expanded_map_is_left_to_its_own_handler(self):
+        self.assertFalse(self.search(from_sheet(route_frame(), EXPANDED_ICON))[1])
+
+    def test_upstream_still_looks_for_the_zoom_icon_by_name(self):
+        """The fallback only runs for this template name, so a rename upstream would silently switch it off."""
+        self.assertIn(f'feature_name="{route.ICON}"', inspect.getsource(utils.handle_route_selection))
 
 
 if __name__ == "__main__":
