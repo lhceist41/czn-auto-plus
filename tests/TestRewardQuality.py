@@ -722,9 +722,11 @@ class TestCombatantsRowHoldsItsPlace(unittest.TestCase):
         self.assertEqual({COMBATANTS_ROW: dashboard.UNREAD}, task.info)
 
     def test_a_scanned_team_is_never_overwritten_by_the_placeholder(self):
-        task = FakeTask(info={COMBATANTS_ROW: self.SCANNED})
+        # Once read, the team draws one row per combatant and the placeholder row is gone for good.
+        task = FakeTask(info={})
+        setattr(task, dashboard.TEAM_NAMES, TEAM)
         rewards.hold_the_combatants_row(task)
-        self.assertEqual({COMBATANTS_ROW: self.SCANNED}, task.info)
+        self.assertEqual({}, task.info)
 
     def test_a_new_run_seeds_it_again(self):
         task = FakeTask(info={COMBATANTS_ROW: self.SCANNED})

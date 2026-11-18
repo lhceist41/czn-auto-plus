@@ -11,7 +11,7 @@ import re
 
 from ok import Logger
 
-from src.en.dashboard import respell
+from src.en.dashboard import present
 from src.en.log_strings import MESSAGES, TEMPLATES, VALUES
 
 logger = Logger.get_logger(__name__)
@@ -114,8 +114,8 @@ def reporting(original):
     """Wrap `info_set` so the Tasks page draws its Info rows in English, and stops shouting them at the log.
 
     Three rows could never have been catalog entries - the floor and node row, the equipment row and the
-    meditation key are composed at runtime, and `tr` is a whole-string lookup. The row itself is always
-    written, so the page is unchanged. Only the echo waits for the value to actually differ.
+    meditation key are composed at runtime, and `tr` is a whole-string lookup. `dashboard.present` then decides
+    which rows the write becomes. Every drawn row is written, and only the echo waits for its value to differ.
 
     Args:
         original: The unbound `info_set` being replaced.
@@ -124,15 +124,18 @@ def reporting(original):
         The replacement.
     """
     def info_set_in_english(self, key, value):
-        key = translate(key)
-        value = respell(key, translate(value))
         # `log_node_status` reports about thirteen rows every tick whether or not any moved, and the framework
-        # logs each at INFO - 80,035 lines of a 243,857-line day. `self.info` is the record of what a row last
-        # was, and the framework clears it in `_mark_task_enabled` when a run starts.
+        # logs each at INFO. `self.info` is the record of what a row last was, and the framework clears it in
+        # `_mark_task_enabled` when a run starts.
         reported = getattr(self, "info", None)
-        if reported is None or reported.get(key, UNREPORTED) != value:
-            return original(self, key, value)
-        reported[key] = value
+        for row, shown in present(self, translate(key), translate(value)).items():
+            if shown is None:
+                if reported is not None:
+                    reported.pop(row, None)
+            elif reported is None or reported.get(row, UNREPORTED) != shown:
+                original(self, row, shown)
+            else:
+                reported[row] = shown
 
     return info_set_in_english
 

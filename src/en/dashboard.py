@@ -1,94 +1,98 @@
-"""Draw the Tasks page's Info rows in reading order and plain wording.
+"""Draw the Tasks page's Info rows in reading order, plain wording, and only the rows worth a look.
 
-ok-script draws one row per `task.info` entry in insertion order, so upstream's order is simply the order
-`log_credit` and `log_node_status` happen to write in: the version and game language near the top, the win rate
-at the very bottom, and the run's position buried under five yes/no flags. The team's names are read once per
-run and never shown at all.
+ok-script draws one row per `task.info` entry in insertion order, and upstream writes fifteen of them every tick: a
+version and language that never change, three boss flags, and a team and its gear on two rows you have to zip by eye.
+`present` turns each upstream write into the rows actually drawn.
 """
 
 from ok import Logger
 
 from src.en.framework import import_ui
 from src.en.log_strings import MESSAGES, TEMPLATES
+from src.en.notify import score_of
+from src.en.overrides import FARMED_COMBATANT, NO_COMBATANT
 
 logger = Logger.get_logger(__name__)
 
-# The row this fork adds. It is English already, so it needs no catalog entry.
+# The placeholder row for the team, drawn until a run reads the Combatants screen and replaced then by one row per combatant.
 COMBATANTS = "Combatants"
-# What the team's row holds until a run reaches the Combatants screen and reads it. The row is drawn either
-# way, because a row that appears partway through a run reads as the table rearranging itself.
+# What a row holds until the run has read it. The row is drawn either way, because one that appears partway through a
+# run reads as the table rearranging itself.
 UNREAD = "-"
 # The framework's own row for the last logged line.
 LOG = "Log"
-# The equipment row, and where the run keeps the reading that fills it. Upstream fills that row from a ledger
-# of what the run installed rather than from anything on screen, so `src/en/equipment.py` reads the screens
-# that show the whole team - the Combatants screen once a run, the install screen every time a piece is
-# offered - and leaves the line here. Absent until it has, which is what `UNREAD` says.
+# Upstream's equipment row, and where the run keeps the reading that fills the team rows instead. Upstream fills its
+# row from a ledger of what the run installed, so `src/en/equipment.py` reads the screens that show the whole team and
+# leaves a line like `Legend/Rare/Mythic, -/Rare/Legend` here, one column per combatant.
 GEAR = MESSAGES["装备信息"]
 TEAM_GEAR = "_en_team_gear"
-# The win rate row, and the tail upstream gives it when no run has finished: before any run finishes upstream
-# divides by zero and the row reads `0/0 NaN`. `NO_RUNS` is what it reads as instead.
+# Where `rewards.show_team` keeps the team's names once read, in the order the gear columns follow.
+TEAM_NAMES = "_en_team_names"
+# How one gear slot reads in a team row, keyed on the tier `src/en/equipment.py` writes.
+SLOT_WORDS = {"-": "empty", "?": "unknown"}
+# Upstream's win rate row, replaced by the run count against the stop limit.
 WIN_RATE = MESSAGES["当前胜率"]
-UNDIVIDED = " NaN"
-NO_RUNS = "No runs finished"
-# The floor row, and the tail it is left with while the run's node type is still blank.
+RUNS = "Runs"
+STOP_AFTER = "几轮后停止(0为不停止)"
+# Upstream's floor row, which also carries the boss and escape flags once a run reaches them.
 FLOOR = MESSAGES["所处层数，节点，类型"]
+FLOOR_ROW = "Floor"
+# The tail the floor row is left with while the run's node type is still blank.
 UNTYPED = ", "
-# How upstream writes its yes/no rows, and how they read instead.
-YES_NO = {"True": "Yes", "False": "No"}
+# Upstream's one-way flags folded into the floor row, as `(node_status key, how the floor row says it)`. First match wins.
+BOSS_FLAGS = (("is_escaped", "escaped"), ("final_boss_battle", "boss fight"), ("reach_final_boss", "boss node"))
+# Upstream's two card counts, drawn as one row.
+CARD_COUNTS = {MESSAGES["本局已移除卡牌"], MESSAGES["本局已获得中立牌"]}
+DECK = "Deck this run"
+# Rows upstream writes that are never drawn. Version and language never change during a run, and the boss flags are on the floor row.
+HIDDEN = {MESSAGES["版本号"], MESSAGES["游戏语言"], MESSAGES["是否到达关底boss"], MESSAGES["是否进入关底boss战斗"], MESSAGES["是否已逃脱"]}
+# The Target rows, each drawn only while the setting that gives it meaning is on.
+TARGET_EPIPHANY = MESSAGES["是否已获得特定闪光"]
+TARGET_PORTRAIT = MESSAGES["获取刷存档主战员头像"]
+FARM_EPIPHANY = "首层刷特定闪光"
+# How upstream writes its yes/no rows, as strings or as bools, and how they read instead.
+YES_NO = {"True": "Yes", "False": "No", True: "Yes", False: "No"}
 # What every meditation row's key starts with once translated. One row per card, so they rank as a group.
 MEDITATING = TEMPLATES["冥想：{}"].split("{0}")[0]
-# Top to bottom: what moves during a run, then the one-way flags, then what never changes. Keys are the translated
-# ones, since `log_text` respells them before they are stored.
-ORDER = (
-    LOG,
-    MESSAGES["所处层数，节点，类型"],
-    MESSAGES["当前信用点"],
-    MESSAGES["当前胜率"],
-    COMBATANTS,
-    MESSAGES["装备信息"],
-    MESSAGES["本局已移除卡牌"],
-    MESSAGES["本局已获得中立牌"],
-    MEDITATING,
-    MESSAGES["是否到达关底boss"],
-    MESSAGES["是否进入关底boss战斗"],
-    MESSAGES["是否已逃脱"],
-    MESSAGES["是否已获得特定闪光"],
-    MESSAGES["获取刷存档主战员头像"],
-    MESSAGES["游戏语言"],
-    MESSAGES["版本号"],
-)
-# The rows a run fills in once it is under way. Every key `ORDER` ranks except the meditation group, which is
-# one row per configured card rather than a key, and is left to arrive with the first status report.
-STARTED = tuple(key for key in ORDER if key != MEDITATING)
+# Top to bottom: what moves during a run, then the Target flags. The team's rows rank where `COMBATANTS` does.
+ORDER = (LOG, FLOOR_ROW, MESSAGES["当前信用点"], RUNS, COMBATANTS, DECK, MEDITATING, TARGET_EPIPHANY, TARGET_PORTRAIT)
+# The rows every Chaos or Sortie run fills, seeded blank at the start. The Target rows depend on settings and the
+# meditation rows are one per configured card, so those arrive with the first status report.
+STARTED = tuple(key for key in ORDER if key not in (MEDITATING, TARGET_EPIPHANY, TARGET_PORTRAIT))
 # Each ranked row's position in `ORDER`.
 RANKS = {key: position for position, key in enumerate(ORDER)}
 
 _patched = False
 
 
-def rank(key):
+def rank(key, team=()):
     """Place one Info row in `ORDER`.
 
     Args:
         key: The row's key as stored in `task.info`.
+        team: The team's names, whose rows rank together where `COMBATANTS` does.
 
     Returns:
         Its position, or one past the end for a row `ORDER` does not name.
     """
-    return RANKS[MEDITATING] if key.startswith(MEDITATING) else RANKS.get(key, len(ORDER))
+    if key.startswith(MEDITATING):
+        return RANKS[MEDITATING]
+    if key in team:
+        return RANKS[COMBATANTS]
+    return RANKS.get(key, len(ORDER))
 
 
-def in_order(rows):
+def in_order(rows, team=()):
     """Sort info rows into reading order.
 
     Args:
         rows: The rows to draw, keyed the way `task.info` keys them.
+        team: The team's names, from `TEAM_NAMES`.
 
     Returns:
-        A new dict in `ORDER`, which both the live table and the idle one are built through.
+        A new dict in `ORDER`. The sort is stable, so the team's rows keep the order they were written in.
     """
-    return dict(sorted(rows.items(), key=lambda row: rank(row[0])))
+    return dict(sorted(rows.items(), key=lambda row: rank(row[0], team)))
 
 
 def ordering(original):
@@ -104,60 +108,111 @@ def ordering(original):
         new = key not in self.info
         result = original(self, key, value)
         if new:
-            self.info = in_order(self.info)
+            self.info = in_order(self.info, getattr(self, TEAM_NAMES, None) or ())
         return result
 
     return info_set_in_order
 
 
-def respell(key, value):
+def respell(value):
     """Give one Info row's value the wording the table shows.
 
-    Called by `log_text` ahead of its unchanged-row check. Respelled any later, a value would never equal what upstream
+    Args:
+        value: The value as upstream wrote it, already in English.
+
+    Returns:
+        The value to draw, with upstream's True / False said as Yes / No.
+    """
+    return YES_NO.get(value, value) if isinstance(value, (str, bool)) else value
+
+
+def team_rows(task):
+    """Build one row per combatant, naming the gear in each of their three slots.
+
+    Args:
+        task: The running task, holding the team's names and gear reading once they have been read.
+
+    Returns:
+        The rows to draw. Until the team is read that is the `COMBATANTS` placeholder alone. After, the placeholder
+        maps to None, which tells `src/en/log_text.py` to drop it.
+    """
+    names = getattr(task, TEAM_NAMES, None)
+    if not names:
+        return {COMBATANTS: UNREAD}
+    gear = (getattr(task, TEAM_GEAR, None) or "").split(", ")
+    rows: dict = {COMBATANTS: None}
+    for index, name in enumerate(names):
+        tiers = gear[index].split("/") if index < len(gear) and gear[index] else []
+        rows[name] = ", ".join(SLOT_WORDS.get(tier, tier) for tier in tiers) or UNREAD
+    return rows
+
+
+def runs(task):
+    """Say how many runs have finished, against the stop limit when one is set.
+
+    Args:
+        task: The running task, whose `node_status` counts the runs and whose config holds the limit.
+
+    Returns:
+        A line like `1 of 5 done, 1 won`.
+    """
+    done, won, _ = score_of(task)
+    limit = (getattr(task, "config", None) or {}).get(STOP_AFTER, 0)
+    line = f"{done} of {limit} done" if limit else f"{done} done"
+    return f"{line}, {won} won" if done else line
+
+
+def shows_target(task, key):
+    """Say whether a Target row means anything for this mode and its settings.
+
+    Args:
+        task: The running task, whose config says what it is chasing.
+        key: `TARGET_EPIPHANY` or `TARGET_PORTRAIT`.
+
+    Returns:
+        True when the setting behind the row is on. Sortie declares neither setting, so it never shows them.
+    """
+    config = getattr(task, "config", None) or {}
+    if key == TARGET_EPIPHANY:
+        return config.get(FARM_EPIPHANY) is True
+    return config.get(FARMED_COMBATANT) not in (None, "", NO_COMBATANT)
+
+
+def present(task, key, value):
+    """Turn one upstream row write into the rows the table actually draws.
+
+    Called by `log_text` ahead of its unchanged-row check. Rewritten any later, a row would never equal what upstream
     wrote, so every row would be logged at INFO on every tick.
 
     Args:
+        task: The task writing the row.
         key: The row's key, already in English.
         value: The value as upstream wrote it, already in English.
 
     Returns:
-        The value to draw.
+        A dict of row -> value to draw, empty for a row that is never drawn. A None value means drop that row.
     """
-    if not isinstance(value, str):
-        return value
+    if key in HIDDEN:
+        return {}
+    status = getattr(task, "node_status", None) or {}
+    if key == FLOOR and isinstance(value, str):
+        flag = next((words for name, words in BOSS_FLAGS if status.get(name)), None)
+        return {FLOOR_ROW: f"{value.split(', ')[0]}, {flag}" if flag else value.removesuffix(UNTYPED)}
     if key == WIN_RATE:
-        # Once a run has finished, upstream writes `3/4 (75%)`.
-        return NO_RUNS if value.endswith(UNDIVIDED) else value.replace("/", " of ", 1)
-    if key == FLOOR:
-        return value.removesuffix(UNTYPED)
-    return YES_NO.get(value, value)
-
-
-def showing_what_is_worn(original):
-    """Wrap `info_set` so the Equipment row reports what was read off the screen, not what the run installed.
-
-    Upstream's own value is a ledger: blank at the start of every run, written only by an install, and kept
-    for the save-data combatant alone, so a team wearing gear read as three empty slots. Substituting as the
-    row is written keeps one write per tick, and so keeps `log_text`'s suppression of unchanged rows working.
-
-    Args:
-        original: The unbound `info_set` being replaced.
-
-    Returns:
-        The replacement.
-    """
-    def info_set_as_worn(self, key, value):
-        if key == GEAR:
-            value = getattr(self, TEAM_GEAR, None) or UNREAD
-        return original(self, key, value)
-
-    return info_set_as_worn
+        return {RUNS: runs(task)}
+    if key in CARD_COUNTS:
+        return {DECK: f"{status.get('removed_card_count', 0)} removed, {status.get('neutral_card_count', 0)} Neutral taken"}
+    if key in (TARGET_EPIPHANY, TARGET_PORTRAIT):
+        return {key: respell(value) if shows_target(task, key) else None}
+    if key in (COMBATANTS, GEAR):
+        return team_rows(task)
+    return {key: respell(value)}
 
 
 def seeding_the_table(original):
     """Wrap `info_clear` so a starting run's table is its full height from the first frame.
 
-    Written straight into the dict rather than through `info_set`, which would log fifteen rows at INFO on
+    Written straight into the dict rather than through `info_set`, which would log every row at INFO on
     every Start and re-sort the table once per row for an order `STARTED` is already in.
 
     Args:
@@ -168,6 +223,8 @@ def seeding_the_table(original):
     """
     def info_clear_seeded(self):
         original(self)
+        # The last run's team, so its rows are not redrawn before this run reads its own.
+        setattr(self, TEAM_NAMES, None)
         # `node_status` is built in a mode's `__init__`, so it is there to be asked long before a Start. Story
         # has none, and runs none of the handlers that would fill these rows.
         if getattr(self, "node_status", None) is None:
@@ -205,7 +262,7 @@ def apply():
     except ImportError:
         logger.warning("could not import BaseTask, the Info rows will stay in upstream's order")
     else:
-        BaseTask.info_set = ordering(showing_what_is_worn(BaseTask.info_set))
+        BaseTask.info_set = ordering(BaseTask.info_set)
         BaseTask.info_clear = seeding_the_table(BaseTask.info_clear)
 
     task_detail = import_ui("tasks.tasks_page", "TaskDetail")

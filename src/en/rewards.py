@@ -13,7 +13,7 @@ from ok import Logger
 
 from src.en import cards, piles, quality
 from src.en.battle import PARTY
-from src.en.dashboard import COMBATANTS, UNREAD
+from src.en.dashboard import COMBATANTS, TEAM_NAMES, UNREAD
 from src.en.handlers import insert_before, loaded, register, replace, standing_in
 from src.en.navigation import team_pending
 from src.en.game_quality import MONSTER_CARDS
@@ -92,6 +92,7 @@ def show_team(task, names):
         task: The running task.
         names: The whole team, as read off the Combatants screen or grown by a draft.
     """
+    setattr(task, TEAM_NAMES, list(names))
     task.info_set(COMBATANTS, ", ".join(names))
     party = frozenset(filter(None, map(quality.COMBATANT_INDEX.look_up, names)))
     if party:
@@ -117,7 +118,7 @@ def hold_the_combatants_row(task):
     Returns:
         False always. This claims no frame, it only seeds a row that has nothing to show yet.
     """
-    if COMBATANTS not in task.info:
+    if COMBATANTS not in task.info and not getattr(task, TEAM_NAMES, None):
         task.info_set(COMBATANTS, UNREAD)
     return False
 
