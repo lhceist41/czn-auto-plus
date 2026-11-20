@@ -86,8 +86,10 @@ SINGLE_CHOICE = {
 # Upstream defaults the fork overrides. A saved config keeps whatever it already holds. The shop's Credit threshold
 # is `NEVER_PAY`, so a run never pays to reroll unless the user raises it. Both loot claims start on, and neither one
 # spends Aether - `src/en/loot_cards.py` and `src/en/reason.py` skip the loot instead. First Floor Only starts off in both modes.
+# The save threshold starts at 0, which keeps every save, and Mental Breakdown healing starts off, since it spends a Communication Pass or gold.
 NEVER_PAY = -1
-FORCED_DEFAULTS = {SHOP_SETTING: True, PAID_THRESHOLD: NEVER_PAY, "领取奖励(只使用验证卡)": True, "领取奖励": True, "只打第一层": False}
+FORCED_DEFAULTS = {SHOP_SETTING: True, PAID_THRESHOLD: NEVER_PAY, "领取奖励(只使用验证卡)": True, "领取奖励": True, "只打第一层": False,
+                   "保留大于多少TB的存档": 0, "治疗崩溃": False}
 # Number settings whose range the fork pins. ok-script opens a negative default's range to -999999 and floors a positive
 # one at 1, which would stop the save threshold reaching its keep-everything 0.
 NUMBER_RANGES = {PAID_THRESHOLD: {"min": NEVER_PAY}, "保留大于多少TB的存档": {"min": 0}}
@@ -137,7 +139,7 @@ DESCRIPTIONS = {
     "拉黑任务": "Never take an Unidentified Area option whose description matches one of these.",
     "领取奖励(只使用验证卡)": "Takes the Settlement's Additional Loot with one of the four weekly Loot Certification Cards.",
     "领取奖励": "Claims the Chaos Loot at the end of a Sortie with Reason.",
-    "治疗崩溃": "Visit the Epione Center when a Combatant hits a Mental Breakdown, instead of running on under the Stress.",
+    "治疗崩溃": "Visit the Epione Center when a Combatant hits a Mental Breakdown, instead of running on under the Stress. When off, a run that needs treatment stops at the Epione Center.",
     "生命值大于多少优先闪光(百分比)": "Only spend an Epiphany while the Combatant's health is above this percentage.",
     "第几层boss前自动暂停": "Stop and hand back control before the boss on this floor. Never Pause runs the whole map unattended.",
     "几轮后停止(0为不停止)": "Stop the bot after this many finished runs. Zero keeps it going.",

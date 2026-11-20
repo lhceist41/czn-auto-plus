@@ -527,6 +527,14 @@ class TestReshape(unittest.TestCase):
                 self.assertIn(key, declared)
                 self.assertEqual(value, reshaped({key: None}).default_config[key])
 
+    def test_saves_are_kept_by_default(self):
+        """Upstream's default deletes every stored save worth 62000 TB or less after a run."""
+        self.assertEqual(0, reshaped({"保留大于多少TB的存档": 62000}).default_config["保留大于多少TB的存档"])
+
+    def test_mental_breakdown_heal_starts_off(self):
+        """Healing spends a Communication Pass or gold, so a fresh install leaves it to the user."""
+        self.assertIs(False, reshaped({"治疗崩溃": True}).default_config["治疗崩溃"])
+
     def test_number_ranges_are_still_declared_upstream(self):
         """A renamed key would put back ok-script's floor of 1 - the save threshold could no longer reach 0 to keep every save."""
         declared = mode_setting_keys()

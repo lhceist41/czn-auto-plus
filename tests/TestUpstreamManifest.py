@@ -32,14 +32,14 @@ UPSTREAM_NAMES = {
         "_find_member_level_tags", "_find_target_member_index",
         "_get_card_list", "_get_config_value", "_get_current_credit", "_get_current_hp_percent", "_get_game_language", "_get_game_text", "_get_region_text", "_member_deck_state",
         "_member_equipment_qualities", "_move_and_click", "_scroll_card_page", "_should_install_equipment", "find_box_at_point",
-        "handle_card_assign", "handle_card_reward", "handle_confirm", "handle_equipment", "handle_event_task",
-        "handle_expedition_result", "handle_negotiation", "handle_shop", "handle_stuck_log",
+        "handle_card_assign", "handle_card_reward", "handle_center_confirm", "handle_confirm", "handle_equipment", "handle_escape", "handle_event_task",
+        "handle_expedition_result", "handle_negotiation", "handle_shop", "handle_stuck_log", "handle_unknown_page",
         "handle_view_original", "is_button_active", "is_frame_stuck", "is_subsequence", "log_node_status", "random",
         "recognize_cards", "recognize_cards_in_deck", "recognize_event_options", "select_card",
     ),
     "utils_chaos": (
-        "_get_config_value", "_move_and_click", "handle_archive_target_member", "handle_battle_auto_check", "handle_mask_card",
-        "handle_save_target_member", "handle_season_chaos_initial_page",
+        "_get_config_value", "_get_game_text", "_move_and_click", "find_box_at_point", "handle_archive_target_member", "handle_battle_auto_check",
+        "find_text", "handle_data_collected", "handle_mask_card", "handle_save_target_member", "handle_season_chaos_initial_page", "handle_trauma_center",
     ),
     "utils_sortie": (
         "_get_config_value", "_hand_card_names", "_hand_cards", "_is_card_name", "_move_and_click", "_read_hand_count", "_read_member_slots",
