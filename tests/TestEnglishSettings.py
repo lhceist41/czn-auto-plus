@@ -22,7 +22,7 @@ import polib
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from src.en import etched_memory, forms, overrides, picker, row_hints, sections, shop, upload  # noqa: E402
+from src.en import etched_memory, forms, overrides, picker, row_hints, sections, shop, upload, zero_system  # noqa: E402
 from src.en.game_data import CARDS, COMBATANTS, EQUIPMENT, NODE_TYPES  # noqa: E402
 from src.en.game_text import DESCRIPTIONS  # noqa: E402
 from src.en.framework import import_ui  # noqa: E402
@@ -328,10 +328,13 @@ class TestSeasonSections(unittest.TestCase):
         sections.apply()
         config_form = import_ui("tasks.config_form", "ConfigForm")
         assert config_form is not None, "ok-script no longer provides ConfigForm"
-        default = {"进入商店": False, shop.BUY_MONSTER_CARDS: True, "指定面具卡牌": "", "面具卡牌刻印": "", "几轮后停止(0为不停止)": 0}
+        default = {"进入商店": False, shop.BUY_MONSTER_CARDS: True, "指定面具卡牌": "", "面具卡牌刻印": "", "几轮后停止(0为不停止)": 0,
+                   zero_system.CODEX: zero_system.ANY, zero_system.CODEX_SEASON: zero_system.ANY}
+        config_type = {zero_system.CODEX: {"type": "drop_down", "options": zero_system.CODEX_OPTIONS},
+                       zero_system.CODEX_SEASON: {"type": "drop_down", "options": zero_system.SEASON_OPTIONS}}
         cls.folder = tempfile.TemporaryDirectory()
         config = Config("ChaosMode", default, folder=cls.folder.name)
-        cls.card = config_form(None, config, default, {}, {})
+        cls.card = config_form(None, config, default, {}, config_type)
 
     @classmethod
     def tearDownClass(cls):
@@ -402,6 +405,22 @@ class TestSeasonSections(unittest.TestCase):
             shop_row.update_config(False)
         self.assertTrue(pill.isHidden())
         self.assertTrue(count.isHidden())
+
+    def test_the_season_list_narrows_to_what_the_chosen_codex_can_carry(self):
+        # A season the Codex cannot carry never matches, and a stale one left saved would be hunted with every merge.
+        codex_row = self.card.config_widget_by_key[zero_system.CODEX]
+        season_row = self.card.config_widget_by_key[zero_system.CODEX_SEASON]
+        chaos = "The Kaleidoscope Hatchery"
+        tied = zero_system.CHAOS_SEASON[chaos]
+        season_row.update_config(next(season for season in zero_system.SEASONS if season != tied))
+        codex_row.update_config(chaos)
+        try:
+            self.assertEqual([zero_system.ANY, tied], season_row.options)
+            self.assertEqual(len(season_row.options), season_row.combo_box.count())
+            self.assertEqual(zero_system.ANY, self.card.config.get(zero_system.CODEX_SEASON))
+        finally:
+            codex_row.update_config(zero_system.ANY)
+        self.assertEqual(zero_system.SEASON_OPTIONS, season_row.options)
 
 
 class TestSettingsForm(unittest.TestCase):

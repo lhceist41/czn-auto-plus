@@ -642,6 +642,21 @@ msgstr "再次观测拉黑词条"
 msgid "Modifier Blacklist"
 msgstr "拉黑词条"
 
+msgid "Zero System"
+msgstr "零式系统"
+
+msgid "Codex"
+msgstr "法典"
+
+msgid "Codex Season"
+msgstr "法典赛季"
+
+msgid "Codex Merge"
+msgstr "法典合成"
+
+msgid "Max Merges per Codex"
+msgstr "每个法典最多合成次数"
+
 msgid "(keep)"
 msgstr "(keep)"
 

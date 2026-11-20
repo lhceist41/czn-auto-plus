@@ -416,6 +416,22 @@ msgstr "Re-observe Bad Modifiers"
 msgid "Modifier Blacklist"
 msgstr "Modifier Blacklist"
 
+# The Zero System section and the settings this fork adds, English for the same reason.
+msgid "Zero System"
+msgstr "Zero System"
+
+msgid "Codex"
+msgstr "Codex"
+
+msgid "Codex Season"
+msgstr "Codex Season"
+
+msgid "Codex Merge"
+msgstr "Codex Merge"
+
+msgid "Max Merges per Codex"
+msgstr "Max Merges per Codex"
+
 msgid "优先移除基础牌"
 msgstr "Remove Basic Cards First"
 

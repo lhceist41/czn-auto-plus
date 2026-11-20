@@ -36,6 +36,8 @@ FAMILY_OF = {name.casefold(): name for name in MODIFIERS}
 DEFAULT_BLACKLIST = ["Anxiety", "Plague"]
 # Upstream's minimum Save Data Storage Limit, which picks the run on the same button.
 SAVE_LIMIT_KEY = "存储数据保存上限大于多少"
+# Upstream's default for `SAVE_LIMIT_KEY`.
+DEFAULT_SAVE_LIMIT = 120
 SAVE_LIMIT = re.compile(r"(?:Save Data Storage Limit|存储数据保存上限)\D*(\d+)", re.I)
 # A modifier line opens with its tag, bracketed or not: "[Plague 1] Decrease Max HP" or "Tyrant 2: Increase Attack".
 # The level is required, so a wrapped line like "monsters in Elite and Boss Areas" is not read as the Elite modifier.
@@ -71,6 +73,47 @@ def modifiers_in(names):
     return [FAMILY_OF[match.group(1).casefold()] for match in matches if match and match.group(1).casefold() in FAMILY_OF]
 
 
+def save_limit_in(text):
+    """Read the Save Data Storage Limit out of a panel's text.
+
+    Args:
+        text: The panel's OCR lines, joined into one string.
+
+    Returns:
+        The limit, or 0 when the text does not carry it.
+    """
+    limit = SAVE_LIMIT.search(text)
+    return int(limit.group(1)) if limit else 0
+
+
+def required_limit(task, utils_chaos):
+    """Read the minimum Save Data Storage Limit a run is entered at.
+
+    Args:
+        task: The running task, for its config.
+        utils_chaos: The loaded `utils_chaos` module, for its config reader.
+
+    Returns:
+        The minimum, from `SAVE_LIMIT_KEY`.
+    """
+    return int(utils_chaos._get_config_value(task, SAVE_LIMIT_KEY, DEFAULT_SAVE_LIMIT))
+
+
+def banned_in(task, utils_chaos, modifiers):
+    """Pick out the modifiers the `MODIFIER_BLACKLIST` setting names.
+
+    Args:
+        task: The running task, for its config.
+        utils_chaos: The loaded `utils_chaos` module, for its config reader.
+        modifiers: The modifier families read off the screen, from `modifiers_in`.
+
+    Returns:
+        Each blacklisted family, in reading order.
+    """
+    blacklist = utils_chaos._get_config_value(task, MODIFIER_BLACKLIST, DEFAULT_BLACKLIST)
+    return [name for name in modifiers if name in blacklist]
+
+
 def number_in(task, region):
     """Read the first whole number OCR found in a region.
 
@@ -100,18 +143,15 @@ def reasons_to_reobserve(task, utils_chaos):
     """
     panel = [box.name for box in task.all_texts if in_region(box, PANEL_REGION, task.width, task.height)]
     modifiers = modifiers_in(panel)
-    limit = SAVE_LIMIT.search(lines_in(task, PANEL_REGION))
-    logger.debug(f"Chaos start page: modifiers={modifiers}, save limit={limit.group(1) if limit else 'unread'}")
+    limit = save_limit_in(lines_in(task, PANEL_REGION))
+    logger.debug(f"Chaos start page: modifiers={modifiers}, save limit={limit or 'unread'}")
 
     reasons = []
-    required = int(utils_chaos._get_config_value(task, SAVE_LIMIT_KEY, 120))
-    if limit and int(limit.group(1)) < required:
-        reasons.append(f"Save Data Storage Limit {limit.group(1)} is below {required}")
-    if utils_chaos._get_config_value(task, REOBSERVE, True):
-        blacklist = utils_chaos._get_config_value(task, MODIFIER_BLACKLIST, DEFAULT_BLACKLIST)
-        banned = [name for name in modifiers if name in blacklist]
-        if banned:
-            reasons.append(f"blacklisted {', '.join(banned)}")
+    required = required_limit(task, utils_chaos)
+    if limit and limit < required:
+        reasons.append(f"Save Data Storage Limit {limit} is below {required}")
+    if utils_chaos._get_config_value(task, REOBSERVE, True) and (banned := banned_in(task, utils_chaos, modifiers)):
+        reasons.append(f"blacklisted {', '.join(banned)}")
     return reasons
 
 
