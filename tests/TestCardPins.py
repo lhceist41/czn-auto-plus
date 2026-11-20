@@ -14,6 +14,7 @@ import sys
 import types
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 
@@ -413,29 +414,45 @@ class TestInstall(unittest.TestCase):
 
 
 class TestEpiphanyVariant(unittest.TestCase):
-    """Which variant an Epiphany takes, where a Divine Epiphany outranks the pin."""
+    """Which variant an Epiphany takes and when, where a Divine Epiphany outranks the pin."""
 
-    def pick(self, offer, screen, repeat=1):
+    def setUp(self):
+        self.clock = [1000.0]
+
+    def screen_task(self, screen=()):
+        """Make a task showing an Epiphany screen.
+
+        Args:
+            screen: The OCR boxes on the screen besides the variants, such as a god's caption.
+
+        Returns:
+            A stand-in task carrying what `handle_view_original` and `god_of` read.
+        """
+        return types.SimpleNamespace(log_info=lambda message: None, all_texts=list(screen), width=WIDTH, height=HEIGHT)
+
+    def pick(self, offers, screen=(), task=None):
         """Run real upstream `handle_view_original` through `choosing_variant`, so this breaks if it stops reading through `recognize_cards`.
 
         Args:
-            offer: The card dicts the recognizer returns.
+            offers: The card dicts the recognizer returns, one list per frame. Frames run a second apart, like the mode's trigger interval.
             screen: The other OCR boxes on the screen, such as a god's caption.
-            repeat: How many frames in a row the same screen is handled.
+            task: The task an earlier call ran on, to carry on from it. A new one when None.
 
         Returns:
-            The x of every card tapped.
+            The x of every card tapped, and whether each frame was claimed.
         """
         caption = FakeBox("查看原件", 0.890, 0.051)
-        task = types.SimpleNamespace(log_info=lambda message: None, all_texts=screen, width=WIDTH, height=HEIGHT)
-        clicks = []
+        task = task or self.screen_task(screen)
+        frames, clicks, claims = iter(offers), [], []
         with standing_in(utils, find_box_at_point=lambda *a: caption, _get_game_text=lambda task_, text: text,
-                         recognize_cards=lambda *a, **k: [dict(card) for card in offer], _get_card_list=lambda *a: [],
+                         recognize_cards=lambda *a, **k: [dict(card) for card in next(frames)], _get_card_list=lambda *a: [],
                          find_target_card=lambda task_: ([], []), _matching_meditation_card_names=lambda *a: [],
-                         _move_and_click=lambda task_, x, y: clicks.append(x)):
-            for _ in range(repeat):
-                epiphany.choosing_variant(utils.handle_view_original, utils)(task)
-        return clicks
+                         _move_and_click=lambda task_, x, y: clicks.append(x)), \
+                mock.patch.object(epiphany.time, "monotonic", lambda: self.clock[0]):
+            for _ in offers:
+                claims.append(epiphany.choosing_variant(utils.handle_view_original, utils)(task))
+                self.clock[0] += 1
+        return clicks, claims
 
     def test_a_divine_variant_beats_a_pin_and_the_most_ap_beats_a_random_pick(self):
         # The 10:31 Chaos screen, whose middle card carried Vytor's "Draw 1 card(s) of this unit".
@@ -449,12 +466,27 @@ class TestEpiphanyVariant(unittest.TestCase):
                                                               ("most AP", ap, [], 0.7)):
             with self.subTest(case=case):
                 offer = [{"name": name, "description": text, "pinned": pin, "x": x, "y": 0.3} for text, pin, x in zip(texts, pinned, (0.2, 0.5, 0.7))]
-                self.assertEqual([expected], self.pick(offer, screen))
+                self.assertEqual([expected], self.pick([offer] * 2, screen)[0])
 
     def test_a_second_tap_waits_for_the_screen_to_answer(self):
         # A second tap 1.5s after the first landed above the Faint Memory notice as it opened, and dismissed it.
         offer = [{"name": "Ignition Slash", "description": "450% Damage2 Tenacity DamageGain 2 AP", "pinned": False, "x": 0.7, "y": 0.3}]
-        self.assertEqual([0.7], self.pick(offer, [], repeat=2))
+        self.assertEqual([0.7], self.pick([offer] * 3)[0])
+
+    def test_the_variants_are_waited_on_until_they_have_all_dealt_in(self):
+        # A re-roll's first read caught no variants, and Skip then threw the re-roll away. The pinned one draws in last here.
+        offer = [{"name": "Spirit of the Aromata", "description": "", "pinned": pin, "x": x, "y": 0.3} for pin, x in ((False, 0.2), (False, 0.5), (True, 0.7))]
+        clicks, claims = self.pick([[], offer[:2], offer, offer])
+        self.assertEqual([0.7], clicks)
+        self.assertEqual([True] * 4, claims)
+
+    def test_a_screen_that_never_reads_is_left_to_skip_and_the_next_one_still_waits(self):
+        task = self.screen_task()
+        frames = int(epiphany.MAX_DEAL_SECONDS) + 1
+        self.assertEqual(([], [True] * (frames - 1) + [False]), self.pick([[]] * frames, task=task))
+        self.clock[0] += 60
+        card = {"name": "Ignition Slash", "description": "", "pinned": False, "x": 0.2, "y": 0.3}
+        self.assertEqual(([], [True]), self.pick([[card]], task=task))
 
 if __name__ == "__main__":
     unittest.main()

@@ -2,10 +2,12 @@
 
 Upstream sparks only the cards on the user's Epiphany list and presses Skip when none is offered, which Sortie's empty default does at every
 Epiphany. Its variant pick knows nothing of Divine Epiphanies or the build preset's pins, and with no listed variant offered it picks at random.
+It also reads the variants while they deal in, so it picks from a partial offer or, finding none yet, leaves the screen to Skip.
 """
 
 import re
 import time
+from dataclasses import dataclass
 
 from ok import Logger
 
@@ -31,11 +33,30 @@ GOD_REGION = (0.3, 0.82, 0.7, 0.95)
 TAP_SETTLE_SECONDS = 3.0
 # The task attribute holding when the last variant tap went out.
 TAPPED_AT = "_epiphany_variant_tapped_at"
+# The longest one screen's variants are waited on to finish dealing in, after which they go as read. Read as none, that leaves the screen
+# to upstream's Skip, which keeps the card's old Epiphany.
+MAX_DEAL_SECONDS = 8.0
+# A gap between two reads longer than this makes the second a new screen. Reads come about a second apart while one is waited on.
+NEW_SCREEN_SECONDS = 3.0
+# The task attribute holding the `Offer` being waited on.
+DEALING = "_epiphany_offer_dealing"
 # Names each change in the shared record of what a function already carries.
 TAG = "own Epiphany choice"
 VARIANT_TAG = "Epiphany variant choice"
 
 _patched = False
+
+
+@dataclass
+class Offer:
+    """An Epiphany screen whose variants are being waited on to finish dealing in."""
+
+    # How many variants the latest read found, or None before the first read.
+    count: int | None
+    # `time.monotonic()` at the screen's first read, which `MAX_DEAL_SECONDS` counts from.
+    first: float
+    # `time.monotonic()` at the latest read, which `NEW_SCREEN_SECONDS` counts from.
+    seen: float
 
 
 def sparked(name):
@@ -107,6 +128,36 @@ def ap_gain(card):
     return max((int(number) for line in AP_LINES for number in line.findall(text)), default=0)
 
 
+def dealt(task, count):
+    """Say whether an Epiphany screen's variants have finished dealing in, so one can be chosen.
+
+    They draw in after the screen does. A Latent Epiphany's first read has held 2 of its 3, and a Divine or re-rolled one's none at all.
+
+    Args:
+        task: The running task, which carries the `Offer` being waited on.
+        count: How many variants this frame's read found.
+
+    Returns:
+        True once two reads in a row find the same number of variants, or once the screen has waited `MAX_DEAL_SECONDS`.
+    """
+    now = time.monotonic()
+    offer = getattr(task, DEALING, None)
+    if offer is None or now - offer.seen > NEW_SCREEN_SECONDS:
+        offer = Offer(None, now, now)
+        setattr(task, DEALING, offer)
+    settled = count > 0 and count == offer.count
+    changed = count != offer.count
+    offer.count, offer.seen = count, now
+    if settled:
+        return True
+    if now - offer.first >= MAX_DEAL_SECONDS:
+        logger.info(f"Epiphany screen still reads {count} variant(s) after {MAX_DEAL_SECONDS:g}s, so it goes as read")
+        return True
+    if changed:
+        logger.debug(f"Epiphany screen reads {count} variant(s), so the next read has to agree before one is chosen")
+    return False
+
+
 def god_of(task):
     """Read which god a Divine Epiphany screen belongs to.
 
@@ -162,8 +213,8 @@ def choosing_variant(handler, utils):
     """Wrap `handle_view_original` so a Divine Epiphany is taken first, then a pinned variant, then the user's list, then the most AP.
 
     A Divine or pinned winner is the only card upstream is shown, which puts it ahead of the user's list. Otherwise every card is, and
-    upstream's own list match stands, with `FirstBest` in place of its random fallback. A tap within `TAP_SETTLE_SECONDS` of the last is
-    held back, and the frame is still claimed.
+    upstream's own list match stands, with `FirstBest` in place of its random fallback. The frame is claimed without a tap until `dealt`
+    says the variants are all in, and while a tap within `TAP_SETTLE_SECONDS` of the last is held back.
 
     Args:
         handler: The handler to wrap, upstream's or another patch's.
@@ -175,9 +226,15 @@ def choosing_variant(handler, utils):
     def wrapped(task):
         original, tap = utils.recognize_cards, utils._move_and_click
         god = god_of(task)
+        dealing = False
 
         def ranked_offer(*args, **kwargs):
+            nonlocal dealing
             offered = original(*args, **kwargs) or []
+            if not dealt(task, len(offered)):
+                # Upstream gives up on an empty offer, and the claim below keeps Skip from pressing in the meantime.
+                dealing = True
+                return []
             for reason, outranks in ((f"{god}'s Divine Epiphany", lambda card: divine(card, god)), ("pinned", lambda card: card.get("pinned"))):
                 ahead = [card for card in offered if outranks(card)]
                 if ahead:
@@ -192,10 +249,12 @@ def choosing_variant(handler, utils):
                 logger.debug("Epiphany variant was tapped moments ago, so the screen is left to answer")
                 return
             setattr(task_, TAPPED_AT, time.monotonic())
+            # The next screen waits for its own variants, whatever this one read.
+            setattr(task_, DEALING, None)
             tap(task_, x, y)
 
         with standing_in(utils, recognize_cards=ranked_offer, random=FirstBest(utils.random), _move_and_click=handle_view_original):
-            return handler(task)
+            return handler(task) or dealing
 
     return wrapped
 
