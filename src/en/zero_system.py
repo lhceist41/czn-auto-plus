@@ -62,6 +62,8 @@ SEASON_ICON_TOP = 0.289
 SEASON_ICON_STEP = 0.1275
 MAX_LIST_SCROLLS = 6
 MAX_SEASON_TAPS = 2
+# How long the Chaos list gets to settle after a scroll or a row tap. A frame read too early only taps or scrolls again, so it can be short.
+LIST_SETTLE_SECONDS = 0.5
 
 # Codex Obtained: the title, each card's column, its title and body bands, and Confirm.
 OBTAINED_CAPTIONS = ("Codex Obtained", "获得法典")
@@ -353,7 +355,7 @@ def pick_chaos(task, wanted, hunt, utils):
     row = next((box for box, name in rows if name == wanted), None)
     if row is not None:
         task.log_info(f"Choosing {wanted} to merge")
-        task.click_box(row)
+        task.click_box(row, after_sleep=0)
         return
     # Up when every row on screen comes after the wanted one in the list.
     position = CODEX_CHAOS.index(wanted)
@@ -438,7 +440,7 @@ def merge_handler(utils_chaos, utils):
         shown = closest(lines_in(task, MERGE_NAME), CODEX_CHAOS)
         if wanted != ANY and shown != wanted and hunt["scrolls"] <= MAX_LIST_SCROLLS:
             pick_chaos(task, wanted, hunt, utils)
-            task.sleep(REDRAW_SECONDS)
+            task.sleep(LIST_SETTLE_SECONDS)
             return True
         season = utils_chaos._get_config_value(task, CODEX_SEASON, ANY)
         if season != ANY and shown not in CHAOS_SEASON and hunt["season_taps"] < MAX_SEASON_TAPS:
