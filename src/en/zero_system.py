@@ -241,9 +241,10 @@ def judge(task, chaos, season, limit, modifiers, hunt, utils_chaos):
 
 
 def read_codex(task, title, body, hunt, utils_chaos, utils):
-    """Read and check the Codex on one panel or card, scrolling its modifier list once when everything else fits.
+    """Read and check the Codex on one panel or card, scrolling its list once when everything else fits.
 
-    The panel and the cards cut their modifier list off, so a Codex is only passed once its hidden lines are read too.
+    The panel and the cards cut their list off, so a Codex is only passed once its hidden lines are read too. A season and a God box can push
+    the save limit itself below the cut, so an unread limit is read off the scroll rather than failed.
 
     Args:
         task: The running task, whose `all_texts` holds the current OCR pass.
@@ -263,11 +264,15 @@ def read_codex(task, title, body, hunt, utils_chaos, utils):
     limit = int(limit.group(1)) if limit else 0
     modifiers = modifiers_in(names)
     codex = judge(task, chaos, season, limit, modifiers, hunt, utils_chaos)
-    if codex.reasons:
+    # An unread limit is likely below the cut, so that reason alone still earns the scroll.
+    if len(codex.reasons) > (0 if limit else 1):
         return codex
     utils._scroll_card_page(task, (body[0] + body[2]) / 2, (body[1] + body[3]) / 2, -SCROLL_NOTCHES, "Zero System")
-    hidden = modifiers_in(box.name for box in task.ocr() if in_region(box, body, task.width, task.height))
-    return judge(task, chaos, season, limit, modifiers + hidden, hunt, utils_chaos)
+    hidden = [box.name for box in task.ocr() if in_region(box, body, task.width, task.height)]
+    if not limit:
+        limit = SAVE_LIMIT.search(" ".join(hidden))
+        limit = int(limit.group(1)) if limit else 0
+    return judge(task, chaos, season, limit, modifiers + modifiers_in(hidden), hunt, utils_chaos)
 
 
 def rank(codex):

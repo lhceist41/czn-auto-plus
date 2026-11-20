@@ -196,6 +196,11 @@ class TestZeroSystem(unittest.TestCase):
                 self.assertTrue(handler(task))
                 self.assertEqual(taps, [tap for tap in task.tapped if tap[0] != "scroll"])
                 self.assertEqual([] if taps else ["Normal Merge"], [box.name for box in task.clicked])
+        # A season and a God box push the third card's save limit below the cut, so it is only read off the scroll.
+        limit = at("· Save Data Storage Limit 130pt", 0.786, 0.588)
+        task = ZeroSystemTask([box for box in OBTAINED if (box.name, box.x) != (limit.name, limit.x)], [limit])
+        self.assertTrue(handler(task))
+        self.assertEqual(third, [tap for tap in task.tapped if tap[0] != "scroll"])
 
     def test_merge_codices(self):
         """The Chaos Merge info label above the row carries the button's own words, and the list scrolls toward the row it wants."""
