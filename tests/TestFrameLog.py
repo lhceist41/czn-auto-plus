@@ -1,9 +1,11 @@
 """Check the debug-run tools: one saved frame per log line a second, and the remote control's seat in the real mode lists."""
 
+import importlib.util
 import logging
 import os
 import sys
 import tempfile
+import threading
 import time
 import types
 import unittest
@@ -21,9 +23,18 @@ import utils_sortie  # noqa: E402
 import utils_story  # noqa: E402
 
 from ok import TaskExecutor  # noqa: E402
+from ok.device.interaction_methods.foreground_post_message import ForegroundPostMessageInteraction  # noqa: E402
+from ok.device.interaction_methods.genshin import GenshinInteraction  # noqa: E402
+from ok.device.interaction_methods.post_message import PostMessageInteraction  # noqa: E402
+from ok.task.task import ExecutorOperation  # noqa: E402
 
 from src.en import frame_log, remote  # noqa: E402
 from src.en.handlers import standing_in  # noqa: E402
+
+# `scripts/` is no package, so the MCP bridge is loaded from its file.
+_spec = importlib.util.spec_from_file_location("czn_mcp", REPO_ROOT / "scripts" / "czn_mcp.py")
+czn_mcp = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(czn_mcp)
 
 # 00:48:52,268 local time on the day of a live run, as the log line would print it.
 LOGGED_AT = time.mktime((2026, 10, 25, 0, 48, 52, 0, 0, -1)) + 0.268
@@ -89,10 +100,80 @@ class TestFrameLog(unittest.TestCase):
         self.assertEqual(["2026-10-24_10-00-00", "2026-10-25_10-00-00"], sorted(os.listdir(self.folder.name)))
 
 
+def swiping_task(interaction):
+    """Build a 1920x1080 task whose swipe runs ok-script's own code down to an interaction method's swipe.
+
+    Args:
+        interaction: The interaction class whose `swipe` takes the drag, such as `PostMessageInteraction`.
+
+    Returns:
+        The task, and the list each mouse event lands in as `(event, x, y)`.
+    """
+    events = []
+    # Built without a window, so only the mouse events below stand in for the real ones.
+    method = interaction.__new__(interaction)
+    method.move = lambda x, y, down_btn=0: events.append(("move", x, y))
+    method.mouse_down = lambda x=-1, y=-1, name=None, key="left": events.append(("down", x, y))
+    method.mouse_up = lambda *args, **kwargs: events.append(("up", None, None))
+    executor = types.SimpleNamespace(nullable_frame=lambda: None, reset_scene=lambda: None, interaction=method)
+    task = types.SimpleNamespace(width=1920, height=1080, executor=executor, sleep=lambda seconds: None)
+    task.swipe = types.MethodType(ExecutorOperation.swipe, task)
+    task.swipe_relative = types.MethodType(ExecutorOperation.swipe_relative, task)
+    return task, events
+
+
+def drag_on(task, *points):
+    """Send a drag from another thread, as the server would, and run it here, as the bot's page loop would.
+
+    Args:
+        task: What the bot's thread hands the queued action.
+        *points: The drag's `x1, y1, x2, y2`.
+
+    Returns:
+        The drag's own error, or None.
+    """
+    errors = []
+
+    def send():
+        try:
+            remote.drag(*points)
+        except Exception as error:
+            errors.append(error)
+
+    with standing_in(remote, _executor=lambda: task.executor):
+        sender = threading.Thread(target=send)
+        sender.start()
+        run_when_queued(task, sender)
+    return errors[0] if errors else None
+
+
+def run_when_queued(task, sender):
+    """Run the page loop here until it has run the sender's action, the sender has given up, or five seconds pass.
+
+    Args:
+        task: What the bot's thread hands the queued action.
+        sender: The thread that queued it.
+    """
+    deadline = time.monotonic() + 5
+    while not remote.handle_remote(task) and sender.is_alive() and time.monotonic() < deadline:
+        time.sleep(0.001)
+    sender.join(5)
+
+
+def attempt(call, *args):
+    """Call something and return its result, or the error it raised."""
+    try:
+        return call(*args)
+    except Exception as error:
+        return error
+
+
 class TestRemote(unittest.TestCase):
 
     def tearDown(self):
         remote._held.clear()
+        while not remote._actions.empty():
+            remote._actions.get_nowait()
 
     def test_the_remote_comes_first_in_every_mode(self):
         """Anywhere lower, a held bot still runs whatever comes before it, and a mode it misses can never be clicked in."""
@@ -106,7 +187,7 @@ class TestRemote(unittest.TestCase):
     def test_an_abandoned_click_never_lands(self):
         """A click whose caller gave up would otherwise land on whatever screen the bot reaches next."""
         clicks = []
-        with standing_in(remote, ACTION_TIMEOUT=0.01), self.assertRaises(TimeoutError):
+        with standing_in(remote, ACTION_TIMEOUT=0.01), self.assertRaisesRegex(TimeoutError, "nothing was sent"):
             remote.on_bot_thread(clicks.append)
         self.assertFalse(remote.handle_remote("task"))
         self.assertEqual([], clicks)
@@ -115,6 +196,92 @@ class TestRemote(unittest.TestCase):
         """Otherwise the bot acts on the screen being stepped through by hand."""
         remote._held.set()
         self.assertTrue(remote.handle_remote("task"))
+
+    def test_a_late_action_that_starts_in_time_reports_what_it_did(self):
+        """Told it timed out, a caller sends the same input again after the first one already landed."""
+        def slow(task):
+            time.sleep(0.3)
+            return "sent"
+
+        def refused(task):
+            time.sleep(0.3)
+            raise ValueError("refused")
+
+        for action, expected in ((slow, "'sent'"), (refused, "ValueError('refused')")):
+            with self.subTest(action.__name__), standing_in(remote, ACTION_TIMEOUT=0.1, RUNNING_TIMEOUT=5):
+                outcome = []
+                caller = threading.Thread(target=lambda: outcome.append(attempt(remote.on_bot_thread, action)))
+                caller.start()
+                run_when_queued("task", caller)
+                self.assertEqual([expected], [repr(result) for result in outcome])
+
+    def test_a_started_action_that_hangs_ends_in_a_bounded_error(self):
+        """Without a bound, one stuck input would hold the server's thread for good."""
+        release = threading.Event()
+        outcome = []
+
+        def send():
+            outcome.append(attempt(remote.on_bot_thread, lambda task: release.wait(5)))
+            release.set()
+
+        with standing_in(remote, ACTION_TIMEOUT=0.05, RUNNING_TIMEOUT=0.1):
+            caller = threading.Thread(target=send)
+            caller.start()
+            run_when_queued("task", caller)
+        self.assertEqual(1, len(outcome))
+        self.assertIsInstance(outcome[0], TimeoutError)
+        self.assertIn("started but had not finished", str(outcome[0]))
+
+    def test_a_drag_swipes_on_the_bot_thread(self):
+        """Sent from the server's own thread, a drag would race the handlers acting on the same frame."""
+        self.assertIn("drag", remote.COMMANDS)
+        swipes = []
+        task = types.SimpleNamespace(
+            swipe_relative=lambda *points, **kwargs: swipes.append((threading.get_ident(), points, kwargs)),
+            sleep=lambda seconds: None,
+            executor=types.SimpleNamespace(interaction=PostMessageInteraction.__new__(PostMessageInteraction)),
+        )
+        self.assertIsNone(drag_on(task, 0.5, 0.8, 0.45, 0.3))
+        self.assertEqual([(threading.get_ident(), (0.5, 0.8, 0.45, 0.3), {"duration": remote.DRAG_DURATION})], swipes)
+
+    def test_a_drag_moves_in_steps_and_lets_go_near_the_end(self):
+        """ok-script moves one step per 100 ms of the duration, so under 0.1 s it divides by zero before any move."""
+        task, events = swiping_task(PostMessageInteraction)
+        self.assertIsNone(drag_on(task, 0.5, 0.8, 0.5, 0.3))
+        steps = [event for event in events[2:-1] if event[0] == "move"]
+        self.assertEqual([("move", 960, 864), ("down", 960, 864)], events[:2])
+        self.assertEqual("up", events[-1][0])
+        self.assertGreaterEqual(len(steps), 1)
+        # PostMessage lets go where its last step left the pointer, which should sit most of the way to the end.
+        travelled = (864 - steps[-1][2]) / (864 - 324)
+        self.assertGreaterEqual(travelled, 0.9)
+
+    def test_a_drag_is_refused_unless_the_app_uses_post_message(self):
+        """Genshin lets go at the middle of the frame, which in a battle can play the card on whatever is there."""
+        for interaction in (GenshinInteraction, ForegroundPostMessageInteraction):
+            with self.subTest(interaction.__name__):
+                task, events = swiping_task(interaction)
+                with standing_in(remote, _executor=lambda: task.executor):
+                    with self.assertRaisesRegex(RuntimeError, "PostMessage"):
+                        remote.drag(0.5, 0.8, 0.5, 0.3)
+                self.assertEqual([], events)
+                self.assertTrue(remote._actions.empty())
+
+    def test_a_drag_off_the_frame_is_refused(self):
+        """A point off the frame is a mistake in the request, and would otherwise press wherever ok-script maps it."""
+        with standing_in(remote, ACTION_TIMEOUT=0.01):
+            for points in ((1.2, 0.5, 0.5, 0.5), (0.5, -0.1, 0.5, 0.5), (0.5, 0.5, 2, 0.5), (0.5, 0.5, 0.5, -1)):
+                with self.subTest(points), self.assertRaises(ValueError):
+                    remote.drag(*points)
+        self.assertTrue(remote._actions.empty())
+
+    def test_the_mcp_drag_tool_forwards_every_point(self):
+        """A point dropped or swapped on the way would drag from or to the wrong place."""
+        sent = []
+        with standing_in(czn_mcp, call=lambda command, **kwargs: sent.append((command, kwargs)) or "dragged"):
+            self.assertEqual("dragged", czn_mcp.drag(0.1, 0.2, 0.3, 0.4))
+        self.assertEqual([("drag", {"x1": 0.1, "y1": 0.2, "x2": 0.3, "y2": 0.4})], sent)
+        self.assertIn(sent[0][0], remote.COMMANDS)
 
     def test_a_screenshot_outlives_the_frame_ok_script_drops(self):
         """ok-script drops its frame on every sleep, so a held bot would otherwise have nothing to show."""

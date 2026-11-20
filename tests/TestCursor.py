@@ -150,6 +150,49 @@ class TestCursor(unittest.TestCase):
         self.assertIn(("post", win32con.WM_LBUTTONUP), events)
         self.assertEqual(desktop.drag, 1000)
 
+    def test_a_swipe_moves_at_once_while_the_bot_holds_its_own_press(self):
+        # Each move waiting out the capture of the bot's own press would keep the card held for minutes.
+        events = self.run_on(Desktop(), lambda it: it.swipe(960, 864, 960, 324, 2000))
+        posts = [event[1] for event in events if event[0] == "post"]
+        self.assertEqual(21, posts.count(win32con.WM_MOUSEMOVE))
+        self.assertEqual(win32con.WM_LBUTTONUP, posts[-1])
+
+    def test_a_hold_from_before_a_swipe_still_waits(self):
+        # The capture is the player's then, not the bot's, and a move posted into it flings the held window.
+        events = self.run_on(Desktop(at=TITLE_BAR, drag=2), lambda it: it.swipe(960, 864, 960, 324, 2000))
+        press = events.index(("post", win32con.WM_LBUTTONDOWN))
+        self.assertEqual(2, events[:press].count(("dragged",)))
+        self.assertEqual(0, events[press:].count(("dragged",)))
+
+    def test_input_after_a_swipe_waits_on_a_hold_again(self):
+        # The release is the swipe's last post, and a press still marked after it would let later input through a real hold.
+        desktop = Desktop(at=TITLE_BAR)
+
+        def swipe_then_click(it):
+            it.swipe(960, 864, 960, 324, 2000)
+            desktop.drag = 2
+            it.click(300, 400)
+
+        events = self.run_on(desktop, swipe_then_click)
+        release = events.index(("post", win32con.WM_LBUTTONUP))
+        after = next(index for index in range(release + 1, len(events)) if events[index][0] == "post")
+        # The click's first post waits, not only its press.
+        self.assertEqual(2, events[release:after].count(("dragged",)))
+
+    def test_a_press_checks_for_a_hold_even_after_a_press_never_released(self):
+        # Otherwise one lost release would let every later move and key through the player's holds.
+        desktop = Desktop(at=TITLE_BAR)
+
+        def press_twice(it):
+            it.post(win32con.WM_LBUTTONDOWN)
+            # The game has let go of the capture, and the player now holds the title bar.
+            desktop.pressed, desktop.drag = False, 2
+            it.post(win32con.WM_LBUTTONDOWN)
+
+        events = self.run_on(desktop, press_twice)
+        down = ("post", win32con.WM_LBUTTONDOWN)
+        self.assertEqual([down, ("dragged",), ("dragged",), down], events)
+
     def test_a_hold_counts_from_the_press_not_from_when_windows_starts_the_drag(self):
         # A still title bar hold took ~1s live to set the drag flag, but the window held the mouse capture from the press.
         window = SimpleNamespace(hwnd_window=SimpleNamespace(hwnd=GAME, top_hwnd=0))

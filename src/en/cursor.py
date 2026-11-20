@@ -198,6 +198,8 @@ def waiting_out_holds(original):
     """Wrap `PostMessageInteraction.post`, the one call every posted click, key and scroll goes through, to wait while the window is held.
 
     Frozen input skips the wait, since the player could not let go then. A title bar grab never freezes, as the cursor is outside the client area.
+    Input between the bot's own left press and its release skips it too: the window holds the capture from that press, and a swipe's moves
+    would each wait out `WAIT_LIMIT` with the card held. A press itself always checks, so a hold that began before it still waits.
 
     Args:
         original: Upstream's `post`.
@@ -206,7 +208,10 @@ def waiting_out_holds(original):
         The wrapped method.
     """
     def post(self, message, *args, **kwargs):
-        if message not in RELEASES and not _frozen and held_by_player(self):
+        own_press = message != win32con.WM_LBUTTONDOWN and getattr(self, "_bot_pressed", False)
+        if message in (win32con.WM_LBUTTONDOWN, win32con.WM_LBUTTONUP):
+            self._bot_pressed = message == win32con.WM_LBUTTONDOWN
+        if message not in RELEASES and not own_press and not _frozen and held_by_player(self):
             logger.info("the game window is being held, so input waits until it is let go")
             give_up = time.monotonic() + WAIT_LIMIT
             while held_by_player(self):

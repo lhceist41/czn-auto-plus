@@ -17,6 +17,7 @@ import cv2
 from PySide6.QtCore import QTimer
 
 from ok import Logger
+from ok.device.interaction_methods.post_message import PostMessageInteraction
 
 from src.en import frame_log
 from src.en.framework import import_ui
@@ -30,14 +31,20 @@ HOST = "127.0.0.1"
 PORT = 47821
 # Seconds an action waits for the bot's page loop. A battle keeps the loop for its whole length.
 ACTION_TIMEOUT = 15
-# Seconds the bot waits after a remote click or key before reading the next frame.
+# Seconds a caller waits on for an action the bot's thread had already started when `ACTION_TIMEOUT` ran out. A drag
+# takes about 1.5 s.
+RUNNING_TIMEOUT = 10
+# Seconds the bot waits after a remote click, drag or key before reading the next frame.
 AFTER_INPUT = 1
+# Seconds handed to ok-script's swipe for a drag. It moves in one step per 100 ms of this, 10 ms apart, and lets go at
+# its last step, one step short of the end: 2 s makes 20 steps, so the release lands 95% of the way along.
+DRAG_DURATION = 2
 # JPEG quality for frames sent out. A 1080p frame comes to ~0.3 MB.
 QUALITY = 90
 # The task a settings command reads when none is named.
 DEFAULT_TASK = "ChaosMode"
 # The functions below a request may name, so a path can never reach anything else in the module.
-COMMANDS = ("status", "screenshot", "texts", "click", "press_key", "hold", "settings", "set_setting", "set_running")
+COMMANDS = ("status", "screenshot", "texts", "click", "drag", "press_key", "hold", "settings", "set_setting", "set_running")
 # Seconds since the last request before the title bar stops saying the MCP bridge is connected.
 STALE = 15
 # How often, in milliseconds, the title bar is brought up to date.
@@ -121,15 +128,18 @@ def on_bot_thread(action):
         What `action` returned.
 
     Raises:
-        TimeoutError: The page loop did not come round in `ACTION_TIMEOUT` seconds. The action is dropped, not left queued.
+        TimeoutError: The page loop did not come round in `ACTION_TIMEOUT` seconds, so the action is cancelled and never
+            runs; its entry stays queued until `handle_remote` skips it. Or the action started in time but had not
+            finished `RUNNING_TIMEOUT` seconds later, so its input may still land.
     """
     future = concurrent.futures.Future()
     _actions.put((action, future))
-    try:
-        return future.result(ACTION_TIMEOUT)
-    except concurrent.futures.TimeoutError:
-        future.cancel()
-        raise TimeoutError(f"the page loop did not come round in {ACTION_TIMEOUT}s - no mode is running, or a battle has the loop")
+    if not concurrent.futures.wait([future], ACTION_TIMEOUT).done and future.cancel():
+        raise TimeoutError(f"the page loop did not come round in {ACTION_TIMEOUT}s, so nothing was sent: no mode is running, or a battle has the loop")
+    # Too late to cancel once the bot's thread has started it, so its input is landing: a caller told otherwise would send it twice.
+    if not concurrent.futures.wait([future], RUNNING_TIMEOUT).done:
+        raise TimeoutError(f"the action started but had not finished {RUNNING_TIMEOUT}s later, so it may still land: take a screenshot before sending it again")
+    return future.result()
 
 
 def _executor():
@@ -224,6 +234,33 @@ def click(x, y):
     if not (0 <= x <= 1 and 0 <= y <= 1):
         raise ValueError("x and y are fractions of the frame, from 0 to 1")
     return _send(f"click at ({x:.3f}, {y:.3f})", lambda task: task.click(x, y, after_sleep=AFTER_INPUT))
+
+
+def drag(x1, y1, x2, y2):
+    """Press at one point, move to another and let go, on the bot's thread between two frames.
+
+    Args:
+        x1: Horizontal start as a fraction of the frame, 0 to 1.
+        y1: Vertical start as a fraction of the frame, 0 to 1.
+        x2: Horizontal end as a fraction of the frame, 0 to 1.
+        y2: Vertical end as a fraction of the frame, 0 to 1.
+
+    Raises:
+        ValueError: A point is off the frame.
+        RuntimeError: The app is set to an interaction other than PostMessage.
+    """
+    if not all(0 <= value <= 1 for value in (x1, y1, x2, y2)):
+        raise ValueError("x1, y1, x2 and y2 are fractions of the frame, from 0 to 1")
+    interaction = _executor().interaction
+    # Genshin's swipe lets go at the middle of the frame instead of the end, which in a battle can play the card on whatever is there.
+    if not isinstance(interaction, PostMessageInteraction):
+        raise RuntimeError(f"a drag needs the PostMessage interaction, not {type(interaction).__name__}: switch it in the app's settings")
+
+    def dragging(task):
+        task.swipe_relative(x1, y1, x2, y2, duration=DRAG_DURATION)
+        task.sleep(AFTER_INPUT)
+
+    return _send(f"drag from ({x1:.3f}, {y1:.3f}) to ({x2:.3f}, {y2:.3f})", dragging)
 
 
 def press_key(key):

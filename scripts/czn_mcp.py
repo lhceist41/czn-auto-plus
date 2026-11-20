@@ -93,6 +93,14 @@ def click(x: float, y: float) -> str:
 
 
 @server.tool()
+def drag(x1: float, y1: float, x2: float, y2: float) -> str:
+    """Press at (x1, y1), move to (x2, y2) and let go, as fractions of the frame from 0 to 1, such as a card a tutorial
+    asks to slide. The release lands 95% of the way along, so aim a little past the target. Needs the app's PostMessage
+    interaction: under any other the drag is refused."""
+    return call("drag", x1=x1, y1=y1, x2=x2, y2=y2)
+
+
+@server.tool()
 def press_key(key: str) -> str:
     """Press a key in the game, such as `esc`."""
     return call("press_key", key=key)
