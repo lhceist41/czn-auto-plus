@@ -60,7 +60,9 @@ ANCHORS_IN_LISTS = {
     "handle_card_assign": ("utils_chaos", "utils_sortie"),
     "handle_card_reward": ("utils_chaos", "utils_sortie"),
     "handle_center_confirm": ("utils_chaos", "utils_sortie", "utils_story"),
+    "handle_chaos_craft": ("utils_chaos",),
     "handle_confirm": ("utils_chaos", "utils_sortie", "utils_story"),
+    "handle_discovery_select": ("utils_chaos",),
     "handle_enter": ("utils_story",),
     "handle_equipment": ("utils_chaos", "utils_sortie"),
     "handle_event_task": ("utils_chaos", "utils_sortie"),
@@ -78,6 +80,7 @@ ANCHORS_IN_LISTS = {
     "handle_skip_story": ("utils_story",),
     "handle_stuck_log": ("utils_chaos", "utils_sortie"),
     "handle_view_original": ("utils_chaos", "utils_sortie"),
+    "handle_zero_system_initial_page": ("utils_chaos",),
     "log_node_status": ("utils_chaos", "utils_sortie"),
     # Story mode borrows Sortie's battle screens by name from Sortie's list.
     **{screen: ("utils_sortie",) for screen in BATTLE_SCREENS},
