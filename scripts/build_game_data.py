@@ -45,7 +45,18 @@ GROUPS = [
      lambda table, dump: collect(table, r"spot_type")),
     ("COMBATANTS", "Playable combatants, from the released roster rather than the dump.",
      lambda table, dump: collect_combatants(table, dump)),
+    ("CODEX_CHAOS", "Every Chaos a Zero System Codex can be merged for, in the game's own list order.",
+     lambda table, dump: collect_codex(table, dump)[0]),
+    ("SEASONS", "Every season's name, oldest first.",
+     lambda table, dump: collect_codex(table, dump)[1]),
+    ("CHAOS_SEASON", "A Chaos whose Codices always carry one season, mapped to it. The rest let Merge Codices pick any season.",
+     lambda table, dump: collect_codex(table, dump)[2]),
 ]
+# Zero System's tables: each Chaos in list order, and each Codex coordinate naming its Chaos and its fixed season.
+CHAOS_TABLE = "chaos@chaos.json"
+COORDINATE_TABLE = "zero_orb_coordinate@zero_orb_coordinate.json"
+CHAOS_TITLE_ID = "chaos@title@{id}"
+SEASON_ID = re.compile(r"^chaos@title@(disaster_s\d+)$")
 # Combatants cannot be read out of the dump alone, from either direction. The `char_base@name@` namespace
 # also names every NPC and enemy, and even the combatant table carries characters that have not been released
 # yet, while a character released after the rip is missing from it altogether. So the roster below is the
@@ -183,6 +194,32 @@ def collect(table, pattern):
             if text and not JUNK.match(text):
                 names.add(text)
     return sorted(names)
+
+
+def collect_codex(table, dump_dir):
+    """Read which Chaos Zero System can merge a Codex for, and which season each one is tied to.
+
+    Args:
+        table: The localization table.
+        dump_dir: Path to the dump's `output` directory, for the chaos and coordinate tables.
+
+    Returns:
+        A `(chaos_names, season_names, chaos_season)` triple. A Chaos with no coordinate is left out, since it cannot be merged yet.
+    """
+    db = Path(dump_dir) / "db"
+    coordinates = [row for row in json.loads((db / COORDINATE_TABLE).read_text(encoding="utf-8")) if row.get("no_use") != "YES"]
+    chaos_rows = sorted(json.loads((db / CHAOS_TABLE).read_text(encoding="utf-8")), key=lambda row: int(row["sort"]))
+    seasons = {match.group(1): text for key, text in table.items() if (match := SEASON_ID.match(key))}
+    chaos_names, chaos_season = [], {}
+    for row in chaos_rows:
+        tied = {coordinate["link_disaster_season_id"] for coordinate in coordinates if coordinate["link_chaos_id"] == row["id"]}
+        if not tied:
+            continue
+        name = table.get(CHAOS_TITLE_ID.format(id=row["id"]), row["id"])
+        chaos_names.append(name)
+        if len(tied) == 1 and (season := tied.pop()) in seasons:
+            chaos_season[name] = seasons[season]
+    return chaos_names, [seasons[key] for key in sorted(seasons)], chaos_season
 
 
 def collect_combatants(table, dump_dir):
@@ -771,9 +808,14 @@ def render(groups, dump_dir):
     ]
     for name, values, comment in groups:
         lines.append(f"# {comment}")
-        lines.append(f"{name} = [")
-        lines.extend(f"    {value!r}," for value in values)
-        lines.append("]")
+        if isinstance(values, dict):
+            lines.append(f"{name} = {{")
+            lines.extend(f"    {key!r}: {value!r}," for key, value in values.items())
+            lines.append("}")
+        else:
+            lines.append(f"{name} = [")
+            lines.extend(f"    {value!r}," for value in values)
+            lines.append("]")
         lines.append("")
     return "\n".join(lines)
 
