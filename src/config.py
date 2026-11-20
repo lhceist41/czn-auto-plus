@@ -153,14 +153,14 @@ config = {
     },
     'links': { # 关于里显示的链接, 可选
             'default': {
-                'github': 'https://github.com/steve1316/ok-czn-english',
-                'share': 'https://github.com/steve1316/ok-czn-english/releases',
-                'faq': 'https://github.com/steve1316/ok-czn-english',
+                'github': 'https://github.com/lhceist41/czn-auto-plus',
+                'share': 'https://github.com/lhceist41/czn-auto-plus/releases',
+                'faq': 'https://github.com/lhceist41/czn-auto-plus',
                 'sponsor': 'local'
             }
         },
     'screenshots_folder': "screenshots", #截图存放目录, 每次重新启动会清空目录
-    'gui_title': 'ok-czn-english',  #窗口名
+    'gui_title': 'CZN Auto+',  #窗口名
     'game_name': 'Chaos Zero Nightmare',  # Shown on the run bar
     'template_matching': { # 可选, 如使用OpenCV的模板匹配
         'coco_feature_json': os.path.join('ok_tasks/assets', 'coco_annotations.json'), #coco格式标记, 需要png图片, 在debug模式运行后, 会对进行切图仅保留被标记部分以减少图片大小

@@ -1,8 +1,8 @@
 <div align="center">
   <h1 align="center">
-    <img src="icons/icon.png" width="200" alt="ok-czn-english logo"/>
+    <img src="icons/icon.png" width="200" alt="CZN Auto+ logo"/>
     <br/>
-    ok-czn-english
+    CZN Auto+
   </h1>
 
   <p>
@@ -16,15 +16,14 @@
 <div align="center">
 
 ![Platform](https://img.shields.io/badge/platform-Windows-blue)
-[![GitHub release](https://img.shields.io/github/v/release/steve1316/ok-czn-english)](https://github.com/steve1316/ok-czn-english/releases)
-[![Discord](https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white)](https://discord.gg/5Yv4kqjAbm)
 
 </div>
 
 > [!NOTE]
-> Started as a fork of [baoxin1100/ok-kes](https://github.com/baoxin1100/ok-kes) and is now developed on its own. It is
-> built and tested for the **Global PC client** only. It has drifted far enough from the original that the Chinese
-> clients will likely run into trouble - use ok-kes for those.
+> CZN Auto+ by lhceist41 is built on [steve1316/ok-czn-english](https://github.com/steve1316/ok-czn-english), which
+> started as a fork of [baoxin1100/ok-kes](https://github.com/baoxin1100/ok-kes). It is built and tested for the
+> **Global PC client** only. It has drifted far enough from ok-kes that the Chinese clients will likely run into
+> trouble - use ok-kes for those.
 
 > [!CAUTION]
 > A free, open-source tool for personal use. Use it at your own risk: this project is not responsible for anything that
@@ -32,8 +31,7 @@
 
 ## Quick Start
 
-1. **Download the installer** from [Releases](https://github.com/steve1316/ok-czn-english/releases) and run it. The app
-   updates itself on launch.
+1. **There is no installer yet.** Run the app from source, as [Running from source](#running-from-source) describes.
 2. **Run it as Administrator.** The game runs elevated, so without this Windows silently drops every click the app sends.
 3. **In the game's settings**, turn on shortcut key display. For Chaos Manifestation, also turn on the game's own
    auto-battle and auto-story.
@@ -89,11 +87,12 @@ one screen for a minute.
 ## Troubleshooting
 
 1. **Clicks do nothing:** run the app as Administrator.
-2. **Antivirus:** add the install folder to your exceptions, Windows Defender included.
+2. **Antivirus:** add the folder you run the app from (your source checkout) to your exceptions, Windows Defender
+   included.
 3. **Wrong reads:** turn off graphics card filters and sharpening, keep the game's default brightness, and close
    overlays that draw over the game.
 4. **Resolution:** run the game at 16:9, such as 1920x1080 or 1280x720.
-5. **Still stuck:** check you are on the latest release, then ask on [Discord](https://discord.gg/5Yv4kqjAbm).
+5. **Still stuck:** update to the latest `master` and try again.
 
 ---
 
@@ -101,9 +100,11 @@ one screen for a minute.
 
 ### Running from source
 
-Use a global Python 3.12. There is no venv.
+Use Python 3.12 in a `.venv` inside the checkout. In PowerShell:
 
-```bash
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt -r requirements-dev.txt
 
 python main.py          # release mode
@@ -113,6 +114,9 @@ python main_debug.py    # debug mode, with extra logging and a local control por
 ```powershell
 .\run_tests.ps1         # every tests\Test*.py, in one process bar the manifest check
 ```
+
+If PowerShell refuses to run `Activate.ps1` or `run_tests.ps1`, run `Set-ExecutionPolicy -Scope Process Bypass` in that
+window first. It lasts only for that window and changes nothing permanent.
 
 ### Layout
 
@@ -149,10 +153,11 @@ The app only reads the compiled `.mo` files, so run `python scripts/compile_i18n
 
 ### Releases
 
-Releases are cut by hand with the **Build release on demand** workflow, using a date version like `2026.11.18`.
+This fork has no releases yet.
 
 ## Credits
 
+* [steve1316/ok-czn-english](https://github.com/steve1316/ok-czn-english) - the project CZN Auto+ is built on
 * [baoxin1100/ok-kes](https://github.com/baoxin1100/ok-kes) - the original project
 * [ok-script](https://github.com/ok-oldking/ok-script)
 * [OnnxOCR](https://github.com/ok-oldking/OnnxOCR)
