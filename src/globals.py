@@ -20,7 +20,7 @@ class Globals(QObject):
         from src.en import (  # noqa: E501
             battle, boss, claims, cursor, dashboard, deck, desire, devices, dialogue, dice, draft, enter, epiphany, equipment, etched_memory, events, forms, frame_log, game_language, heal, humanize,
             kept_forms, log_text, loot_cards, meditation, memory_limit, monitors, navigation, obtain, observe, ocr_text, overrides, persona, picker, piles, pins, reobserve, remote, rest, rewards, sections,
-            reason, route, shell, shop, shutdown, spend_guard, story, summary, task_list, templates, notify, stuck, upload, zero_system,
+            reason, route, shell, shop, shutdown, spend_guard, story, summary, task_list, templates, notify, stuck, stuck_stop, upload, zero_system,
         )
 
         # Neither does anything outside a debug run, and nothing else depends on when they start.
@@ -76,6 +76,7 @@ class Globals(QObject):
         spend_guard.apply()
         notify.apply()
         stuck.apply()
+        stuck_stop.apply()
         rest.apply()
         meditation.apply()
         obtain.apply()

@@ -32,7 +32,7 @@ UPSTREAM_NAMES = {
         "_find_member_level_tags", "_find_target_member_index",
         "_get_card_list", "_get_config_value", "_get_current_credit", "_get_current_hp_percent", "_get_game_language", "_get_game_text", "_get_region_text", "_member_deck_state",
         "_member_equipment_qualities", "_move_and_click", "_scroll_card_page", "_should_install_equipment", "find_box_at_point",
-        "handle_card_assign", "handle_card_reward", "handle_center_confirm", "handle_confirm", "handle_equipment", "handle_escape", "handle_event_task",
+        "handle_auto_stop", "handle_card_assign", "handle_card_reward", "handle_center_confirm", "handle_confirm", "handle_equipment", "handle_escape", "handle_event_task",
         "handle_expedition_result", "handle_negotiation", "handle_shop", "handle_stuck_log", "handle_unknown_page",
         "handle_view_original", "is_button_active", "is_frame_stuck", "is_subsequence", "log_node_status", "random",
         "recognize_cards", "recognize_cards_in_deck", "recognize_event_options", "select_card",
@@ -54,6 +54,7 @@ UPSTREAM_NAMES = {
 ANCHORS_IN_LISTS = {
     "handle_archive_target_member": ("utils_chaos", "utils_sortie"),
     "handle_auto_chat": ("utils_story",),
+    "handle_auto_stop": ("utils_chaos", "utils_sortie"),
     "handle_battle_auto_check": ("utils_chaos", "utils_story"),
     "handle_battle_hand_select": ("utils_sortie",),
     "handle_battle_page": ("utils_sortie",),
