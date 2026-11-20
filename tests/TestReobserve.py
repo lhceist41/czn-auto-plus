@@ -112,7 +112,6 @@ class TestReobserve(unittest.TestCase):
                 self.assertEqual([], task.clicked)
 
 
-
 def at(name, x, y):
     """Place a box sized to its text, the way OCR boxes a line."""
     return FakeBox(name, x, y, width=11 * len(name), units="fraction")
@@ -185,17 +184,17 @@ class TestZeroSystem(unittest.TestCase):
         handler = obtained_handler(ZERO_UTILS_CHAOS, ZERO_UTILS)
         third = [(0.812, 0.59), CONFIRM]
         cases = (
-            ("the fitting card is taken", {}, [], third),
-            ("a hidden blacklisted line sends it back to merge", {}, [at("[Plague 2] Decrease Max HP by 40%", 0.8, 0.7)], []),
-            ("none fit, so merge again", {SAVE_LIMIT_KEY: 140}, [], []),
-            ("none fit at the cap, so the best is taken", {SAVE_LIMIT_KEY: 140, MAX_MERGES: 0}, [], third),
+            ("the fitting card is taken", {}, [], third, []),
+            ("a hidden blacklisted line sends it back to merge", {}, [at("[Plague 2] Decrease Max HP by 40%", 0.8, 0.7)], [], [NORMAL_MERGE]),
+            ("none fit, so merge again", {SAVE_LIMIT_KEY: 140}, [], [], [NORMAL_MERGE]),
+            ("none fit at the cap, so the best is taken", {SAVE_LIMIT_KEY: 140, MAX_MERGES: 0}, [], third, []),
         )
-        for label, config, hidden, taps in cases:
+        for label, config, hidden, taps, clicked in cases:
             with self.subTest(label):
                 task = ZeroSystemTask(OBTAINED, hidden, **config)
                 self.assertTrue(handler(task))
                 self.assertEqual(taps, [tap for tap in task.tapped if tap[0] != "scroll"])
-                self.assertEqual([] if taps else ["Normal Merge"], [box.name for box in task.clicked])
+                self.assertEqual(clicked, [box.name for box in task.clicked])
         # A season and a God box push the third card's save limit below the cut, so it is only read off the scroll.
         limit = at("· Save Data Storage Limit 130pt", 0.786, 0.588)
         task = ZeroSystemTask([box for box in OBTAINED if (box.name, box.x) != (limit.name, limit.x)], [limit])

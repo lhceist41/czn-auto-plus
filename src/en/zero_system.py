@@ -14,7 +14,7 @@ from ok import Logger
 from src.en.game_data import CHAOS_SEASON, CODEX_CHAOS, SEASONS
 from src.en.handlers import insert_before, loaded, register, replace
 from src.en.quality import fold
-from src.en.reobserve import DEFAULT_BLACKLIST, MODIFIER_BLACKLIST, REDRAW_SECONDS, SAVE_LIMIT, SAVE_LIMIT_KEY, modifiers_in
+from src.en.reobserve import REDRAW_SECONDS, banned_in, modifiers_in, required_limit, save_limit_in
 from src.en.screen import in_region, lines_in, text_in_region
 
 logger = Logger.get_logger(__name__)
@@ -232,12 +232,10 @@ def judge(task, chaos, season, limit, modifiers, hunt, utils_chaos):
         elif chaos not in hunt["noted"]:
             hunt["noted"].add(chaos)
             task.log_info(f"{chaos} only comes with {CHAOS_SEASON[chaos]}, so {CODEX_SEASON} {wanted_season} is not asked of it")
-    required = int(utils_chaos._get_config_value(task, SAVE_LIMIT_KEY, 120))
+    required = required_limit(task, utils_chaos)
     if limit < required:
         reasons.append(f"Save Data Storage Limit {limit or 'unread'} is below {required}")
-    blacklist = utils_chaos._get_config_value(task, MODIFIER_BLACKLIST, DEFAULT_BLACKLIST)
-    banned = [name for name in modifiers if name in blacklist]
-    if banned:
+    if banned := banned_in(task, utils_chaos, modifiers):
         reasons.append(f"blacklisted {', '.join(banned)}")
     return Codex(chaos, limit, reasons)
 
@@ -245,8 +243,7 @@ def judge(task, chaos, season, limit, modifiers, hunt, utils_chaos):
 def read_codex(task, title, body, hunt, utils_chaos, utils):
     """Read and check the Codex on one panel or card, scrolling its list once when everything else fits.
 
-    The panel and the cards cut their list off, so a Codex is only passed once its hidden lines are read too. A season and a God box can push
-    the save limit itself below the cut, so an unread limit is read off the scroll rather than failed.
+    The panel and the cards cut their list off, so a Codex is only passed once its hidden lines are read too.
 
     Args:
         task: The running task, whose `all_texts` holds the current OCR pass.
@@ -262,18 +259,15 @@ def read_codex(task, title, body, hunt, utils_chaos, utils):
     names = [box.name for box in task.all_texts if in_region(box, body, task.width, task.height)]
     chaos = closest(lines_in(task, title), CODEX_CHAOS)
     season = next(filter(None, (closest(name, SEASONS) for name in names)), None)
-    limit = SAVE_LIMIT.search(lines_in(task, body))
-    limit = int(limit.group(1)) if limit else 0
+    limit = save_limit_in(lines_in(task, body))
     modifiers = modifiers_in(names)
     codex = judge(task, chaos, season, limit, modifiers, hunt, utils_chaos)
-    # An unread limit is likely below the cut, so that reason alone still earns the scroll.
+    # A season and a God box can push the limit below the cut, so an unread limit alone still earns the scroll.
     if len(codex.reasons) > (0 if limit else 1):
         return codex
     utils._scroll_card_page(task, (body[0] + body[2]) / 2, (body[1] + body[3]) / 2, -SCROLL_NOTCHES, "Zero System")
     hidden = [box.name for box in task.ocr() if in_region(box, body, task.width, task.height)]
-    if not limit:
-        limit = SAVE_LIMIT.search(" ".join(hidden))
-        limit = int(limit.group(1)) if limit else 0
+    limit = limit or save_limit_in(" ".join(hidden))
     return judge(task, chaos, season, limit, modifiers + modifiers_in(hidden), hunt, utils_chaos)
 
 
@@ -306,6 +300,9 @@ def describe(codex):
 
     Args:
         codex: The `Codex`.
+
+    Returns:
+        One line, such as "Burning Life at 130pt (fits)".
     """
     return f"{codex.chaos or 'unread Chaos'} at {codex.limit or 'unread'}pt ({'; '.join(codex.reasons) or 'fits'})"
 
