@@ -20,17 +20,19 @@ from src.en.screen import in_region, lines_in, text_in_region
 logger = Logger.get_logger(__name__)
 
 # This fork's settings, with English keys since upstream ships neither.
-CODEX_CHAOS_KEY = "Codex Chaos"
+CODEX = "Codex"
 CODEX_SEASON = "Codex Season"
 CODEX_MERGE = "Codex Merge"
 MAX_MERGES = "Max Merges per Codex"
-ANY_SEASON = "Any"
-SEASON_OPTIONS = [ANY_SEASON, *SEASONS]
+# The first choice of `Codex` and of `Codex Season`, which takes whatever the slots offer.
+ANY = "Any"
+CODEX_OPTIONS = [ANY, *CODEX_CHAOS]
+SEASON_OPTIONS = [ANY, *SEASONS]
 NORMAL_MERGE = "Normal Merge"
 CHAOS_MERGE = "Chaos Merge"
 NEVER_MERGE = "Never"
 MERGE_OPTIONS = [NORMAL_MERGE, CHAOS_MERGE, NEVER_MERGE]
-DEFAULT_MAX_MERGES = 10
+DEFAULT_MAX_MERGES = 3
 
 # A Chaos or season name read off the screen counts as this one at this similarity, so "Theater of llusions" still matches.
 NAME_MATCH = 0.8
@@ -134,6 +136,19 @@ def amount(text):
     return int(float(match.group(1).replace(",", "")) * {"": 1, "k": 1000, "m": 1000000}[match.group(2).casefold()])
 
 
+def seasons_for(chaos):
+    """List the `Codex Season` choices a Chaos can come with: every season for one of the first five, otherwise only its own.
+
+    Args:
+        chaos: A Chaos from `CODEX_CHAOS`, `ANY`, or None when the screen did not read as one.
+
+    Returns:
+        `ANY`, then the seasons it can carry.
+    """
+    tied = CHAOS_SEASON.get(chaos)
+    return [ANY, tied] if tied else SEASON_OPTIONS
+
+
 def hunt_of(task):
     """Give the Codex hunt in progress, starting a fresh one when the last was finished or abandoned.
 
@@ -205,18 +220,16 @@ def judge(task, chaos, season, limit, modifiers, hunt, utils_chaos):
         The `Codex`.
     """
     reasons = []
-    wanted = utils_chaos._get_config_value(task, CODEX_CHAOS_KEY, [])
-    if wanted and chaos not in wanted:
-        reasons.append(f"{chaos or 'an unread Chaos'} is not a {CODEX_CHAOS_KEY}")
-    wanted_season = utils_chaos._get_config_value(task, CODEX_SEASON, ANY_SEASON)
-    if wanted_season != ANY_SEASON and season != wanted_season:
-        tied = CHAOS_SEASON.get(chaos)
-        if tied and tied != wanted_season:
-            if chaos not in hunt["noted"]:
-                hunt["noted"].add(chaos)
-                task.log_info(f"{chaos} only comes with {tied}, so {CODEX_SEASON} {wanted_season} is not asked of it")
-        else:
+    wanted = utils_chaos._get_config_value(task, CODEX, ANY)
+    if wanted != ANY and chaos != wanted:
+        reasons.append(f"{chaos or 'an unread Chaos'} is not {wanted}")
+    wanted_season = utils_chaos._get_config_value(task, CODEX_SEASON, ANY)
+    if wanted_season != ANY and season != wanted_season:
+        if wanted_season in seasons_for(chaos):
             reasons.append(f"season {season or 'none'} is not {wanted_season}")
+        elif chaos not in hunt["noted"]:
+            hunt["noted"].add(chaos)
+            task.log_info(f"{chaos} only comes with {CHAOS_SEASON[chaos]}, so {CODEX_SEASON} {wanted_season} is not asked of it")
     required = int(utils_chaos._get_config_value(task, SAVE_LIMIT_KEY, 120))
     if limit < required:
         reasons.append(f"Save Data Storage Limit {limit or 'unread'} is below {required}")
@@ -398,7 +411,7 @@ def select_handler(utils_chaos, utils):
 
 
 def merge_handler(utils_chaos, utils):
-    """Build the Merge Codices handler, which picks the first `Codex Chaos` and the `Codex Season`, then merges.
+    """Build the Merge Codices handler, which picks the `Codex` and the `Codex Season`, then merges.
 
     Args:
         utils_chaos: The loaded `utils_chaos` module.
@@ -416,14 +429,14 @@ def merge_handler(utils_chaos, utils):
             utils_chaos._move_and_click(task, *BACK)
             task.sleep(REDRAW_SECONDS)
             return True
-        wanted = (utils_chaos._get_config_value(task, CODEX_CHAOS_KEY, []) or [None])[0]
+        wanted = utils_chaos._get_config_value(task, CODEX, ANY)
         shown = closest(lines_in(task, MERGE_NAME), CODEX_CHAOS)
-        if wanted and shown != wanted and hunt["scrolls"] <= MAX_LIST_SCROLLS:
+        if wanted != ANY and shown != wanted and hunt["scrolls"] <= MAX_LIST_SCROLLS:
             pick_chaos(task, wanted, hunt, utils)
             task.sleep(REDRAW_SECONDS)
             return True
-        season = utils_chaos._get_config_value(task, CODEX_SEASON, ANY_SEASON)
-        if season != ANY_SEASON and shown not in CHAOS_SEASON and hunt["season_taps"] < MAX_SEASON_TAPS:
+        season = utils_chaos._get_config_value(task, CODEX_SEASON, ANY)
+        if season != ANY and shown not in CHAOS_SEASON and hunt["season_taps"] < MAX_SEASON_TAPS:
             if closest(lines_in(task, MERGE_SEASON), SEASONS) != season:
                 hunt["season_taps"] += 1
                 task.log_info(f"Choosing {season} to merge")

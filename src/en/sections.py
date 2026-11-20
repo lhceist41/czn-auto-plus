@@ -22,7 +22,7 @@ from src.en.overrides import DESIRE_FACTION, EXTRACT_SPARE, FARMED_COMBATANT, SM
 from src.en.reobserve import MODIFIER_BLACKLIST, REOBSERVE, SAVE_LIMIT_KEY
 from src.en.rest import SHOP_SETTING
 from src.en.shop import BUY_MONSTER_CARDS, PAID_THRESHOLD, TAKE_MONSTER_REWARDS
-from src.en.zero_system import CODEX_CHAOS_KEY, CODEX_MERGE, CODEX_SEASON, MAX_MERGES
+from src.en.zero_system import CODEX, CODEX_MERGE, CODEX_SEASON, MAX_MERGES
 
 logger = Logger.get_logger(__name__)
 
@@ -44,7 +44,7 @@ SECTIONS = [
     ("Season 3 - Persona", ["指定面具卡牌", "面具卡牌刻印"]),
     ("Season 4 - Desire", [DESIRE_FACTION]),
     ("Season 5 - Memory", [MEMORY_CARD, ETCHED_MEMORY, MEMORY_BONUS, ENTER_MEMORY_END]),
-    ("Zero System", [CODEX_CHAOS_KEY, CODEX_SEASON, CODEX_MERGE, MAX_MERGES]),
+    ("Zero System", [CODEX, CODEX_SEASON, CODEX_MERGE, MAX_MERGES]),
 ]
 # Every key placed by the lists above, in display order.
 LAID_OUT = [*TOP, *(key for _, keys in SECTIONS for key in keys)]

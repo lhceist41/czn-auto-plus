@@ -13,7 +13,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from src.en.reobserve import MODIFIER_BLACKLIST, REOBSERVE, SAVE_LIMIT_KEY, modifiers_in, reobserving  # noqa: E402
-from src.en.zero_system import (CHAOS_MERGE, CODEX_CHAOS_KEY, CODEX_MERGE, CODEX_SEASON, CONFIRM, MAX_MERGES, NORMAL_MERGE, REROLL, SLOTS,  # noqa: E402
+from src.en.zero_system import (ANY, CHAOS_MERGE, CODEX, CODEX_MERGE, CODEX_SEASON, CONFIRM, MAX_MERGES, NORMAL_MERGE, REROLL, SLOTS,  # noqa: E402
                                 hunt_of, judge, merge_handler, obtained_handler, select_handler)
 from tests.fakes import HEIGHT, WIDTH, FakeBox  # noqa: E402
 
@@ -158,7 +158,7 @@ class ZeroSystemTask(FakeTask):
     """A Zero System screen, recording taps by point and scrolls, and showing `hidden` once a list is scrolled."""
 
     def __init__(self, boxes, hidden=(), **config):
-        super().__init__(boxes, **{SAVE_LIMIT_KEY: 130, MODIFIER_BLACKLIST: ["Plague"], CODEX_CHAOS_KEY: ["The Kaleidoscope Hatchery"],
+        super().__init__(boxes, **{SAVE_LIMIT_KEY: 130, MODIFIER_BLACKLIST: ["Plague"], CODEX: "The Kaleidoscope Hatchery",
                                    CODEX_SEASON: "Shattered Light and Claw", CODEX_MERGE: NORMAL_MERGE, MAX_MERGES: 10, **config})
         self.hidden = list(hidden)
         self.tapped = []
@@ -201,11 +201,11 @@ class TestZeroSystem(unittest.TestCase):
         """The Chaos Merge info label above the row carries the button's own words, and the list scrolls toward the row it wants."""
         handler = merge_handler(ZERO_UTILS_CHAOS, ZERO_UTILS)
         cases = (
-            ("an off-screen Chaos above scrolls up", {CODEX_CHAOS_KEY: ["The Blue Pot"]}, [("scroll", 3)], []),
-            ("a Chaos on screen is tapped", {CODEX_CHAOS_KEY: ["Burning Life"]}, [], [("Burning Life", 0.463)]),
-            ("a tied season is left alone", {CODEX_CHAOS_KEY: [], CODEX_SEASON: "A Promise Upon the Snow"}, [], [(NORMAL_MERGE, 0.922)]),
-            ("orbs on the button row", {CODEX_CHAOS_KEY: [], CODEX_SEASON: "Any", CODEX_MERGE: CHAOS_MERGE}, [], [(CHAOS_MERGE, 0.922)]),
-            ("Credits read in thousands", {CODEX_CHAOS_KEY: [], CODEX_SEASON: "Any"}, [], [(NORMAL_MERGE, 0.922)]),
+            ("an off-screen Chaos above scrolls up", {CODEX: "The Blue Pot"}, [("scroll", 3)], []),
+            ("a Chaos on screen is tapped", {CODEX: "Burning Life"}, [], [("Burning Life", 0.463)]),
+            ("a tied season is left alone", {CODEX: ANY, CODEX_SEASON: "A Promise Upon the Snow"}, [], [(NORMAL_MERGE, 0.922)]),
+            ("orbs on the button row", {CODEX: ANY, CODEX_SEASON: ANY, CODEX_MERGE: CHAOS_MERGE}, [], [(CHAOS_MERGE, 0.922)]),
+            ("Credits read in thousands", {CODEX: ANY, CODEX_SEASON: ANY}, [], [(NORMAL_MERGE, 0.922)]),
         )
         for label, config, taps, clicked in cases:
             with self.subTest(label):
@@ -216,13 +216,13 @@ class TestZeroSystem(unittest.TestCase):
 
     def test_merge_codices_picks_a_free_season_off_the_strip(self):
         task = ZeroSystemTask([at("The Blue Pot", 0.679, 0.395) if box.name == "Theater of llusions" and box.x > WIDTH / 2 else box for box in MERGE_THEATER],
-                              **{CODEX_CHAOS_KEY: [], CODEX_SEASON: "A Promise Upon the Snow"})
+                              **{CODEX: ANY, CODEX_SEASON: "A Promise Upon the Snow"})
         self.assertTrue(merge_handler(ZERO_UTILS_CHAOS, ZERO_UTILS)(task))
         self.assertEqual([(0.298, 0.799)], task.tapped)
 
     def test_merge_codices_goes_back_once_it_cannot_pay(self):
         task = ZeroSystemTask([box for box in MERGE_THEATER if box.name != "9,423"] + [at("90", 0.704, 0.048)],
-                              **{CODEX_CHAOS_KEY: [], CODEX_SEASON: "Any", CODEX_MERGE: CHAOS_MERGE})
+                              **{CODEX: ANY, CODEX_SEASON: ANY, CODEX_MERGE: CHAOS_MERGE})
         handler = merge_handler(ZERO_UTILS_CHAOS, ZERO_UTILS)
         self.assertFalse(handler(task))
         self.assertTrue(handler(task))
@@ -240,7 +240,7 @@ class TestZeroSystem(unittest.TestCase):
         self.assertEqual([SLOTS[0], SLOTS[1], SLOTS[2], SLOTS[0], REROLL, SLOTS[2]], task.tapped)
 
     def test_a_chaos_tied_to_another_season_is_let_off_the_season_check(self):
-        task = ZeroSystemTask([], **{CODEX_CHAOS_KEY: [], CODEX_SEASON: "A Promise Upon the Snow"})
+        task = ZeroSystemTask([], **{CODEX: ANY, CODEX_SEASON: "A Promise Upon the Snow"})
         for chaos, reasons in (("The Kaleidoscope Hatchery", []), ("The Blue Pot", ["season none is not A Promise Upon the Snow"])):
             with self.subTest(chaos):
                 self.assertEqual(reasons, judge(task, chaos, None, 140, [], hunt_of(task), ZERO_UTILS_CHAOS).reasons)

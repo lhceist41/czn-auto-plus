@@ -420,8 +420,8 @@ msgstr "Modifier Blacklist"
 msgid "Zero System"
 msgstr "Zero System"
 
-msgid "Codex Chaos"
-msgstr "Codex Chaos"
+msgid "Codex"
+msgstr "Codex"
 
 msgid "Codex Season"
 msgstr "Codex Season"

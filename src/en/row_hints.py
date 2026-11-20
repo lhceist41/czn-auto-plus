@@ -1,14 +1,15 @@
-"""Mark each mode settings row that was changed, grey out one that cannot apply, and hang trimmed text on an info icon.
+"""Mark changed mode settings rows, grey out or narrow the ones another row governs, and hang trimmed text on an info icon.
 
 ok-script can only hide a dependent row behind a saved switch, and shows no sign of which rows were moved off their defaults.
-Here a dependent row stays in place but greyed, and a changed row carries a green pill. Display only: no saved value is touched.
+Here a dependent row stays in place but greyed, and a changed row carries a green pill. The one saved value touched is a narrowed
+drop-down's, moved to its first choice once the choices no longer hold it.
 """
 
 import operator
 from dataclasses import dataclass
 from typing import Callable, Optional
 
-from PySide6.QtCore import QPoint, Qt, QTimer
+from PySide6.QtCore import QPoint, QSignalBlocker, Qt, QTimer
 from PySide6.QtGui import QIcon, QPainter
 from PySide6.QtWidgets import QGraphicsOpacityEffect, QHBoxLayout, QLabel, QStyle, QWidget
 
@@ -23,6 +24,7 @@ from src.en.overrides import EXTRACT_SPARE, TOOLTIPS
 from src.en.reobserve import MODIFIER_BLACKLIST, REOBSERVE
 from src.en.rest import SHOP_SETTING
 from src.en.shop import BUY_MONSTER_CARDS, PAID_THRESHOLD, TAKE_MONSTER_REWARDS
+from src.en.zero_system import CODEX, CODEX_SEASON, seasons_for
 
 # The line shown under the Floor 1 Epiphany row while it cannot run. `{}` is the controlling row's label.
 NEEDS_AN_ENTRY = "Needs an entry in {}."
@@ -76,6 +78,22 @@ RULES = {
     "首层刷特定闪光": Rule("闪光优先级", operator.not_, NEEDS_AN_ENTRY),
     ETCHED_MEMORY: Rule(MEMORY_CARD, bool),
     MEMORY_BONUS: Rule(MEMORY_CARD, bool),
+}
+
+
+@dataclass(frozen=True)
+class Narrowing:
+    """When one row decides which choices another row's drop-down offers."""
+
+    # The config key of the row whose value decides.
+    controller: str
+    # Takes the controller's saved value and gives the choices, the one to fall back on first.
+    options: Callable
+
+
+# Dependent drop-down key -> its `Narrowing`.
+NARROWED = {
+    CODEX_SEASON: Narrowing(CODEX, seasons_for),
 }
 
 
@@ -285,12 +303,35 @@ def decorate(card, keys):
             setattr(row, NOTE_ATTR, note)
 
 
+def narrow(row, options):
+    """Offer only the given choices on a drop-down row, moving its saved value to the first one when they no longer hold it.
+
+    Args:
+        row: A drop-down settings row.
+        options: The choices its controller allows, from its `Narrowing`.
+    """
+    if row.options != options:
+        with QSignalBlocker(row.combo_box):
+            row.combo_box.clear()
+            row.combo_box.addItems([og.app.tr(option) for option in options])
+        row.options = list(options)
+    if row.config.get(row.key) not in options:
+        # Through the row, so the move is saved and announced like a pick the user made.
+        row.update_config(options[0])
+    row.update_value()
+
+
 def refresh(card):
-    """Show the Changed pill on each row off its default, and grey out each row its `Rule` idles under the current values.
+    """Narrow each `NARROWED` drop-down, pill each row off its default, and grey out each row its `Rule` idles.
 
     Args:
         card: A settings card, re-checked after any of its values changes.
     """
+    # First, so a value moved here is the one the pills and greying below are drawn from.
+    for key, narrowing in NARROWED.items():
+        row = card.config_widget_by_key.get(key)
+        if row is not None and hasattr(row, "combo_box") and narrowing.controller in card.config_widget_by_key:
+            narrow(row, narrowing.options(card.config.get(narrowing.controller)))
     for row in card.config_widgets:
         pill = getattr(row, PILL_ATTR, None)
         if pill is not None:
