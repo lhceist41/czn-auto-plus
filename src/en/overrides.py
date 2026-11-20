@@ -11,7 +11,7 @@ from ok.util.file import get_relative_path, read_json_file, write_json_file
 
 from src.en.desire import DEFAULT_FACTION, FACTIONS
 from src.en.etched_memory import BONUSES, ENTER_MEMORY_END, ETCHED_MEMORY, KEEP_BONUS, MEMORIES, MEMORY_BONUS
-from src.en.game_data import CARDS, COMBATANTS, EQUIPMENT
+from src.en.game_data import CARDS, CODEX_CHAOS, COMBATANTS, EQUIPMENT
 from src.en.framework import import_ui
 from src.en.game_language import GAME_LANGUAGES, MODE_KEY
 from src.en.heal import PAY_CREDITS
@@ -19,6 +19,8 @@ from src.en.reobserve import DEFAULT_BLACKLIST, MODIFIER_BLACKLIST, MODIFIERS, R
 from src.en.meditation import MAX_STRESS, MEDITATE, MIN_HP_PERCENT
 from src.en.rest import SHOP_SETTING
 from src.en.shop import BUY_MONSTER_CARDS, PAID_THRESHOLD, TAKE_MONSTER_REWARDS
+from src.en.zero_system import (ANY_SEASON, CHAOS_MERGE, CODEX_CHAOS_KEY, CODEX_MERGE, CODEX_SEASON, DEFAULT_MAX_MERGES, MAX_MERGES, MERGE_OPTIONS,
+                                 NORMAL_MERGE, SEASON_OPTIONS)
 
 logger = Logger.get_logger(__name__)
 
@@ -124,7 +126,11 @@ DESCRIPTIONS = {
     ETCHED_MEMORY: "Etched Memories to take at the Interior, best first. A page offering none of them is searched again while searches are left.",
     MEMORY_BONUS: f"The bonus to hold out for on the etched Memory Card. {KEEP_BONUS} never processes.",
     REOBSERVE: "Spend event currency to Re-observe the Chaos start page while it carries a blacklisted modifier.",
-    MODIFIER_BLACKLIST: "Modifiers to Re-observe away, matched at any level, so Plague covers Plague 1 to 4.",
+    MODIFIER_BLACKLIST: "Modifiers to Re-observe or merge away, matched at any level, so Plague covers Plague 1 to 4.",
+    CODEX_CHAOS_KEY: "Zero System Codices worth entering, by Chaos. The first one is the Chaos merged. Empty takes any Chaos.",
+    CODEX_SEASON: "The season a Zero System Codex has to carry. A Chaos tied to another season is let off this check.",
+    CODEX_MERGE: f"What a Zero System reroll pays with: Credits for {NORMAL_MERGE}, orbs for {CHAOS_MERGE}. Never only picks among the slots.",
+    MAX_MERGES: "Merges to spend hunting one Codex. Once they are spent, the best Codex on hand is entered.",
     ENTER_MEMORY_END: "Enter End of Memory after the final boss for the extra fight and its grade upgrade.",
     "刷初始卡牌": "Reroll the starting card until this one appears. Cannot be combined with Farm Gaps.",
     "任务优先级": "Preferred options inside an Unidentified Area, best first, matched loosely against the option's description.",
@@ -267,6 +273,13 @@ def reshape(task):
         task.default_config[REOBSERVE] = True
         task.default_config[MODIFIER_BLACKLIST] = list(DEFAULT_BLACKLIST)
         task.config_type[MODIFIER_BLACKLIST] = {"type": "drop_down", "options_available": MODIFIERS}
+        task.default_config[CODEX_CHAOS_KEY] = []
+        task.config_type[CODEX_CHAOS_KEY] = {"type": "drop_down", "options_available": CODEX_CHAOS}
+        task.default_config[CODEX_SEASON] = ANY_SEASON
+        task.config_type[CODEX_SEASON] = {"type": "drop_down", "options": SEASON_OPTIONS}
+        task.default_config[CODEX_MERGE] = NORMAL_MERGE
+        task.config_type[CODEX_MERGE] = {"type": "drop_down", "options": MERGE_OPTIONS}
+        task.default_config[MAX_MERGES] = DEFAULT_MAX_MERGES
 
     for key in DROPPED:
         task.default_config.pop(key, None)
