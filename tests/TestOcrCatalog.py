@@ -133,6 +133,11 @@ class TestOcrCatalog(unittest.TestCase):
         translation = gettext.translation("ocr", str(I18N_ROOT), languages=["en_US"])
         self.assertIn("购买卡牌", translation.gettext("Purchase Card"))
 
+    def test_the_route_screen_without_a_minimap_is_mapped(self):
+        """A Dimensional Tunnel's route screen shows this caption in place of the minimap, and unmapped the run sits on it."""
+        translation = gettext.translation("ocr", str(I18N_ROOT), languages=["en_US"])
+        self.assertIn("无法接收到梦境号", translation.gettext("The SS Nightmare's signal does not reach this region."))
+
     def test_the_duplicate_combatant_prompt_reaches_its_own_handler(self):
         """Read as the Epiphany prompt, it went to a handler that tapped all three combatants and left the right-most chosen."""
         translation = gettext.translation("ocr", str(I18N_ROOT), languages=["en_US"])

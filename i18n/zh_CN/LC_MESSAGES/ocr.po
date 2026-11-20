@@ -192,6 +192,11 @@ msgstr "下一步"
 msgid "Observe"
 msgstr "观测"
 
+# From handle_route_selection: "无法接收到梦境号" in the box at (0.186, 0.850). A Dimensional Tunnel's route screen shows this
+# in place of the minimap, so neither map icon is there. Unmapped, no handler claims the frame and the run sits on it.
+msgid "The SS Nightmare's signal does not reach this region."
+msgstr "无法接收到梦境号"
+
 # From handle_settlement: _clean_match(box.name, "结算")
 msgid "Settlement"
 msgstr "结算"
