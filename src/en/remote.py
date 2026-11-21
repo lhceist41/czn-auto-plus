@@ -22,7 +22,7 @@ from ok.device.interaction_methods.post_message import PostMessageInteraction
 from ok.ui.qt.events import install_qt_event_dispatcher
 from ok.util.process import start_exit_watchdog
 
-from src.en import frame_log
+from src.en import frame_log, skip_tutorial
 from src.en.framework import import_ui
 from src.en.handlers import each_list, register
 from src.en.screen import centre_of
@@ -262,7 +262,9 @@ def _send(label, act):
     """
     def sending(task):
         logger.info(f"remote {label}")
-        act(task)
+        # The operator's to send, even onto Skip Tutorial: the guard only logs it.
+        with skip_tutorial.operating():
+            act(task)
 
     on_bot_thread(sending)
     return label
