@@ -14,7 +14,7 @@ from unittest import mock
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from src.en import handlers, notify, spend_guard, stuck_stop  # noqa: E402
+from src.en import handlers, notify, remote, spend_guard, stuck_stop  # noqa: E402
 from tests.fakes import FakeBox  # noqa: E402
 
 START = 1_000_000.0
@@ -131,7 +131,8 @@ class Modes:
     """Put stand-in modes in `sys.modules` under the given names, and the real ones back afterwards.
 
     `handlers.each_list` and `insert_before(only=...)` go by the name a module is imported under, so the stand-ins
-    have to take the real modes' names for the length of a test.
+    have to take the real modes' names for the length of a test. Every other loaded list is stood in for by an empty
+    module too, or an install would edit the real modes another test module later copies.
     """
 
     def __init__(self, **lists):
@@ -148,6 +149,8 @@ class Modes:
         self.held = {}
 
     def __enter__(self):
+        for name, _ in list(handlers.each_list()):
+            self.modules.setdefault(name, types.ModuleType(name))
         for name, module in self.modules.items():
             self.held[name] = sys.modules.get(name)
             sys.modules[name] = module
@@ -284,6 +287,57 @@ class TestStuckStop(unittest.TestCase):
         self.assertGreater(stopped_after, stuck_stop.STOP_SECONDS)
         self.assertLessEqual(stopped_after, stuck_stop.STOP_SECONDS + 1)
         self.assertEqual([stuck_stop.MESSAGE], task.notifications)
+
+    def test_after_any_hold_every_mode_gets_five_unheld_minutes_and_an_unheld_freeze_still_stops_at_five(self):
+        """A live check releases the bot for a moment and holds it again, a few times, each hold far under the gap."""
+        lists = {
+            "utils_chaos": ["handle_auto_stop", "handle_save_target_member"],
+            "utils_sortie": ["handle_auto_stop", "handle_route_selection"],
+            "utils_story": ["handle_center_confirm", "handle_enter_story_or_battle"],
+            "src.en.daily": ["handle_rescue_screen", "handle_daily_lobby"],
+        }
+        # Seconds unheld and held, in turn, before the bot is released for good, from the reviewer's measurements.
+        scenarios = {
+            "never held": [],
+            "280 s unheld, 29 s held": [(280, 29)],
+            "280 s unheld, 30 s held": [(280, 30)],
+            "150 s unheld, 600 s held": [(150, 600)],
+            "1 s unheld, 29 s held, repeated": [(1, 29)] * 20,
+            "2 s unheld, 28 s held, repeated": [(2, 28)] * 20,
+            "1 s unheld, 30 s held, repeated": [(1, 30)] * 20,
+        }
+        self.addCleanup(remote._held.clear)
+        for mode, own in lists.items():
+            with Modes(**{mode: [remote.handle_remote] + [named(name) for name in own]}) as loaded:
+                stuck_stop.install(fake_utils(self.clock))
+            page_handlers = loaded[mode].PAGE_HANDLERS
+            self.assertEqual(["handle_remote", "stop_when_stuck"] + own, names(loaded[mode]))
+            for scenario, turns in scenarios.items():
+                with self.subTest(mode=mode, scenario=scenario):
+                    task = FakeTask()
+                    stopped = []
+
+                    def run(seconds, held):
+                        if held:
+                            remote._held.set()
+                        else:
+                            remote._held.clear()
+                        for elapsed in range(1, seconds + 1):
+                            self.tick()
+                            any(handler(task) for handler in page_handlers)
+                            if task.disabled:
+                                stopped.append(elapsed)
+                                return
+
+                    for unheld, held in turns:
+                        run(unheld, False)
+                        run(held, True)
+                    self.assertEqual([], stopped, "stopped before the last release")
+                    run(stuck_stop.STOP_SECONDS * 2, False)
+                    self.assertEqual(1, len(stopped))
+                    self.assertGreater(stopped[0], stuck_stop.STOP_SECONDS)
+                    self.assertLessEqual(stopped[0], stuck_stop.STOP_SECONDS + 1)
+                    self.assertEqual([stuck_stop.MESSAGE], task.notifications)
 
     def test_a_frozen_spend_screen_still_stops(self):
         """The spend guard withholds upstream's taps there, so the stop is the only thing that ends the freeze."""

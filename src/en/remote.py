@@ -26,6 +26,7 @@ from src.en import frame_log, skip_tutorial
 from src.en.framework import import_ui
 from src.en.handlers import each_list, register
 from src.en.screen import centre_of
+from src.en.stuck_stop import HELD
 
 logger = Logger.get_logger(__name__)
 
@@ -56,10 +57,12 @@ TITLE_CHECK = 2000
 QUIT_DELAY = 0.25
 # Seconds the app gets to shut down after a quit before ok-script's watchdog ends the process anyway.
 QUIT_GRACE = 5
-# Most bytes of a refused request's body read and dropped before the refusal, and the seconds that read waits for them,
-# so a huge or untrue Content-Length cannot hold the handler.
+# Most bytes a request's body may have, and the seconds the whole body gets to arrive, so a huge, untrue or trickled
+# Content-Length cannot hold the handler. A refused body is read and dropped within both.
 DRAIN_LIMIT = 1 << 20
 DRAIN_TIMEOUT = 2
+# How a chunked body ends: the empty last chunk, with no trailer after it.
+LAST_CHUNK = b"\r\n0\r\n\r\n"
 
 # Actions waiting for the bot's thread, as `(action, future)` pairs.
 _actions = queue.Queue()
@@ -86,11 +89,16 @@ class Remote(http.server.BaseHTTPRequestHandler):
             status, message = refusal
             self.reply(status, message.encode("utf-8"), "text/plain; charset=utf-8")
             return
+        # Read before any reply, so no body bytes are still on their way when the connection closes.
+        length = self.content_length()
+        body = self.read_body(length)
+        if len(body) < length:
+            self.reply(408, f"refused: the body did not arrive within {DRAIN_TIMEOUT} s".encode("utf-8"),
+                       "text/plain; charset=utf-8")
+            return
         _last_contact = time.monotonic()
         name = self.path.strip("/")
         try:
-            # Read before any reply, so no body bytes are still on their way when the connection closes.
-            body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
             if name not in COMMANDS:
                 raise KeyError(f"unknown command {name!r}, expected one of {', '.join(COMMANDS)}")
             reply = {"ok": True, "result": globals()[name](**json.loads(body or b"{}"))}
@@ -113,26 +121,82 @@ class Remote(http.server.BaseHTTPRequestHandler):
             return 403, "refused: the request came from a web page"
         if (self.headers.get("Content-Type") or "").split(";")[0].strip().lower() != "application/json":
             return 415, "refused: send the body as Content-Type application/json"
+        # A chunked body's length is unknown until it ends, so it cannot be bounded up front, and read as an empty
+        # body it would run the command with its defaults instead of the caller's arguments.
+        if "Transfer-Encoding" in self.headers:
+            return 411, "refused: send the body with a Content-Length, not chunked"
+        length = self.content_length()
+        if length is None:
+            return 400, f"refused: Content-Length {self.headers.get('Content-Length')[:32]!r} is not a number of bytes"
+        if length > DRAIN_LIMIT:
+            return 413, f"refused: the body is over {DRAIN_LIMIT} bytes"
         return None
 
+    def content_length(self):
+        """Read the Content-Length header as a number of bytes, without converting a digit string of any size.
+
+        Python refuses to convert more than 4300 digits, so a count past `DRAIN_LIMIT` is told by its digits alone.
+        Leading zeros count for nothing, as HTTP allows them.
+
+        Returns:
+            The count (0 when there is no header), `DRAIN_LIMIT + 1` for any count past `DRAIN_LIMIT`, or None when the
+            header is not a count.
+        """
+        digits = (self.headers.get("Content-Length") or "0").strip()
+        if not digits.isdecimal():
+            return None
+        digits = digits.lstrip("0") or "0"
+        return int(digits) if len(digits) <= len(str(DRAIN_LIMIT)) else DRAIN_LIMIT + 1
+
     def drain(self):
-        """Read and drop a refused request's body, up to `DRAIN_LIMIT` bytes and `DRAIN_TIMEOUT` seconds.
+        """Read and drop a refused request's body, up to `DRAIN_LIMIT` bytes and `DRAIN_TIMEOUT` seconds in all.
 
         Body bytes that reach the socket after it closes make Windows reset the connection, and the reset wipes the
-        reply the caller has not read yet.
+        reply the caller has not read yet. A chunked body is read up to its last, empty chunk.
         """
-        try:
-            length = min(max(int(self.headers.get("Content-Length") or 0), 0), DRAIN_LIMIT)
-        except ValueError:
-            return
+        if "Transfer-Encoding" in self.headers:
+            self.read_body(DRAIN_LIMIT, until=LAST_CHUNK)
+        else:
+            self.read_body(min(self.content_length() or 0, DRAIN_LIMIT))
+
+    def read_body(self, length, until=None):
+        """Read up to `length` bytes of the body, giving up `DRAIN_TIMEOUT` seconds after starting.
+
+        The socket timeout bounds each read, not the whole body, so each read gets only what is left of one deadline,
+        and a caller sending a byte at a time cannot stretch it.
+
+        Args:
+            length: The bytes to read.
+            until: Bytes that end the body as soon as the read so far ends with them, for a body of unknown length.
+
+        Returns:
+            The bytes that arrived in time, short when the deadline passed or the caller closed first.
+        """
+        chunks = []
+        # Seeded with a line end, so a chunked body that is only its last chunk, with none before it, still ends there.
+        tail = b"\r\n"
+        deadline = time.monotonic() + DRAIN_TIMEOUT
         timeout = self.connection.gettimeout()
-        self.connection.settimeout(DRAIN_TIMEOUT)
         try:
-            self.rfile.read(length)
+            while length > 0:
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    break
+                self.connection.settimeout(left)
+                chunk = self.rfile.read1(length)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                length -= len(chunk)
+                if until is not None:
+                    tail = (tail + chunk[-len(until):])[-len(until):]
+                    if tail == until:
+                        break
         except OSError:
             pass
         finally:
             self.connection.settimeout(timeout)
+        return b"".join(chunks)
 
     def reply(self, status, data, content_type):
         """Send one complete response.
@@ -166,7 +230,11 @@ def handle_remote(task):
         try:
             action, future = _actions.get_nowait()
         except queue.Empty:
-            return ran or _held.is_set()
+            if _held.is_set():
+                # The stuck stop restarts its clock on its first pass after the hold, so time held never counts.
+                setattr(task, HELD, True)
+                return True
+            return ran
         # False once the caller gave up waiting, so a late click never lands on a screen nobody is looking at.
         if not future.set_running_or_notify_cancel():
             continue

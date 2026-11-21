@@ -20,12 +20,13 @@ GAP_SECONDS = 30
 MESSAGE = "Stopped: the screen has not changed for 5 minutes. Check the game, then press Start again."
 
 # Ahead of upstream's own stop handler, which Chaos and Sortie run first, so a handler that claims every frame cannot
-# keep this from seeing the screen. Story has no such handler, so there it goes ahead of whatever its list starts with, the hold aside.
+# keep this from seeing the screen. Story has no such handler, so there it goes ahead of whatever its list starts with,
+# the hold aside.
 ANCHOR = "handle_auto_stop"
 MODES = ("utils_chaos", "utils_sortie")
 STORY = "utils_story"
-# `remote`'s handler, first in every list on a debug run. Story's stop goes behind it, as in the other modes:
-# a held run gets no pass of the stop, and a hold longer than the gap restarts the clock on release.
+# `remote`'s handler, first in every list on a debug run. Story's stop goes behind it, as in the other modes, so a held
+# run gets no pass of the stop.
 HOLD = "handle_remote"
 # Daily's list starts with `remote`'s handler, which stays first so a held bot does nothing, then the Rescue stop.
 DAILY = "src.en.daily"
@@ -34,6 +35,9 @@ DAILY_ANCHOR = "handle_rescue_screen"
 # Parked on the task: when this last ran, and the stuck clock's value when the stop was last announced.
 LAST_PASS = "_en_stuck_stop_last_pass"
 ANNOUNCED = "_en_stuck_stop_announced"
+# Parked on the task by `remote` on every frame its hold claims. Someone was working the screen by hand, so the time
+# held says nothing about the game, and the first pass after the hold, however short, restarts the clock.
+HELD = "_en_stuck_stop_held"
 
 _patched = False
 
@@ -51,7 +55,7 @@ def stopping(utils):
         now = time.time()
         last = getattr(task, LAST_PASS, None)
         setattr(task, LAST_PASS, now)
-        if last is None or now - last > GAP_SECONDS:
+        if vars(task).pop(HELD, False) or last is None or now - last > GAP_SECONDS:
             forget(task)
         # Run here rather than read passively, so the clock keeps up even while a later handler claims every frame.
         if not utils.is_frame_stuck(task, stuck_threshold_seconds=STOP_SECONDS):
@@ -67,7 +71,7 @@ def stopping(utils):
 
 
 def install(utils):
-    """Put the stop ahead of every handler but the hold in Chaos, Sortie and Story, and ahead of the Rescue stop in Daily's.
+    """Put the stop first in Chaos, Sortie and Story, behind only the hold, and ahead of the Rescue stop in Daily's.
 
     Args:
         utils: The loaded `utils` module, or None when it is not importable yet.

@@ -6,6 +6,7 @@ import importlib.util
 import json
 import logging
 import os
+import socket
 import sys
 import tempfile
 import threading
@@ -244,6 +245,49 @@ def raw_post(port, headers, host=True, command="status", body=b"{}", length=None
         connection.close()
 
 
+def trickle_post(port, headers, length, every):
+    """POST to `status` and send the body one byte at a time until the port answers, as a slow or hostile caller might.
+
+    Args:
+        port: The remote control's port.
+        headers: Every header to send besides Host and Content-Length.
+        length: The Content-Length to send.
+        every: Seconds between two body bytes.
+
+    Returns:
+        The reply's status line, empty when the connection was reset first, and the seconds until the port answered.
+    """
+    connection = socket.create_connection(("127.0.0.1", port), timeout=15)
+    answered = threading.Event()
+
+    def trickle():
+        try:
+            for _ in range(length):
+                if answered.wait(every):
+                    return
+                connection.sendall(b" ")
+        except OSError:
+            pass
+
+    head = {"Host": f"127.0.0.1:{port}", **headers, "Content-Length": str(length)}
+    sender = threading.Thread(target=trickle, daemon=True)
+    started = time.monotonic()
+    try:
+        lines = "".join(f"{name}: {value}\r\n" for name, value in head.items())
+        connection.sendall(f"POST /status HTTP/1.1\r\n{lines}\r\n".encode("ascii"))
+        sender.start()
+        try:
+            first = connection.recv(256)
+        except ConnectionError:
+            first = b""
+        seconds = time.monotonic() - started
+        answered.set()
+        sender.join()
+        return first.split(b"\r\n")[0].decode("ascii"), seconds
+    finally:
+        connection.close()
+
+
 def wait_for(condition, seconds=2):
     """Poll until `condition()` holds or `seconds` pass, and return its last answer."""
     deadline = time.monotonic() + seconds
@@ -278,9 +322,13 @@ class TestRemote(unittest.TestCase):
         self.assertEqual([], clicks)
 
     def test_a_held_bot_gives_up_every_frame(self):
-        """Otherwise the bot acts on the screen being stepped through by hand."""
+        """Otherwise the bot acts on a screen stepped through by hand, and the stuck stop counts the time held."""
+        task = types.SimpleNamespace()
+        self.assertFalse(remote.handle_remote(task))
+        self.assertNotIn(remote.HELD, vars(task))
         remote._held.set()
-        self.assertTrue(remote.handle_remote("task"))
+        self.assertTrue(remote.handle_remote(task))
+        self.assertIs(True, getattr(task, remote.HELD))
 
     def test_a_late_action_that_starts_in_time_reports_what_it_did(self):
         """Told it timed out, a caller sends the same input again after the first one already landed."""
@@ -593,6 +641,73 @@ class TestRemote(unittest.TestCase):
                     self.assertEqual(415, code)
                     self.assertTrue(text.startswith("refused: "), text)
                     self.assertLess(time.monotonic() - started, seconds)
+
+    def test_a_trickled_body_holds_the_handler_for_one_deadline_in_all(self):
+        """A byte at a time keeps each read inside its timeout, so only a deadline for the whole body ends it."""
+        port = serve_remote(self)
+        ran = []
+        cases = (("refused", {"Content-Type": "text/plain"}, 415),
+                 ("served", {"Content-Type": "application/json"}, 408))
+        with standing_in(remote, DRAIN_TIMEOUT=1, status=lambda **kwargs: ran.append(kwargs) or "status ran",
+                         _last_contact=None):
+            for case, headers, status in cases:
+                with self.subTest(case):
+                    line, seconds = trickle_post(port, headers, length=20, every=0.3)
+                    self.assertRegex(line, rf"^HTTP/1\.\d {status} ")
+                    self.assertLess(seconds, 2)
+                    self.assertIsNone(remote._last_contact)
+        self.assertEqual([], ran)
+
+    def test_a_served_content_length_the_port_cannot_trust_is_refused_at_once(self):
+        """Taken as given, -1 waits until the caller closes, and a word or 5000 digits raise a ValueError."""
+        port = serve_remote(self)
+        own = {"Content-Type": "application/json", "Host": f"127.0.0.1:{port}"}
+        ran = []
+        cases = (("negative", -1, b"", 400, 0.5), ("not a number", "two", b"", 400, 0.5),
+                 ("over the limit", remote.DRAIN_LIMIT + 1, b"{}", 413, 2), ("5000 digits", "9" * 5000, b"{}", 413, 2),
+                 ("never filled", 10, b"{}", 408, 2))
+        with standing_in(remote, DRAIN_TIMEOUT=1, status=lambda **kwargs: ran.append(kwargs) or "status ran",
+                         _last_contact=None):
+            for case, length, body, status, seconds in cases:
+                with self.subTest(case):
+                    started = time.monotonic()
+                    code, content_type, text = raw_post(port, own, body=body, length=length)
+                    self.assertEqual((status, "text/plain; charset=utf-8"), (code, content_type))
+                    self.assertTrue(text.startswith("refused: "), text)
+                    self.assertLess(time.monotonic() - started, seconds)
+                    self.assertIsNone(remote._last_contact)
+            self.assertEqual([], ran)
+            # HTTP allows leading zeros, and the count they pad is small, so it is served like the count alone.
+            with self.subTest("a small count padded with 5000 zeros"):
+                code, _, text = raw_post(port, own, body=b"{}", length="0" * 5000 + "2")
+                self.assertEqual((200, {"ok": True, "result": "status ran"}), (code, json.loads(text)))
+                self.assertEqual([{}], ran)
+
+    def test_a_chunked_body_is_refused_and_runs_nothing(self):
+        """Read as an empty body, a chunked `hold` sending `{"on": false}` would hold the bot, not release it."""
+        port = serve_remote(self)
+        ran = []
+        for case, extra in (("no Content-Length", {}), ("a Content-Length beside it", {"Content-Length": "13"})):
+            with self.subTest(case), standing_in(remote, hold=lambda **kwargs: ran.append(kwargs) or "hold ran",
+                                                 _last_contact=None):
+                connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+                started = time.monotonic()
+                try:
+                    headers = {"Content-Type": "application/json", "Transfer-Encoding": "chunked", **extra}
+                    # Encoded here, since http.client stops encoding chunks once it sees a Content-Length.
+                    body = b'7\r\n{"on": \r\n6\r\nfalse}\r\n0\r\n\r\n'
+                    connection.request("POST", "/hold", body=body, headers=headers)
+                    response = connection.getresponse()
+                    code, content_type = response.status, response.getheader("Content-Type")
+                    text = response.read().decode("utf-8")
+                finally:
+                    connection.close()
+                self.assertEqual((411, "text/plain; charset=utf-8"), (code, content_type))
+                self.assertTrue(text.startswith("refused: "), text)
+                # Read up to the last chunk, not left on the socket to reset the reply or waited on to the deadline.
+                self.assertLess(time.monotonic() - started, 1)
+                self.assertIsNone(remote._last_contact)
+        self.assertEqual([], ran)
 
     def test_the_mcp_quit_tool_sends_quit(self):
         """A tool forwarding to any other command would leave the app running while the caller waits for it to go."""
