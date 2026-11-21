@@ -170,7 +170,8 @@ config = {
     },
     'version': version, #版本
     'my_app': ['src.globals', 'Globals'], #可选. 全局单例对象, 可以存放加载的模型, 使用og.my_app调用
-    # The three game modes are the only tasks. They are declared by `ok_tasks/` as trigger tasks and moved
-    # into this list by `src/en/shell.py`, which is what gives them a Start button.
+    # Every mode is a trigger task moved into `onetime_tasks` by `src/en/shell.py`, which is what gives it a Start button.
+    # Chaos, Sortie and Story are declared by `ok_tasks/`; Daily is the fork's own.
+    'trigger_tasks': [['src.en.daily', 'DailyMode']],
     'onetime_tasks': [],
 }

@@ -1,4 +1,4 @@
-"""Stop a Chaos, Sortie or Story run once the screen has sat still for five minutes.
+"""Stop a Chaos, Sortie, Story or Daily run once the screen has sat still for five minutes.
 
 Upstream's stuck handler keeps trying to click its way out for as long as the screen stays frozen, and on a screen that
 can spend or discard `src/en/spend_guard.py` takes even that away, so a freeze nothing can get past would loop until
@@ -24,6 +24,9 @@ MESSAGE = "Stopped: the screen has not changed for 5 minutes. Check the game, th
 ANCHOR = "handle_auto_stop"
 MODES = ("utils_chaos", "utils_sortie")
 STORY = "utils_story"
+# Daily's list starts with `remote`'s handler, which stays first so a held bot does nothing, then the Rescue stop.
+DAILY = "src.en.daily"
+DAILY_ANCHOR = "handle_rescue_screen"
 
 # Parked on the task: when this last ran, and the stuck clock's value when the stop was last announced.
 LAST_PASS = "_en_stuck_stop_last_pass"
@@ -61,7 +64,7 @@ def stopping(utils):
 
 
 def install(utils):
-    """Put the stop first in the Chaos, Sortie and Story handler lists.
+    """Put the stop first in the Chaos, Sortie and Story handler lists, and ahead of the Rescue stop in Daily's.
 
     Args:
         utils: The loaded `utils` module, or None when it is not importable yet.
@@ -73,10 +76,11 @@ def install(utils):
     handler_list = getattr(story, "PAGE_HANDLERS", None)
     if handler_list:
         insert_before(handler_list[0].__name__, stopping(utils), only=(STORY,))
+    insert_before(DAILY_ANCHOR, stopping(utils), only=(DAILY,))
 
 
 def apply():
-    """Stop a Chaos, Sortie or Story run whose screen has not changed for five minutes."""
+    """Stop a Chaos, Sortie, Story or Daily run whose screen has not changed for five minutes."""
     global _patched
     if _patched:
         return
