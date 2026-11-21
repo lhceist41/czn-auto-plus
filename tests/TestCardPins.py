@@ -29,7 +29,7 @@ from src.en.handlers import standing_in  # noqa: E402
 
 from src.en.pins import (  # noqa: E402
     CHOOSERS, DECK_OFFSET, PICK_OFFSET, PROBE, RECOGNIZERS, ROW_OFFSET, install, is_pinned, marked,
-    narrowing, only_pinned, probe_box, tagging, taking_marked, taking_on_sight, to_pinned_combatant,
+    narrowing, only_pinned, probe_box, tagging, taking_marked, taking_on_sight, to_pinned_combatant, without_pinned,
 )
 from tests.fakes import FakeBox  # noqa: E402
 
@@ -204,6 +204,22 @@ class TestOnlyPinned(unittest.TestCase):
         self.assertEqual(cards, only_pinned(cards))
 
 
+class TestWithoutPinned(unittest.TestCase):
+    """Setting the pinned cards aside on a removal."""
+
+    def test_keeps_the_unpinned_cards_or_the_whole_screen(self):
+        """With nothing pinned, or everything pinned, there is nothing to set aside, and upstream still needs a card to take."""
+        for description, pinned, expected in (
+            ("keeps only the unpinned cards", [False, True, False], ["card0", "card2"]),
+            ("nothing pinned leaves the list alone", [False, False], ["card0", "card1"]),
+            ("everything pinned leaves the list alone", [True, True], ["card0", "card1"]),
+            ("an empty screen", [], []),
+        ):
+            with self.subTest(description):
+                task, cards = screen_with(pinned, DECK_OFFSET)
+                self.assertEqual(expected, [c["name"] for c in without_pinned(marked(task, cards, DECK_OFFSET))])
+
+
 class TestTagging(unittest.TestCase):
     """Marking every card a recognizer returns."""
 
@@ -266,37 +282,112 @@ class TestNarrowing(unittest.TestCase):
                             utils, "recognize_cards_in_deck")
         self.assertEqual((["a"], 2, "移除"), wrapped(FakeTask(), ["a"], count=2, action="移除"))
 
+    def test_a_removal_sees_only_the_unpinned_cards(self):
+        task, cards = screen_with([False, True], DECK_OFFSET)
+        marked(task, cards, DECK_OFFSET)
+        utils = self.utils_stub(cards)
+
+        def chooser(task_, names, count=1, action=""):
+            return [c["name"] for c in utils.recognize_cards_in_deck(task_)]
+
+        wrapped = narrowing(chooser, utils, "recognize_cards_in_deck")
+        for description, args, kwargs, expected in (
+            ("an Epiphany", (task, []), {"action": "闪光"}, ["card1"]),
+            ("a removal", (task, []), {"action": "移除"}, ["card0"]),
+            ("a removal named by position", (task, [], 1, "移除"), {}, ["card0"]),
+        ):
+            with self.subTest(description):
+                self.assertEqual(expected, wrapped(*args, **kwargs))
+
     def test_only_the_choosing_sites_narrow(self):
         # The counting callers - handle_mask_card above all - must not be on this list.
         self.assertEqual({"select_card", "handle_card_reward"}, set(CHOOSERS))
 
 
+def deck_card(name, y, pinned, kind=""):
+    """Build a card as the marked deck recognizer reads it.
+
+    Args:
+        name: The card's name.
+        y: Its centre down the screen, normalised.
+        pinned: Whether the build preset pinned it.
+        kind: Its type as upstream reads it, `基础攻击` being a Basic one.
+
+    Returns:
+        A card dict.
+    """
+    return {"name": name, "x": 0.4, "y": y, "selected": False, "pinned": pinned,
+            "feature_name": "attack_in_deck", "type": kind, "description": ""}
+
+
+def run_deck(chooser, pages, action, count=1):
+    """Run a wrapped upstream `select_card` over a deck grid of one or more pages, with no Skip button.
+
+    Args:
+        chooser: Upstream's `select_card` under the wrappers being checked.
+        pages: Per page, the cards the recognizer reads there.
+        action: The card operation.
+        count: How many cards the screen asks for.
+
+    Returns:
+        The names of the cards tapped, the page the deck was left on, and what `select_card` returned.
+    """
+    page, clicks = [0], []
+
+    def scroll(*args):
+        page[0] += 1
+
+    def tap(task_, x, y):
+        clicks.append(next(c["name"] for c in pages[min(page[0], len(pages) - 1)] if (c["x"], c["y"]) == (x, y)))
+
+    task = types.SimpleNamespace(ocr=lambda: [], box_of_screen=lambda *a: None, log_info=lambda m: None,
+                                 sleep=lambda s: None, feature_exists=lambda n: False, all_texts=[])
+    with standing_in(utils, recognize_cards_in_deck=lambda *a, **k: [dict(c) for c in pages[min(page[0], len(pages) - 1)]],
+                     _simplify_texts=lambda texts: texts, region_white_ratio=lambda *a: 0.05 if len(pages) > 1 else 0.0,
+                     _point_is_white=lambda *a: page[0] >= len(pages) - 1, _scroll_card_page=scroll, _move_and_click=tap,
+                     _get_config_value=lambda task_, key, default: default, _get_card_list=lambda task_, key: [],
+                     _get_game_text=lambda task_, key: key):
+        result = chooser(task, [], count=count, action=action)
+    return clicks, page[0], result
+
+
 class TestTakingOnSight(unittest.TestCase):
-    """A pinned card is taken on the page it shows up on, rather than after scrolling to the bottom."""
+    """A pinned card is taken on the page it shows up on, rather than after scrolling to the bottom, except by a removal."""
 
     def test_upstream_takes_the_pinned_card_without_scrolling(self):
         # Real upstream `select_card`, so this breaks if it ever stops clicking priority names mid-scroll.
-        def deck_card(name, y, pinned):
-            return {"name": name, "x": 0.4, "y": y, "selected": False, "pinned": pinned,
-                    "feature_name": "attack_in_deck", "type": "", "description": ""}
+        pages = [[deck_card("Strike", 0.3, False), deck_card("Mealtime", 0.6, True)], [deck_card("Defend", 0.3, False, "基础攻击")]]
+        self.assertEqual((["Mealtime"], 0, True), run_deck(taking_on_sight(utils.select_card, utils), pages, "闪光"))
 
-        pages = [[deck_card("Strike", 0.3, False), deck_card("Mealtime", 0.6, True)], [deck_card("Defend", 0.3, False)]]
-        page, clicks = [0], []
+    def test_a_removal_leaves_the_pinned_card_where_it_is(self):
+        pages = [[deck_card("Strike", 0.3, False), deck_card("Mealtime", 0.6, True)], [deck_card("Defend", 0.3, False, "基础攻击")]]
+        self.assertEqual(["Defend"], run_deck(taking_on_sight(utils.select_card, utils), pages, "移除")[0])
 
-        def scroll(*args):
-            page[0] += 1
 
-        task = types.SimpleNamespace(ocr=lambda: [], box_of_screen=lambda *a: None, log_info=lambda m: None,
-                                     sleep=lambda s: None, feature_exists=lambda n: False, all_texts=[])
-        with standing_in(utils, recognize_cards_in_deck=lambda *a, **k: pages[min(page[0], 1)],
-                         _simplify_texts=lambda texts: texts, region_white_ratio=lambda *a: 0.05,
-                         _point_is_white=lambda *a: False, _scroll_card_page=scroll,
-                         _move_and_click=lambda task_, x, y: clicks.append((x, y)),
-                         _get_config_value=lambda task_, key, default: default,
-                         _get_game_text=lambda task_, key: key):
-            self.assertTrue(taking_on_sight(utils.select_card, utils)(task, [], count=1, action="移除"))
-        self.assertEqual([(0.4, 0.6)], clicks)
-        self.assertEqual(0, page[0])
+class TestRemovalKeepsPinnedCards(unittest.TestCase):
+    """Real upstream `select_card` under both pin wrappers, in the order `install` puts them on: a pinned card stays while an unpinned one shows with it."""
+
+    @staticmethod
+    def removed(*pages, count=1):
+        chooser = taking_on_sight(narrowing(utils.select_card, utils, "recognize_cards_in_deck"), utils)
+        return run_deck(chooser, list(pages), "移除", count=count)[0]
+
+    def test_a_basic_card_goes_before_a_pinned_one(self):
+        self.assertEqual(["Strike"], self.removed([deck_card("Strike", 0.3, False, "基础攻击"), deck_card("Mealtime", 0.6, True)]))
+
+    def test_upstreams_last_fallback_takes_an_unpinned_card(self):
+        # No Basic card and no Skip button, so upstream falls back to the bottom-most card, here the pinned one.
+        self.assertEqual(["Blade Resonance"], self.removed([deck_card("Blade Resonance", 0.3, False), deck_card("Mealtime", 0.6, True)]))
+
+    def test_with_every_card_pinned_one_still_goes(self):
+        self.assertEqual(["Mealtime"], self.removed([deck_card("Blade Resonance", 0.3, True), deck_card("Mealtime", 0.6, True)]))
+
+    def test_the_protection_holds_per_read(self):
+        # Upstream's Basic pass starts on the last page, and a read of only pinned cards is handed over whole, so the
+        # pinned Basic card there goes although page 1 has an unpinned one. An empty read instead would stop the removal.
+        first = [deck_card("Mika Basic", 0.3, False, "基础攻击"), deck_card("Mika Key", 0.6, False)]
+        last = [deck_card("Pin Basic", 0.3, True, "基础攻击"), deck_card("Pin Key", 0.6, True)]
+        self.assertEqual(["Pin Basic"], self.removed(first, last))
 
 
 def named(name):

@@ -2,8 +2,9 @@
 
 The deck grid is laid out one row per combatant. Upstream can already prefer a row - it finds the save-scum
 target's portrait down the left of the screen and matches cards by height against it - but only while the
-`刷空档` strategy is switched on, and only when removing. Since the run discards every other combatant's save
-data, that row is the one worth acting on whatever the strategy, and on Epiphany screens as well.
+`刷空档` strategy is switched on, and then it removes any card on that row, unique ones included. Here the row
+is only read first, so a removal still takes the Basic cards upstream's own pass picks, and a listed card is
+taken from that row first, on Epiphany screens as well.
 
 The tolerance and the portrait feature are upstream's own, so both are pinned here.
 """
@@ -20,7 +21,7 @@ sys.path.insert(0, str(REPO_ROOT / "ok_tasks"))
 import utils  # noqa: E402
 
 from src.en.deck import (  # noqa: E402
-    COPY_LIST, GAP_KEY, PORTRAIT, ROW_TOLERANCE, choosing_copies, copying_ap_cards, portrait_of, preferring_target_row, random_combatant, reading_bottom_right_first, row_of,
+    COPY_LIST, PORTRAIT, ROW_TOLERANCE, choosing_copies, copying_ap_cards, portrait_of, preferring_target_row, random_combatant, reading_bottom_right_first, row_of,
     rows_first,
 )
 from src.en import deck  # noqa: E402
@@ -28,6 +29,8 @@ from src.en.handlers import standing_in  # noqa: E402
 from tests.fakes import FakeBox  # noqa: E402
 
 WIDTH, HEIGHT = 1920, 1080
+# The strategy upstream gates its own row rule on.
+GAP_KEY = "刷空档"
 
 
 class FakeFeature:
@@ -149,7 +152,7 @@ class TestPreferringTargetRow(unittest.TestCase):
 
     @staticmethod
     def utils_stub():
-        """Build a stand-in carrying the two seams this patch moves.
+        """Build a stand-in carrying the seams `select_card` reads through.
 
         Returns:
             A namespace with `_get_config_value` and `recognize_cards_in_deck`.
@@ -181,12 +184,12 @@ class TestPreferringTargetRow(unittest.TestCase):
         preferring_target_row(select_card, utils)(task, [], count=1, action=action)
         return seen["gap"], seen["cards"]
 
-    def test_only_the_operations_worth_steering_get_the_row_rule(self):
-        """The kept combatant's row goes first for a removal or an Epiphany, and nowhere else."""
+    def test_only_the_operations_worth_steering_read_the_row_first(self):
+        """The kept combatant's row goes first for a removal or an Epiphany, and nowhere else. The strategy is the user's."""
         for description, action, expected in (
-            ("a removal", "移除", (True, ["low", "top"])),
-            ("an epiphany", "闪光", (True, ["low", "top"])),
-            ("the second epiphany wording", "灵光", (True, ["low", "top"])),
+            ("a removal", "移除", (False, ["low", "top"])),
+            ("an epiphany", "闪光", (False, ["low", "top"])),
+            ("the second epiphany wording", "灵光", (False, ["low", "top"])),
             ("any other operation", "复制", (False, ["top", "low"])),
         ):
             with self.subTest(description):
@@ -197,33 +200,22 @@ class TestPreferringTargetRow(unittest.TestCase):
         preferring_target_row(lambda *a, **k: True, self.utils_stub())(task, [], action="复制")
         self.assertEqual(0, task.matches)
 
-    def test_matches_the_portrait_once_and_answers_upstream_from_that(self):
-        # Answering the flag makes upstream look the same portrait up again; it must not be re-matched.
+    def test_looks_the_portrait_up_on_every_read(self):
+        # `select_card` scrolls between reads, so the row found on one page must not order the next.
         utils = self.utils_stub()
         task = FakeTask(portrait_y=0.8)
+        seen = []
 
         def select_card(task_, card_names, count=1, action=""):
-            for _ in range(2):
-                task_.find_one(feature_name=PORTRAIT, box=None, threshold=0.6)
+            for portrait_y in (0.2, 0.8, None):
+                task_._portrait_y = portrait_y
+                seen.append([c["name"] for c in utils.recognize_cards_in_deck(task_)])
             return True
 
         preferring_target_row(select_card, utils)(task, [], action="移除")
-        self.assertEqual(1, task.matches)
-
-    def test_other_feature_lookups_still_reach_the_task(self):
-        utils = self.utils_stub()
-        task = FakeTask(portrait_y=0.8)
-
-        def select_card(task_, card_names, count=1, action=""):
-            task_.find_one(feature_name="something_else", box=None, threshold=0.6)
-            return True
-
-        preferring_target_row(select_card, utils)(task, [], action="移除")
-        self.assertEqual(2, task.matches)
+        self.assertEqual([["top", "low"], ["low", "top"], ["top", "low"]], seen)
 
     def test_stands_right_down_without_a_portrait(self):
-        # Not just the grid: the flag must not be answered either, or upstream would turn on a row rule that
-        # is about to fail its own portrait lookup anyway.
         self.assertEqual((False, ["top", "low"]), self.run_action("移除", portrait_y=None))
 
     def test_other_settings_still_read_normally(self):
@@ -236,6 +228,139 @@ class TestPreferringTargetRow(unittest.TestCase):
 
         preferring_target_row(select_card, utils)(FakeTask(portrait_y=0.8), [], action="移除")
         self.assertEqual([True], seen)
+
+
+def deck_card(name, x, y, kind):
+    """Build a card as the deck recognizer reads it.
+
+    Args:
+        name: The card's name.
+        x: Its centre across the screen, normalised.
+        y: Its centre down the screen, normalised.
+        kind: Its type as upstream reads it, `基础攻击` and `基础技能` being the Basic ones.
+
+    Returns:
+        A card dict.
+    """
+    return {"name": name, "x": x, "y": y, "type": kind, "selected": False, "feature_name": "attack_in_deck", "description": ""}
+
+
+# The kept combatant's row, its unique card right-most where a right-to-left pick reaches it first, and another combatant's row below.
+KEPT_Y, OTHER_Y = 0.30, 0.72
+KEPT_ROW = [deck_card("Mika Basic Attack", 0.35, KEPT_Y, "基础攻击"), deck_card("Mika Basic Skill", 0.50, KEPT_Y, "基础技能"),
+            deck_card("Mika Key Card", 0.65, KEPT_Y, "攻击")]
+KEPT_UNIQUE = [deck_card("Mika Key Card", 0.50, KEPT_Y, "攻击"), deck_card("Mika Second Key", 0.65, KEPT_Y, "技能")]
+OTHER_ROW = [deck_card("Owen Basic Attack", 0.35, OTHER_Y, "基础攻击"), deck_card("Owen Key Card", 0.65, OTHER_Y, "攻击")]
+
+
+class GridTask:
+    """A deck grid for upstream's own `select_card`, scrolled a page at a time, with the kept portrait on some pages only."""
+
+    width, height = WIDTH, HEIGHT
+
+    def __init__(self, pages, portraits):
+        """Lay out the pages.
+
+        Args:
+            pages: Per page, the cards the recognizer reads there.
+            portraits: Per page, the kept combatant's portrait height, or None where it is off screen.
+        """
+        self.pages, self.portraits = pages, portraits
+        self.page = 0
+        self.all_texts = []
+        self.tapped = []
+
+    def ocr(self):
+        return []
+
+    def log_info(self, message):
+        pass
+
+    def sleep(self, seconds):
+        pass
+
+    def box_of_screen(self, *region):
+        return region
+
+    def feature_exists(self, name):
+        return name == PORTRAIT
+
+    def find_one(self, feature_name=None, box=None, threshold=None):
+        portrait_y = self.portraits[self.page]
+        return None if portrait_y is None else FakeFeature(portrait_y)
+
+    def read(self, *args, **kwargs):
+        return [dict(c) for c in self.pages[self.page]]
+
+    def tap(self, task_, x, y):
+        self.tapped.append((self.page, next(c["name"] for c in self.pages[self.page] if (c["x"], c["y"]) == (x, y))))
+
+    def scroll(self, task_, x, y, amount, *args, **kwargs):
+        self.page = min(self.page + 1, len(self.pages) - 1) if amount < 0 else max(self.page - 1, 0)
+
+    def at_edge(self, task_, x, y, page):
+        # Upstream reads the scrollbar's foot for the bottom of the deck and its head for the top.
+        return self.page == (len(self.pages) - 1 if y > 0.5 else 0)
+
+
+def run_grid(task, action="移除", count=1, names=(), gap=False):
+    """Run upstream's `select_card` under the deck patches, in the order `install` puts them on.
+
+    Args:
+        task: The `GridTask` to run over.
+        action: The card operation.
+        count: How many cards the screen asks for.
+        names: The user's list for that operation.
+        gap: The `刷空档` strategy, as the user set it.
+
+    Returns:
+        `(page, name)` for each card tapped, in order.
+    """
+    chooser = reading_bottom_right_first(preferring_target_row(utils.select_card, utils), utils)
+    with standing_in(utils, recognize_cards_in_deck=task.read, _simplify_texts=lambda texts: texts,
+                     region_white_ratio=lambda *a: 0.0 if len(task.pages) == 1 else 0.05, _scroll_card_page=task.scroll,
+                     _point_is_white=task.at_edge, _move_and_click=task.tap, _get_card_list=lambda task_, key: [],
+                     _get_game_text=lambda task_, key: key, _get_config_value=lambda task_, key, default: gap if key == GAP_KEY else default):
+        chooser(task, list(names), count=count, action=action)
+    return task.tapped
+
+
+class TestRemovalTakesBasicCards(unittest.TestCase):
+    """Real upstream `select_card`: a removal takes Basic cards ahead of the kept combatant's unique ones."""
+
+    def test_the_kept_rows_basic_cards_go_before_its_unique_card(self):
+        for count, expected in ((1, [(0, "Mika Basic Skill")]), (2, [(0, "Mika Basic Skill"), (0, "Mika Basic Attack")])):
+            with self.subTest(count=count):
+                self.assertEqual(expected, run_grid(GridTask([KEPT_ROW], [KEPT_Y]), count=count))
+
+    def test_another_rows_basic_card_when_the_kept_row_has_none(self):
+        self.assertEqual([(0, "Owen Basic Attack")], run_grid(GridTask([KEPT_UNIQUE + OTHER_ROW], [KEPT_Y])))
+
+    def test_no_unique_card_while_a_basic_card_is_on_offer(self):
+        tapped = run_grid(GridTask([KEPT_ROW + OTHER_ROW], [KEPT_Y]), count=3)
+        self.assertEqual({"Mika Basic Attack", "Mika Basic Skill", "Owen Basic Attack"}, {name for _, name in tapped})
+
+    def test_the_users_list_is_taken_from_the_kept_row_first(self):
+        page = [deck_card("Owen Strike", 0.35, OTHER_Y, "攻击"), deck_card("Mika Strike", 0.20, KEPT_Y, "攻击"), *KEPT_ROW[:2]]
+        self.assertEqual([(0, "Mika Strike")], run_grid(GridTask([page], [KEPT_Y]), names=["Strike"]))
+
+    def test_the_users_own_gap_strategy_still_runs_upstreams_row_rule(self):
+        self.assertEqual([(0, "Mika Key Card")], run_grid(GridTask([KEPT_ROW], [KEPT_Y]), gap=True))
+
+    def test_an_epiphany_still_lands_on_the_kept_row(self):
+        page = [deck_card("Owen Strike", 0.65, OTHER_Y, "攻击"), deck_card("Mika Strike", 0.35, KEPT_Y, "攻击")]
+        self.assertEqual([(0, "Mika Strike")], run_grid(GridTask([page], [KEPT_Y]), action="闪光", names=["Strike"]))
+
+    def test_a_scroll_never_reuses_the_first_pages_row(self):
+        """Two pages and the portrait on the first only: a card on page 2 at page 1's row height is not on the kept row."""
+        first = [deck_card("Mika Key Card", 0.65, KEPT_Y, "攻击")]
+        with self.subTest("the user's gap strategy"):
+            second = [deck_card("Owen Key Card", 0.50, KEPT_Y, "攻击"), deck_card("Owen Basic Attack", 0.35, OTHER_Y, "基础攻击")]
+            tapped = run_grid(GridTask([first, second], [KEPT_Y, None]), count=2, gap=True)
+            self.assertEqual([(0, "Mika Key Card"), (1, "Owen Basic Attack")], tapped)
+        with self.subTest("the user's list"):
+            second = [deck_card("Owen Strike", 0.35, OTHER_Y, "攻击"), deck_card("Rei Strike", 0.35, KEPT_Y, "攻击")]
+            self.assertEqual([(1, "Owen Strike")], run_grid(GridTask([first, second], [KEPT_Y, None]), names=["Strike"]))
 
 
 class TestCopyingApCards(unittest.TestCase):

@@ -3,6 +3,7 @@
 A build preset marks the cards a combatant's build wants, and the client draws a small orange pin in the
 top-right corner of every marked card, and of the combatant row a granted card belongs to. Nothing in `ok_tasks/`
 knows about it - the mark is a Global-client feature - so the pick has always come down to the priority lists alone.
+For the same reason a removal keeps a pinned card while an unpinned one shows with it; a read of only pinned cards still gives one up.
 """
 
 import numpy as np
@@ -43,6 +44,8 @@ CHOOSERS = {
     "select_card": "recognize_cards_in_deck",
     "handle_card_reward": "recognize_cards",
 }
+# The `select_card` operation that takes cards out of the deck, where a pin marks what to keep.
+REMOVE = "移除"
 # What OCR reads off the round badge the client draws on a New card, whose mission progress makes it worth taking. It sits where the pin does
 # and fills 0.56 of the probe, so colour alone calls it a pin. Read at 15px from the probe's centre, so this stays well inside a card's corner.
 NEW_BADGE = "N"
@@ -159,6 +162,38 @@ def only_pinned(cards):
     return pinned
 
 
+def without_pinned(cards):
+    """Narrow a removal's cards to the ones the build preset did not pin.
+
+    This holds per read: a page of only pinned cards is handed over whole, even when another page has an unpinned card.
+
+    Args:
+        cards: The cards the recognizer found, already marked.
+
+    Returns:
+        Just the unpinned cards, or every card when the pin cannot separate them.
+    """
+    pinned = [card for card in cards if card.get("pinned")]
+    # With every card pinned, upstream's last fallback still has to take one, and an empty read would stop the removal.
+    if not pinned or len(pinned) == len(cards):
+        return cards
+    logger.info(f"build preset pinned {[card['name'] for card in pinned]}, so the removal keeps them")
+    return [card for card in cards if not card.get("pinned")]
+
+
+def action_of(args, kwargs):
+    """Read the operation a `select_card` call was given.
+
+    Args:
+        args: The call's positional arguments, `(task, card_names, count, action)`.
+        kwargs: The call's keyword arguments.
+
+    Returns:
+        The operation, or an empty string for a chooser that takes none.
+    """
+    return kwargs.get("action", args[3] if len(args) > 3 else "")
+
+
 def tagging(recognise, offset):
     """Wrap a card recognizer so every card it returns says whether it is pinned.
 
@@ -176,7 +211,7 @@ def tagging(recognise, offset):
 
 
 def narrowing(chooser, utils, recognizer):
-    """Wrap a function that picks a card so it only ever sees the pinned candidates.
+    """Wrap a function that picks a card so it only ever sees the pinned candidates, or on a removal the unpinned ones.
 
     Only the handlers about to *choose* a card are narrowed. Several other callers count what they were given
     rather than ranking it - `handle_mask_card` treats fewer than three cards as "the choice has already been
@@ -192,9 +227,10 @@ def narrowing(chooser, utils, recognizer):
     """
     def wrapped(*args, **kwargs):
         original = getattr(utils, recognizer)
+        keep = without_pinned if action_of(args, kwargs) == REMOVE else only_pinned
 
         def narrowed(*inner_args, **inner_kwargs):
-            return only_pinned(original(*inner_args, **inner_kwargs))
+            return keep(original(*inner_args, **inner_kwargs))
 
         with standing_in(utils, **{recognizer: narrowed}):
             return chooser(*args, **kwargs)
@@ -203,7 +239,7 @@ def narrowing(chooser, utils, recognizer):
 
 
 def taking_on_sight(select_card, utils):
-    """Wrap `select_card` so a pinned card is taken on the page it first shows up on.
+    """Wrap `select_card` so a pinned card is taken on the page it first shows up on, except by a removal.
 
     Upstream only clicks mid-scroll when a card matches the priority list, so a pinned card that matches nothing
     waits until the scroll reaches the bottom of the deck. The pinned names on the current page are appended to
@@ -217,6 +253,8 @@ def taking_on_sight(select_card, utils):
         The wrapped function.
     """
     def wrapped(task, card_names, count=1, action=""):
+        if action == REMOVE:
+            return select_card(task, card_names, count=count, action=action)
         names = list(card_names or [])
         configured = len(names)
         original = utils.recognize_cards_in_deck
@@ -319,7 +357,7 @@ def install(utils):
 
 
 def apply():
-    """Prefer a card the user's build preset pinned on every screen that chooses one, and a New card on a reward."""
+    """Prefer a card the user's build preset pinned on every screen that chooses one but a removal, and a New card on a reward."""
     global _patched
     if _patched:
         return

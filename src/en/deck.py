@@ -1,9 +1,10 @@
-"""Act on the kept combatant's row first when removing cards or sparking an Epiphany, and never skip a copy.
+"""Read the kept combatant's row first when removing cards or sparking an Epiphany, and never skip a copy.
 
 A Chaos run keeps one combatant - the save-scum target - and throws the other two away at the end, so anything
-spent on the discarded pair is spent on nothing. Upstream can already find that row, but gates the rule on the
-`刷空档` strategy being on and on the operation being a removal, so it almost never fires on this client. A copy
-only takes cards on the user's list, skips when none is on offer, and always copies from the left-most combatant.
+spent on the discarded pair is spent on nothing. Its row is put first in every read of the grid, so a card picked
+by name comes from it first. Upstream's own row rule is left to the `刷空档` strategy: it takes any card on that
+row, unique ones included, ahead of the Basic cards a removal should take. A copy only takes cards on the user's
+list, skips when none is on offer, and always copies from the left-most combatant.
 """
 
 import random
@@ -22,8 +23,6 @@ PORTRAIT_REGION = (0.079, 0.092, 0.209, 0.675)
 PORTRAIT_THRESHOLD = 0.6
 # How far from the portrait a card still counts as being on its row. Upstream's own tolerance.
 ROW_TOLERANCE = 0.25
-# The strategy flag upstream gates its row rule on.
-GAP_KEY = "刷空档"
 # The operations worth steering. Duplicating is left alone, since a copy helps whoever holds the original.
 ROW_ACTIONS = ("移除", "闪光", "灵光")
 # Names this change in the shared record of what a function already carries.
@@ -127,46 +126,30 @@ def reading_bottom_right_first(select_card, utils):
 
 
 def preferring_target_row(select_card, utils):
-    """Wrap `select_card` so the kept combatant's row is acted on first.
+    """Wrap `select_card` so the kept combatant's row is read first.
 
     Args:
         select_card: The function to wrap, upstream's or another patch's.
-        utils: The module holding `_get_config_value` and `recognize_cards_in_deck`, the two seams.
+        utils: The module holding `recognize_cards_in_deck`, the seam.
 
     Returns:
         The wrapped function.
     """
     def wrapped(task, card_names, count=1, action=""):
-        portrait = portrait_of(task) if action in ROW_ACTIONS else None
-        row_y = row_of(task, portrait)
-        if row_y is None:
-            # Nothing to steer towards, so upstream runs exactly as it did. This is also what keeps the flag
-            # from being answered on a frame where upstream's own row rule would have found no portrait.
+        if action not in ROW_ACTIONS:
             return select_card(task, card_names, count=count, action=action)
-        logger.info(f"the kept combatant's row is at {row_y:.4f}, so {action} starts there")
-        original_config = utils._get_config_value
         original_recognise = utils.recognize_cards_in_deck
-        original_find_one = task.find_one
-
-        def answering_gap(task_, key, default):
-            # Only the row rule reads this inside `select_card`; every other reader is in another handler.
-            if key == GAP_KEY:
-                return True
-            return original_config(task_, key, default)
 
         def ordered(*args, **kwargs):
-            return rows_first(original_recognise(*args, **kwargs), row_y)
+            cards = original_recognise(*args, **kwargs)
+            # Looked up on every read: `select_card` scrolls, and a row's height on one page is another row's on the next.
+            row_y = row_of(task, portrait_of(task))
+            if row_y is not None:
+                logger.info(f"the kept combatant's row is at {row_y:.4f}, so {action} reads it first")
+            return rows_first(cards, row_y)
 
-        def remembering(feature_name=None, *args, **kwargs):
-            # Answering the flag makes upstream look this same portrait up again, up to twice, and a template
-            # match over the portrait column is worth a few milliseconds each time.
-            if feature_name == PORTRAIT:
-                return portrait
-            return original_find_one(feature_name, *args, **kwargs)
-
-        with standing_in(utils, _get_config_value=answering_gap, recognize_cards_in_deck=ordered):
-            with standing_in(task, find_one=remembering):
-                return select_card(task, card_names, count=count, action=action)
+        with standing_in(utils, recognize_cards_in_deck=ordered):
+            return select_card(task, card_names, count=count, action=action)
 
     return wrapped
 
@@ -335,7 +318,7 @@ def install(utils):
 
 
 def apply():
-    """Start removals and Epiphanies on the row of the combatant the run is keeping, and never skip a copy."""
+    """Read the kept combatant's row first on removals and Epiphanies, and never skip a copy."""
     global _patched
     if _patched:
         return
