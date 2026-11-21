@@ -1,6 +1,8 @@
 """Check the debug-run tools: one saved frame per log line a second, and the remote control's seat in the real mode lists."""
 
+import http.server
 import importlib.util
+import json
 import logging
 import os
 import sys
@@ -9,6 +11,7 @@ import threading
 import time
 import types
 import unittest
+import urllib.request
 from pathlib import Path
 
 import cv2
@@ -22,7 +25,7 @@ import utils_chaos  # noqa: E402
 import utils_sortie  # noqa: E402
 import utils_story  # noqa: E402
 
-from ok import TaskExecutor  # noqa: E402
+from ok import TaskExecutor, og  # noqa: E402
 from ok.device.interaction_methods.foreground_post_message import ForegroundPostMessageInteraction  # noqa: E402
 from ok.device.interaction_methods.genshin import GenshinInteraction  # noqa: E402
 from ok.device.interaction_methods.post_message import PostMessageInteraction  # noqa: E402
@@ -168,10 +171,24 @@ def attempt(call, *args):
         return error
 
 
+def idle_executor(current_task=None):
+    """An executor with no tasks loaded, running `current_task`."""
+    return types.SimpleNamespace(current_task=current_task, get_all_tasks=lambda: [])
+
+
+def wait_for(condition, seconds=2):
+    """Poll until `condition()` holds or `seconds` pass, and return its last answer."""
+    deadline = time.monotonic() + seconds
+    while not condition() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    return condition()
+
+
 class TestRemote(unittest.TestCase):
 
     def tearDown(self):
         remote._held.clear()
+        remote._quit_reply = None
         while not remote._actions.empty():
             remote._actions.get_nowait()
 
@@ -281,6 +298,86 @@ class TestRemote(unittest.TestCase):
         with standing_in(czn_mcp, call=lambda command, **kwargs: sent.append((command, kwargs)) or "dragged"):
             self.assertEqual("dragged", czn_mcp.drag(0.1, 0.2, 0.3, 0.4))
         self.assertEqual([("drag", {"x1": 0.1, "y1": 0.2, "x2": 0.3, "y2": 0.4})], sent)
+        self.assertIn(sent[0][0], remote.COMMANDS)
+
+    def test_status_reports_the_process_id(self):
+        """Without it a caller restarting the app cannot tell the old process from the new one."""
+        executor = idle_executor()
+        with standing_in(remote, _executor=lambda: executor):
+            self.assertEqual(os.getpid(), remote.status()["pid"])
+
+    def test_a_quit_is_refused_while_a_task_runs(self):
+        """A quit mid-run would cut the bot off between a tap and the screen it leads to."""
+        exits = []
+        executor = idle_executor(current_task=utils_chaos)
+        with standing_in(remote, _executor=lambda: executor, _exit_app=lambda: exits.append(1), QUIT_DELAY=0):
+            with self.assertRaisesRegex(RuntimeError, "set_running"):
+                remote.quit()
+            time.sleep(0.1)
+        self.assertEqual([], exits)
+        self.assertIsNone(remote._quit_reply)
+
+    def test_a_quit_replies_first_and_exits_once(self):
+        """A caller that retries, or two callers at once, must not run the app's shutdown twice."""
+        exits = []
+        replies = []
+        executor = idle_executor()
+        with standing_in(remote, _executor=lambda: executor, _exit_app=lambda: exits.append(1), QUIT_DELAY=0.2):
+            callers = [threading.Thread(target=lambda: replies.append(remote.quit())) for _ in range(5)]
+            for caller in callers:
+                caller.start()
+            for caller in callers:
+                caller.join()
+            self.assertEqual([], exits)
+            # Once a quit is accepted, a task started meanwhile changes nothing: the exit is already on its way.
+            executor.current_task = utils_chaos
+            replies.append(remote.quit())
+            self.assertTrue(wait_for(lambda: exits))
+            time.sleep(0.3)
+        self.assertEqual([{"state": "exiting", "pid": os.getpid()}] * 6, replies)
+        self.assertEqual([1], exits)
+
+    def test_the_exit_arms_the_watchdog_then_runs_the_app_quit_on_the_qt_thread(self):
+        """A window close may only hide the app in the tray, and a wedged shutdown with no watchdog never ends."""
+        calls = []
+        dispatcher = types.SimpleNamespace(dispatch=lambda callback, args, kwargs: calls.append(("dispatch", callback, args, kwargs)))
+        app = types.SimpleNamespace(quit=lambda: None)
+        with standing_in(remote, start_exit_watchdog=lambda grace_period: calls.append(("watchdog", grace_period)),
+                         install_qt_event_dispatcher=lambda: dispatcher), standing_in(og, ok=app):
+            remote._exit_app()
+        self.assertEqual([("watchdog", remote.QUIT_GRACE), ("dispatch", app.quit, (), {})], calls)
+
+    def test_the_port_answers_a_quit_and_still_refuses_unknown_commands(self):
+        """The reply has to arrive before the port closes, and the quit must not open the module to other names."""
+        exits = []
+        executor = idle_executor()
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), remote.Remote)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+
+        def post(command):
+            request = urllib.request.Request(f"http://127.0.0.1:{server.server_port}/{command}", data=b"{}", method="POST")
+            with urllib.request.urlopen(request, timeout=5) as response:
+                return json.load(response)
+
+        with standing_in(remote, _executor=lambda: executor, _exit_app=lambda: exits.append(1), QUIT_DELAY=0.2,
+                         _last_contact=None):
+            self.assertEqual({"ok": True, "result": {"state": "exiting", "pid": os.getpid()}}, post("quit"))
+            self.assertEqual([], exits)
+            for command in ("exit", "shutdown", "_exit_app", "os"):
+                with self.subTest(command):
+                    reply = post(command)
+                    self.assertFalse(reply["ok"])
+                    self.assertIn("unknown command", reply["error"])
+            self.assertTrue(wait_for(lambda: exits))
+
+    def test_the_mcp_quit_tool_sends_quit(self):
+        """A tool forwarding to any other command would leave the app running while the caller waits for it to go."""
+        sent = []
+        with standing_in(czn_mcp, call=lambda command, **kwargs: sent.append((command, kwargs)) or {"state": "exiting"}):
+            self.assertEqual({"state": "exiting"}, czn_mcp.quit())
+        self.assertEqual([("quit", {})], sent)
         self.assertIn(sent[0][0], remote.COMMANDS)
 
     def test_a_screenshot_outlives_the_frame_ok_script_drops(self):

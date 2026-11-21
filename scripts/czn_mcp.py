@@ -70,7 +70,7 @@ def ping():
 
 @server.tool()
 def status() -> dict:
-    """Which task is running, whether the bot is held, and which tasks are switched on."""
+    """Which task is running, whether the bot is held, which tasks are switched on, and the app's process id."""
     return call("status")
 
 
@@ -128,6 +128,13 @@ def set_setting(key: str, value: str | int | float | bool | list[str], task: str
 def set_running(task: str, running: bool) -> dict:
     """Start or stop a mode such as `ChaosMode`, as its Start and Stop buttons would. Hold the bot first to start it idle."""
     return call("set_running", task=task, running=running)
+
+
+@server.tool()
+def quit() -> dict:
+    """End the whole app, not just a mode. Refused while a mode runs: stop it with `set_running` first. Replies with the
+    app's `pid` before it exits; wait until that process is gone before starting the app again."""
+    return call("quit")
 
 
 if __name__ == "__main__":

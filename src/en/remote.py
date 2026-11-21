@@ -9,6 +9,7 @@ import base64
 import concurrent.futures
 import http.server
 import json
+import os
 import queue
 import threading
 import time
@@ -18,6 +19,8 @@ from PySide6.QtCore import QTimer
 
 from ok import Logger
 from ok.device.interaction_methods.post_message import PostMessageInteraction
+from ok.ui.qt.events import install_qt_event_dispatcher
+from ok.util.process import start_exit_watchdog
 
 from src.en import frame_log
 from src.en.framework import import_ui
@@ -44,11 +47,15 @@ QUALITY = 90
 # The task a settings command reads when none is named.
 DEFAULT_TASK = "ChaosMode"
 # The functions below a request may name, so a path can never reach anything else in the module.
-COMMANDS = ("status", "screenshot", "texts", "click", "drag", "press_key", "hold", "settings", "set_setting", "set_running")
+COMMANDS = ("status", "screenshot", "texts", "click", "drag", "press_key", "hold", "settings", "set_setting", "set_running", "quit")
 # Seconds since the last request before the title bar stops saying the MCP bridge is connected.
 STALE = 15
 # How often, in milliseconds, the title bar is brought up to date.
 TITLE_CHECK = 2000
+# Seconds between replying to a quit and starting it, so the reply reaches the caller before the port closes.
+QUIT_DELAY = 0.25
+# Seconds the app gets to shut down after a quit before ok-script's watchdog ends the process anyway.
+QUIT_GRACE = 5
 
 # Actions waiting for the bot's thread, as `(action, future)` pairs.
 _actions = queue.Queue()
@@ -57,6 +64,9 @@ _held = threading.Event()
 # `time.monotonic()` of the last request, from the MCP bridge's pings or a tool call.
 _last_contact = None
 _patched = False
+# The reply to the first accepted quit, so a repeated one gets the same answer and schedules nothing new.
+_quit_reply = None
+_quit_lock = threading.Lock()
 
 
 class Remote(http.server.BaseHTTPRequestHandler):
@@ -171,10 +181,12 @@ def _task(name):
 
 
 def status():
-    """Report which task is running, whether the bot is held, and which tasks are switched on. The modes count as tasks here."""
+    """Report which task is running, whether the bot is held, which tasks are switched on, and the app's process id. The
+    modes count as tasks here."""
     executor = _executor()
     current = executor.current_task
     return {
+        "pid": os.getpid(),
         "running": type(current).__name__ if current is not None else None,
         "held": _held.is_set(),
         "pending": _actions.qsize(),
@@ -335,6 +347,38 @@ def set_running(task, running):
         target.unpause()
     logger.info(f"remote {'start' if running else 'stop'} {task}")
     return status()
+
+
+def quit():
+    """End the whole app after replying, as its own quit would. A closed window may only hide in the tray, so it is not used.
+
+    Returns:
+        `{"state": "exiting", "pid": ...}`: the process is gone when that pid is.
+
+    Raises:
+        RuntimeError: A task is running, so a quit would cut it mid-action. Stop it with `set_running` first.
+    """
+    global _quit_reply
+    with _quit_lock:
+        if _quit_reply is None:
+            current = _executor().current_task
+            if current is not None:
+                raise RuntimeError(f"{type(current).__name__} is running: stop it with set_running first, so the quit never cuts it mid-action")
+            _quit_reply = {"state": "exiting", "pid": os.getpid()}
+            logger.info("remote quit")
+            timer = threading.Timer(QUIT_DELAY, _exit_app)
+            timer.daemon = True
+            timer.start()
+        return dict(_quit_reply)
+
+
+def _exit_app():
+    """Run ok-script's quit on the Qt thread, with its watchdog armed first so a wedged shutdown still ends the process."""
+    from ok import og
+
+    start_exit_watchdog(grace_period=QUIT_GRACE)
+    # Hands back the dispatcher the app installed at start, which posts the call to the Qt thread.
+    install_qt_event_dispatcher().dispatch(og.ok.quit, (), {})
 
 
 def show_connection():
