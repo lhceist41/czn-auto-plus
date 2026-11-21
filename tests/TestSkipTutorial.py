@@ -220,11 +220,12 @@ class TestRefused(GuardTest):
 
     def test_the_rim_around_the_outline_is_guarded_and_the_next_pixel_out_is_not(self):
         # Written out rather than taken from the box, so an edit that shrinks or moves the box fails here.
-        for point in ((0.812, 0.096), (0.995, 0.015), (0.900, 0.102), (0.900, 0.009)):
+        for point in ((0.812, 0.096), (0.995, 0.015), (0.900, 0.102), (0.900, 0.1035), (0.900, 0.009), (0.9995, 0.050),
+                      (0.809, 0.050)):
             with self.subTest(point=point):
                 task = mode(StoryMode, pill_read())
                 self.assertRefused(task, lambda: task.click(*point))
-        outside = ((0.806, 0.050), (0.900, 0.104), (0.900, 0.007))
+        outside = ((0.806, 0.050), (0.900, 0.106), (0.900, 0.005))
         task = mode(StoryMode, pill_read())
         for point in outside:
             task.click(*point)
@@ -346,20 +347,33 @@ class TestInstall(unittest.TestCase):
 
 class TestDrift(unittest.TestCase):
 
-    def test_a_fixed_tap_just_outside_the_box_stays_off_the_outline_at_the_largest_spread(self):
-        # The guard checks the aimed point, and humanize drifts a fixed tap afterwards, so the box must reach further
-        # out from the outline than the largest drift Input Variance allows.
+    def test_the_largest_drift_from_just_outside_the_box_stays_off_the_drawn_outline_at_every_accepted_size(self):
+        # The guard checks the aimed point, and humanize drifts a fixed tap afterwards, so from the nearest pixel
+        # outside the box the whole drift must stay off the outline as drawn, at every 16:9 size from 720p up. The
+        # bounds are the outer edges of its first and last bright column and row on the 1080p captures that show it,
+        # and a landing pixel is on the outline when any part of it lies within them, since where the game hit-tests
+        # inside a pixel is unknown.
+        drawn_left, drawn_top, drawn_right, drawn_bottom = 1569 / 1920, 21 / 1080, 1905 / 1920, 99 / 1080
         spread = humanize.human_input_option.config_type[humanize.SPREAD_PX]["max"]
-        reach = spread * HEIGHT / humanize.REFERENCE_HEIGHT
-        task = SimpleNamespace(width=WIDTH, height=HEIGHT)
-        x, y = pixels((0.900, 0.050))
-        above = next(row for row in range(y, -1, -1) if not skip_tutorial.guarded(task, x, row))
-        below = next(row for row in range(y, HEIGHT) if not skip_tutorial.guarded(task, x, row))
-        left = next(column for column in range(x, -1, -1) if not skip_tutorial.guarded(task, column, y))
-        outline_left, outline_top, _, outline_bottom = skip_tutorial.OUTLINE
-        self.assertLess(round(above + reach) / HEIGHT, outline_top)
-        self.assertGreater(round(below - reach) / HEIGHT, outline_bottom)
-        self.assertLess(round(left + reach) / WIDTH, outline_left)
+        landings = []
+        for height in range(720, 2161):
+            width = round(16 * height / 9)
+            reach = spread * height / humanize.REFERENCE_HEIGHT
+            task = SimpleNamespace(width=width, height=height)
+            x, y = pixels((0.900, 0.050), width, height)
+            above = next(row for row in range(y, -1, -1) if not skip_tutorial.guarded(task, x, row))
+            below = next(row for row in range(y, height) if not skip_tutorial.guarded(task, x, row))
+            left = next(column for column in range(x, -1, -1) if not skip_tutorial.guarded(task, column, y))
+            right = next((column for column in range(x, width) if not skip_tutorial.guarded(task, column, y)), None)
+            if (min(height - 1, round(above + reach)) + 1) / height > drawn_top:
+                landings.append((width, height, "above"))
+            if max(0, round(below - reach)) / height < drawn_bottom:
+                landings.append((width, height, "below"))
+            if (min(width - 1, round(left + reach)) + 1) / width > drawn_left:
+                landings.append((width, height, "left"))
+            if right is not None and max(0, round(right - reach)) / width < drawn_right:
+                landings.append((width, height, "right"))
+        self.assertEqual(landings[:5], [], f"{len(landings)} drifted taps land on the outline")
 
 
 class TestOutline(unittest.TestCase):

@@ -25,10 +25,11 @@ logger = Logger.get_logger(__name__)
 CAPTION = ("Skip Tutorial", (0.0, 0.0, 1.0, 1.0))
 # The button's outline, measured on every capture that shows it.
 OUTLINE = (0.818, 0.020, 0.992, 0.091)
-# The outline widened for the spread a click is given and the outline's own edge: by 0.01 on the left, to the frame's
-# edge on the right, and by 0.012 above and below. That is 13 px at 1080p, past the 12 px a fixed tap may drift at
-# Input Variance's largest Fixed-Point Spread.
-GUARDED = (0.808, 0.008, 1.0, 0.103)
+# The outline widened for the spread a click is given: by 0.01 on the left, to the frame's edge on the right, by 0.014
+# above and 0.013 below. As drawn, the outline reaches rows 21-98 and columns 1569-1904 at 1080p, so the box's edge
+# stays more than 13 px from it, past the 12 px a fixed tap may drift at Input Variance's largest Fixed-Point Spread,
+# and no part of the pixel such a tap lands on from outside the box reaches it at any 16:9 size the bot accepts.
+GUARDED = (0.808, 0.006, 1.0, 0.104)
 # The outline is drawn bright enough to stand apart from every screen it sits on. The detector was measured on 1080p
 # captures, so a frame of another size is scaled to that first.
 REFERENCE = (1920, 1080)
