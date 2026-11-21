@@ -50,6 +50,11 @@ CREDIT = re.compile(r"increasecredits(?:by)?(\d*)|add(\d+)credits")
 # about the corpse: Obtain Equipment [Psionic Combat Suit], Increase Credits" - and that option is worth the
 # equipment. Ranked before this, a spark or a Desire card already stands the credit check down on its own.
 BESIDES_CREDITS = ("obtain", "remove", "recover")
+# Upstream takes any template match at 0.70 as an option. Every real option logged on this client scored 0.85 or more,
+# and every match under 0.75 sat on something else: the magnifier's "Q", the Exploration record card, a key hint. The
+# word rule backs the floor up, since a real option always names what it does.
+MIN_OPTION_CONFIDENCE = 0.80
+WORD = re.compile(r"[^\W\d_]{2,}")
 
 SPARK_RANK = 0
 # A Desire card of the faction the run is chasing. Below a spark, which permanently upgrades a card, and
@@ -241,6 +246,24 @@ def is_turned_down(task, option):
     """
     x = center_of(option)[0]
     return any(abs(slot - x) < SAME_SLOT for slot in getattr(task, SUBSTITUTES, None) or ())
+
+
+def real_options(options):
+    """Drop what upstream read as an option off something else on the screen.
+
+    Args:
+        options: Every recognised option.
+
+    Returns:
+        The options scoring at least `MIN_OPTION_CONFIDENCE` whose text holds a word, which may be none.
+    """
+    kept = []
+    for option in options:
+        if option.get("confidence", 0) >= MIN_OPTION_CONFIDENCE and WORD.search(option["description"]):
+            kept.append(option)
+        else:
+            logger.info(f"not an event option: {option['description']}, {option.get('feature_name')} at {option.get('confidence', 0):.4f}")
+    return kept
 
 
 def still_on_offer(task, options):
@@ -532,7 +555,8 @@ def open_a_chest(task, utils):
     key = next((key for key in spots if clicks.get(key, 0) < PIN_TRIES), None)
     if key is None:
         return False
-    options = utils.recognize_event_options(task)
+    # Upstream also reads the magnifier and the record card as options, which would pass for a real choice here.
+    options = real_options(utils.recognize_event_options(task) or [])
     if any(not contains(fold(option.get("description", "")), LEAVE_MARKERS) for option in options or []):
         return False
     clicks[key] = clicks.get(key, 0) + 1
@@ -643,7 +667,7 @@ def ranking(utils):
         original_recognize = utils.recognize_event_options
 
         def ranked_recognize(task, *args, **kwargs):
-            options = original_recognize(task, *args, **kwargs)
+            options = real_options(original_recognize(task, *args, **kwargs) or [])
             if not options:
                 return options
             options = still_on_offer(task, options)

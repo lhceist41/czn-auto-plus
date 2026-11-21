@@ -535,6 +535,7 @@ class TestRelayedSettings(unittest.TestCase):
         seen = []
         chaos_module = types.ModuleType("utils_chaos")
         chaos_module._get_config_value = self.reader
+        chaos_module.find_box_at_point = lambda task, x, y: None
 
         def settlement(task):
             seen.append(chaos_module._get_config_value(task, loot_cards.CLAIMING, False))

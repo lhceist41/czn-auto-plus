@@ -1,13 +1,14 @@
 """Send a Windows notification at the few points in a run worth looking up for.
 
-Errors are left alone: the executor already raises a notification of its own when a task stops on one.
+Errors are left alone: the executor already raises a notification of its own when a task stops on one. A mode started on
+the Lobby is stopped by upstream with a Chinese log line only, so that stop says in English what to do instead.
 """
 
 import time
 
 from ok import Logger
 
-from src.en.handlers import loaded, register, replace
+from src.en.handlers import loaded, register, replace, wrap
 from src.en.stuck import frozen_for
 
 logger = Logger.get_logger(__name__)
@@ -24,6 +25,16 @@ BOSSES = "pass_final_boss_count"
 
 # Set on the task, to keep one stuck screen from sending a notification on every frame.
 LAST_STUCK = "_en_last_stuck_notice"
+
+# Where upstream reads the Lobby's Story button when it stops a mode there. Chaos and Sortie start on their own screens.
+LOBBY_STORY_POINT = (0.887, 0.160)
+LOBBY_STORY = "故事"
+LOBBY_STOPS = {
+    "ChaosMode": ("Stopped: Chaos starts on the Chaos Team Formation or inside a run, not on the Lobby. "
+                  "Open Chaos Manifestation in the game, then press Start again."),
+    "SortieMode": "Stopped: Sortie starts on its own screens, not on the Lobby. Open Sortie in the game, then press Start again.",
+}
+LOBBY_TAG = "says why it stops on the Lobby"
 
 _patched = False
 
@@ -122,8 +133,39 @@ def stuck(original):
     return handle_stuck_log_announcing
 
 
+def lobby_stop(utils):
+    """Build the change that says why Chaos or Sortie stopped on the Lobby.
+
+    Args:
+        utils: Upstream's `utils` module, for its screen helper.
+
+    Returns:
+        A factory taking `handle_non_battle_page` as installed and returning the handler to run in its place. It stops
+        exactly when upstream's does, and only adds the notice; the Rescue and Ark City stops and Story's stop stay silent.
+    """
+    def factory(original):
+        def handle_non_battle_page(task):
+            message = LOBBY_STOPS.get(type(task).__name__)
+            story = utils.find_box_at_point(task, *LOBBY_STORY_POINT) if message else None
+            handled = original(task)
+            if handled and story is not None and story.name == LOBBY_STORY:
+                announce(task, message)
+            return handled
+
+        return handle_non_battle_page
+
+    return factory
+
+
+def install_lobby_stop():
+    """Say why Chaos or Sortie stopped on the Lobby, wherever `handle_non_battle_page` is registered."""
+    utils = loaded("utils")
+    if utils is not None:
+        wrap(utils, "handle_non_battle_page", lobby_stop(utils), LOBBY_TAG)
+
+
 def apply():
-    """Announce the start of a run, the end of one, and a screen the bot cannot get past."""
+    """Announce the start of a run, the end of one, a screen the bot cannot get past, and a mode started on the Lobby."""
     global _patched
     if _patched:
         return
@@ -138,6 +180,7 @@ def apply():
                 replace(name, wrap(handler))
 
     register(install)
+    register(install_lobby_stop)
 
     try:
         from ok.task.task import BaseTask, TriggerTask

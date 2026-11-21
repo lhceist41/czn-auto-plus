@@ -30,7 +30,7 @@ from src.en.events import (  # noqa: E402
     ATTACK, ATTACK_RANK, BESIDES_CREDITS, CREDIT_RANK, CURSE_RANK, DESIRE_RANK, DIALOGUE, DIALOGUE_RANK, ENCOUNTER, ENCOUNTER_RANK, HEALTH_COST,
     HEALTH_COST_RANK, MIN_LATIN_MARKER_LENGTH, MIN_MARKER_LENGTH, OFF_FACTION_RANK, QUIT, QUIT_RANK,
     REFINED, REWARD_RANK, RankingChoice, SPARK, SPARK_RANK, center_of, double_clicking, drop_unwanted, find_pins, fold,
-    handle_unavailable_reward, leave_after_refinement, open_a_chest, order, rank, ranking, take_substitute,
+    handle_unavailable_reward, leave_after_refinement, open_a_chest, order, rank, ranking, real_options, take_substitute,
 )
 from src.en.enter import OPTION_TEMPLATES, on_the_button  # noqa: E402
 from src.en.etched_memory import (  # noqa: E402
@@ -428,7 +428,7 @@ class TestTreasureChests(unittest.TestCase):
         """Offer the chest opener one frame, and report where it clicked.
 
         Args:
-            options: The option descriptions upstream reads on the frame.
+            options: The options upstream reads on the frame, each a whole option or the description of one it reads well.
             frame: The frame, the new layout when None.
             task: A task to reuse across frames, a new one when None.
 
@@ -438,7 +438,8 @@ class TestTreasureChests(unittest.TestCase):
         clicks = []
         task = task or SimpleNamespace(sleep=lambda seconds: None)
         task.frame = self.new_layout() if frame is None else frame
-        utils_ = SimpleNamespace(recognize_event_options=lambda task_: [{"description": text} for text in options],
+        read = [option if isinstance(option, dict) else read_option(option, "event3", 0.95, 0.5, 0.95) for option in options]
+        utils_ = SimpleNamespace(recognize_event_options=lambda task_: read,
                                  _move_and_click=lambda _, x, y: clicks.append((x, y)))
         open_a_chest(task, utils_)
         return clicks
@@ -450,6 +451,15 @@ class TestTreasureChests(unittest.TestCase):
         for case, options, expected in cases:
             with self.subTest(case):
                 self.assertEqual(expected, len(self.run_screen(options)))
+
+    def test_a_false_match_is_no_choice_that_keeps_the_pin_unclicked(self):
+        """The magnifier, the record card and the rest upstream reads as options are not a choice the event offers."""
+        false = [TestFalseOptions.PHANTOM_Q, TestFalseOptions.RECORD_CARD]
+        false += [read_option(text, feature, confidence, 0.5, 0.95) for text, feature, confidence in TestFalseOptions.FALSE]
+        for option in false:
+            with self.subTest(option["description"]):
+                self.assertEqual(1, len(self.run_screen(["LeaveEnd the event", option])))
+                self.assertEqual(0, len(self.run_screen(["Investigate the surroundingsIncrease Credits by 120", option])))
 
     def test_a_pin_that_never_goes_away_stops_being_clicked(self):
         task = SimpleNamespace(sleep=lambda seconds: None)
@@ -532,7 +542,7 @@ class TestUnavailableReward(unittest.TestCase):
         self.assertEqual([self.CANCEL_BUTTON], task.clicked)
 
         # The game leaves the cancelled option raised, and upstream takes a raised option before anything is ranked.
-        shown = [{**option, "x": center_of(option)[0], "y": 0.86 if slot == 1 else 0.95} for slot, option in enumerate(options)]
+        shown = [{**option, "x": center_of(option)[0], "y": 0.86 if slot == 1 else 0.95, "confidence": 0.99} for slot, option in enumerate(options)]
         vars(task).update(all_texts=[], config={}, node_status={}, name="自动卡厄思模式", box_of_screen=lambda *region: region,
                           find_feature=lambda *args, **kwargs: [], find_one=lambda *args, **kwargs: None)
         with standing_in(utils, recognize_event_options=lambda task, **kwargs: [dict(option) for option in shown]):
@@ -559,6 +569,95 @@ class TestEquipmentScreen(unittest.TestCase):
         with standing_in(utils, _move_and_click=lambda task, x, y: tapped.append((x, y))):
             self.assertFalse(handler(task))
         self.assertEqual([], tapped)
+
+
+def read_option(description, feature_name, confidence, x, y):
+    """Build an option the way `recognize_event_options` reads one off a template match centred at `(x, y)`.
+
+    Args:
+        description: The text read above the match.
+        feature_name: The template that matched.
+        confidence: How well it matched.
+        x: The match centre across the screen, as a fraction.
+        y: The match centre down the screen, as a fraction.
+
+    Returns:
+        The option dict.
+    """
+    return {"x": x, "y": y, "description": description, "description_region": (x - 0.119, y - 0.208, x + 0.122, y - 0.021),
+            "feature_name": feature_name, "confidence": confidence}
+
+
+class TestFalseOptions(unittest.TestCase):
+    """Template matches that are not options: every one logged on this client, against every real option logged beside them.
+
+    The values are the bot log's. The phantom "Q" is the magnifier's, matched by `event9` at (0.7095, 0.8845) beside the
+    real Rescue option, and upstream's raised-option shortcut took it again and again. The record card's match sat at
+    (0.4445, 0.9745) with no option on screen, and was tapped over and over.
+    """
+
+    RESCUE = read_option("Rescue the prisonerObtain Equipment [Cloud-Walking Shoes]", "event3", 0.9603, 0.462, 0.95)
+    PHANTOM_Q = read_option("Q", "event9", 0.7425, 0.7095, 0.8845)
+    RECORD_CARD = read_option("reduced by 100%.displayed item is", "event9", 0.7183, 0.4445, 0.9745)
+    # The lowest and highest score each template reached on a real option.
+    REAL = [("Offer supportObtain randomDecrease Health by 10%,Rare-Legendary equipment", "event3", 0.8997),
+            ("Ask for medicineConvert selected Cards intoCard(s) [Elixir of Mutation]", "event3", 0.9987),
+            ("[Dexterous] Steal the chestDice Roll 9by 120Upon success Increase Credits", "event5", 0.9004),
+            ("Ask for different meatConvert selected Cards intoCard(s) [Black Stain Bundle]", "event5", 0.9498),
+            ("进入Event Encounter: Cultists'Summoning Ritual", "event7", 0.8549)]
+    # Every distinct false match, at the score it was logged with.
+    FALSE = [("Q", "event9", 0.7425), ("reduced by 100%.displayed item is", "event9", 0.7183),
+             ("Achievement completeThe Cursed One", "event9", 0.7055), ("M", "event9", 0.7202), ("1Wave", "event9", 0.7463),
+             ("TTTTI", "event9", 0.7477), ("进入", "event4", 0.7005), ("3F1进入", "event4", 0.7022)]
+
+    def test_every_logged_option_is_judged_as_it_turned_out(self):
+        options = [read_option(text, feature, confidence, 0.5, 0.95) for text, feature, confidence in self.REAL + self.FALSE]
+        self.assertEqual([(text, confidence) for text, _, confidence in self.REAL],
+                         [(option["description"], option["confidence"]) for option in real_options(options)])
+
+    def test_an_option_naming_nothing_is_dropped_whatever_it_scores(self):
+        for text, kept in (("Q", False), ("M", False), ("1 2", False), ("%", False), ("就此离开", True), ("Leave", True)):
+            with self.subTest(text):
+                self.assertEqual(kept, bool(real_options([read_option(text, "event3", 0.95, 0.5, 0.95)])))
+
+    def test_the_floor_sits_between_the_false_matches_and_the_real_options(self):
+        for confidence, kept in ((0.7999, False), (0.80, True)):
+            with self.subTest(confidence=confidence):
+                self.assertEqual(kept, bool(real_options([read_option(self.RESCUE["description"], "event3", confidence, 0.5, 0.95)])))
+
+    def handler_on(self, shown):
+        """Run the ranked event pass over one frame upstream reads `shown` on, and return what it said and tapped."""
+        task = SimpleNamespace(width=WIDTH, height=HEIGHT, all_texts=[], config={}, node_status={}, name="自动卡厄思模式",
+                               sleep=lambda seconds: None, log_info=lambda message: None, click=lambda x, y: None,
+                               box_of_screen=lambda *region: region, find_feature=lambda *args, **kwargs: [], find_one=lambda *args, **kwargs: None)
+        with standing_in(utils, recognize_event_options=lambda task_, **kwargs: [dict(option) for option in shown]):
+            handler = ranking(utils)(utils.handle_event_task)
+        tapped = []
+        with standing_in(utils, _move_and_click=lambda task_, x, y: tapped.append((round(x, 4), round(y, 4)))):
+            handled = handler(task)
+        return handled, tapped
+
+    def test_the_phantom_beside_a_real_option_is_never_tapped(self):
+        handled, tapped = self.handler_on([self.RESCUE, self.PHANTOM_Q])
+        self.assertTrue(handled)
+        self.assertEqual({tuple(round(value, 4) for value in center_of(self.RESCUE))}, set(tapped))
+        # Where the phantom was tapped live.
+        self.assertEqual((0.711, 0.770), tuple(round(value, 3) for value in center_of(self.PHANTOM_Q)))
+
+    def test_a_screen_with_only_a_false_match_is_handed_on(self):
+        # Upstream's own "no options" answer, so the notice is left to the handlers after.
+        handled, tapped = self.handler_on([self.RECORD_CARD])
+        self.assertFalse(handled)
+        self.assertEqual([], tapped)
+
+    def test_upstream_still_reports_how_well_each_option_matched(self):
+        """The floor reads upstream's score; a read without one would drop every option."""
+        match = SimpleNamespace(x=870, y=1010, width=34, height=32, confidence=0.9603)
+        task = SimpleNamespace(width=WIDTH, height=HEIGHT, log_info=lambda message: None, box_of_screen=lambda *region: region,
+                               find_feature=lambda feature_name=None, **kwargs: [match] if feature_name == "event3" else [])
+        with standing_in(utils, _get_region_text=lambda task_, region: "Rescue the prisoner"):
+            options = utils.recognize_event_options(task)
+        self.assertEqual([0.9603], [option["confidence"] for option in options])
 
 
 class TestEnterButton(unittest.TestCase):

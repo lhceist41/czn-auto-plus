@@ -48,17 +48,30 @@ WITHOUT_CARD_CANCEL_POINT = (0.347, 0.632)
 _patched = False
 
 
-def claiming_with_cards(task, claiming):
+def claiming_with_cards(task, claiming, utils_chaos):
     """Read the Additional Loot setting as off once this run has found the cards gone.
+
+    A waypoint Settlement shows the same card counter as the final one, so a 0 there is learned without opening the claim
+    dialog just to cancel it.
 
     Args:
         task: The running task, on the Settlement page.
         claiming: The setting as upstream read it.
+        utils_chaos: Upstream's Chaos module, for its screen helper.
 
     Returns:
-        False after a 0-card claim dialog this run, otherwise the setting as it was.
+        False once this run has read 0 cards, on the Settlement page or its claim dialog, otherwise the setting as it was.
+        An unreadable counter leaves the setting as it was, so the claim dialog still reads the cards.
     """
-    return claiming and not task.node_status.get(OUT_OF_CARDS)
+    if not claiming or task.node_status.get(OUT_OF_CARDS):
+        return False
+    counter = utils_chaos.find_box_at_point(task, *SETTLEMENT_COUNTER_POINT)
+    cards = parse_currency(counter.name) if counter else None
+    if cards is not None and cards[0] == 0:
+        task.log_info("the Settlement shows no Loot Certification Cards left, so leaving this run's Additional Loot")
+        task.node_status[OUT_OF_CARDS] = True
+        return False
+    return True
 
 
 def cancelling(task, press):
@@ -122,7 +135,7 @@ def with_cards_only(handler, utils_chaos):
         The wrapped handler.
     """
     def wrapped(task):
-        with answering(utils_chaos, CLAIMING, claiming_with_cards):
+        with answering(utils_chaos, CLAIMING, lambda task_, claiming: claiming_with_cards(task_, claiming, utils_chaos)):
             return handler(task)
 
     return wrapped
@@ -139,7 +152,7 @@ def cards_left(task, utils_chaos):
         True only with the setting on and a counter that reads above 0. An unreadable counter reads as no, which leaves the
         page as it was handled before rather than starting a loop on a reading nobody has seen.
     """
-    if not claiming_with_cards(task, utils_chaos._get_config_value(task, CLAIMING, False)):
+    if not claiming_with_cards(task, utils_chaos._get_config_value(task, CLAIMING, False), utils_chaos):
         return False
     counter = utils_chaos.find_box_at_point(task, *SETTLEMENT_COUNTER_POINT)
     cards = parse_currency(counter.name) if counter else None

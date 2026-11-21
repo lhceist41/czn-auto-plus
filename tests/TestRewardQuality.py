@@ -1040,9 +1040,12 @@ class TestFinalSettlementLoot(SettlementHandlers, unittest.TestCase):
                         self.assertEqual([cancel] if handled else [], task.clicked)
 
     def test_the_waypoint_settlement_is_left_to_upstream(self):
-        # Upstream presses Obtain on the setting alone and lets the claim dialog read the cards.
+        # Upstream presses Obtain on the setting, now read as off when the page's own counter shows no cards. An unreadable
+        # counter still leaves the cards to the claim dialog.
         for case, claimed, clicked in (({"counter": "3/4"}, "handle_chaos_reward_settlement", ["获得"]),
-                                       ({"counter": "0/4"}, "handle_chaos_reward_settlement", ["获得"]),
+                                       ({"counter": "1/4"}, "handle_chaos_reward_settlement", ["获得"]),
+                                       ({"counter": None}, "handle_chaos_reward_settlement", ["获得"]),
+                                       ({"counter": "0/4"}, None, []),
                                        ({"counter": "3/4", "claiming": False}, None, []),
                                        ({"counter": "3/4", "out_of_cards": True}, None, [])):
             with self.subTest(**case):
@@ -1072,6 +1075,41 @@ class TestFinalSettlementLoot(SettlementHandlers, unittest.TestCase):
         task = SettlementTask(moved)
         self.assertFalse(loot_cards.without_card_handler(utils_chaos)(task))
         self.assertEqual([], task.clicked)
+
+
+class TestWaypointWithoutCards(SettlementHandlers, unittest.TestCase):
+    """A waypoint Settlement whose counter shows 0 cards, which used to open the claim dialog only to cancel it.
+
+    The live capture of that page read `0/4` at (0.879, 0.049), the same place as the counter in `WAYPOINT_SETTLEMENT`.
+    """
+
+    def test_no_cards_continues_without_opening_the_claim(self):
+        task = SettlementTask(WAYPOINT_SETTLEMENT, counter="0/4")
+        claimed = self.play(task, [(WAYPOINT_SETTLEMENT, {"counter": "0/4"})], continue_handler=utils.handle_continue)
+        self.assertEqual(["handle_continue"], claimed)
+        self.assertEqual(["继续"], task.clicked)
+        self.assertTrue(task.node_status[loot_cards.OUT_OF_CARDS])
+
+    def test_the_rest_of_the_run_skips_obtain_even_where_the_counter_misreads(self):
+        task = SettlementTask(WAYPOINT_SETTLEMENT, counter="0/4")
+        claimed = self.play(task, [(WAYPOINT_SETTLEMENT, {"counter": "0/4"}), (WAYPOINT_SETTLEMENT, {"counter": None}),
+                                   (FINAL_SETTLEMENT, {"counter": None})], continue_handler=utils.handle_continue)
+        self.assertEqual(["handle_continue", "handle_continue", "handle_leave"], claimed)
+        self.assertEqual(["继续", "继续", "离开"], task.clicked)
+
+    def test_cards_left_are_still_claimed(self):
+        task = SettlementTask(WAYPOINT_SETTLEMENT, counter="1/4")
+        claimed = self.play(task, [(WAYPOINT_SETTLEMENT, {"counter": "1/4"}), (CLAIM_DIALOG, {"counter": "1/4"})],
+                            continue_handler=utils.handle_continue)
+        self.assertEqual(["handle_chaos_reward_settlement", "handle_chaos_reward_claim"], claimed)
+        self.assertNotIn(loot_cards.OUT_OF_CARDS, task.node_status)
+
+    def test_the_setting_stays_on_for_the_next_run(self):
+        task = SettlementTask(WAYPOINT_SETTLEMENT, counter="0/4")
+        self.play(task, [(WAYPOINT_SETTLEMENT, {"counter": "0/4"})], continue_handler=utils.handle_continue)
+        self.assertTrue(task.config[loot_cards.CLAIMING])
+        utils.reset_mission_status(task)
+        self.assertNotIn(loot_cards.OUT_OF_CARDS, task.node_status)
 
 
 class TestSettlementCancelLoop(SettlementHandlers, unittest.TestCase):
