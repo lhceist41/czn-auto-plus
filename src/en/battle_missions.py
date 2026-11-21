@@ -4,13 +4,15 @@ Story already presses Enter on a mission's detail and formation and Confirm on i
 the Story hub to the list, and on the list it tapped whatever play arrow it saw first, the Promotion Mission's included.
 The game moves the arrow to the next open card after a clear and scrolls it into view, so the arrow alone says which
 mission is next. Each mission is started at most twice a run, so a lost fight is tried once more and never forever. A
-card Story cannot name, a lock, the growth tutorial and a list with nothing open stop the run with nothing pressed.
+list on any tab but NORMAL, a card Story cannot name, a lock, the growth tutorial and a list with nothing open stop the
+run with nothing pressed.
 """
 
 import re
 import time
 from pathlib import Path
 
+import numpy as np
 from ok import Logger
 
 from src.en.handlers import insert_before, register
@@ -31,6 +33,14 @@ LIST_TITLE = "Battle Missions"
 LIST_TITLE_REGION = (0.05, 0.0, 0.30, 0.09)
 LIST_TAB = "NORMAL"
 LIST_TAB_REGION = (0.45, 0.90, 0.60, 0.97)
+# Every tab's caption shows on every tab, so which one is selected comes from its pill: the selected pill is drawn
+# lighter than its caption, the others darker. The difference survives the tutorial's dimming, where the selected pill
+# is only as bright as an unselected caption. Each pill is read as `(median - 5th percentile) - (95th - median)` of its
+# brightness: 47 to 160 on the selected NORMAL pill, -28 to -118 on the unselected ones, near 0 where no caption shows.
+TAB_BAND = (0.915, 0.950)
+TAB_PILLS = (("NORMAL", 0.44, 0.60), ("HARD", 0.64, 0.76), ("ABYSS", 0.82, 0.94))
+TAB_LIT = 20
+TAB_UNLIT = -10
 DETAIL_ENTER = "进入"
 DETAIL_ENTER_REGION = (0.60, 0.85, 1.0, 1.0)
 # The gold play arrow on the next open card, cut from a capture of the list, and the row of cards it sits on. It scored
@@ -47,6 +57,8 @@ LABEL = re.compile(r"B([1-6])[|IL1!>]?")
 LOCKED = "Content locked"
 LOCKED_REGION = (0.2, 0.3, 0.8, 0.46)
 UNLOCK_REGION = (0.05, 0.46, 0.95, 0.85)
+# Where a window over the list writes its title and buttons, such as `A Promise Renewed` and `Proceed with Tutorial`.
+POPUP_REGION = (0.25, 0.30, 0.75, 0.80)
 # The forced growth tutorial a mission's formation raises when the team is under the recommended level.
 GROWTH = "Some Combatants do not meet the"
 SCREEN = (0.0, 0.0, 1.0, 1.0)
@@ -98,6 +110,51 @@ def on_list(task):
     return (text_in_region(task, LIST_TITLE, LIST_TITLE_REGION) is not None
             and text_in_region(task, LIST_TAB, LIST_TAB_REGION) is not None
             and text_in_region(task, DETAIL_ENTER, DETAIL_ENTER_REGION) is None)
+
+
+def selected_tab(frame):
+    """Read which difficulty tab is selected on the list.
+
+    Args:
+        frame: The current capture, or None when there is none.
+
+    Returns:
+        "NORMAL", "HARD" or "ABYSS" when exactly one pill reads selected and the others unselected, else None.
+    """
+    if frame is None:
+        return None
+    height, width = frame.shape[:2]
+    band = grey(frame[int(TAB_BAND[0] * height):int(TAB_BAND[1] * height)])
+    lit, unlit = [], []
+    for name, left, right in TAB_PILLS:
+        low, mid, high = np.percentile(band[:, int(left * width):int(right * width)], (5, 50, 95))
+        contrast = (mid - low) - (high - mid)
+        if contrast >= TAB_LIT:
+            lit.append(name)
+        elif contrast <= TAB_UNLIT:
+            unlit.append(name)
+    return lit[0] if len(lit) == 1 and len(unlit) == len(TAB_PILLS) - 1 else None
+
+
+def worded(box):
+    """Say whether a box holds more than the one or two characters OCR makes of an icon, such as `▲` or `D`."""
+    return len(box.name.strip()) > 2
+
+
+def popup_over(task):
+    """Read the lines of a window covering the list, leaving out the list's own card captions and star rows.
+
+    Args:
+        task: The running task, whose `all_texts` holds the current OCR pass.
+
+    Returns:
+        The lines top to bottom, joined with "; ", or an empty string when none is read.
+    """
+    lines = sorted((box for box in task.all_texts
+                    if in_region(box, POPUP_REGION, task.width, task.height) and worded(box)
+                    and any(char.isalpha() for char in box.name) and "missions" not in box.name.casefold()),
+                   key=lambda box: box.y)
+    return "; ".join(box.name.strip() for box in lines)
 
 
 def mission_of(name):
@@ -190,7 +247,8 @@ def handle_mission_stop(task):
         True when Story has been stopped, which claims the frame.
     """
     if text_in_region(task, LOCKED, LOCKED_REGION) is not None:
-        lines = sorted((box for box in task.all_texts if in_region(box, UNLOCK_REGION, task.width, task.height)),
+        lines = sorted((box for box in task.all_texts
+                        if in_region(box, UNLOCK_REGION, task.width, task.height) and worded(box)),
                        key=lambda box: box.y)
         unlock = "; ".join(box.name.strip() for box in lines) or "no unlock condition read"
         return stop(task, f"Story stopped on a locked screen: Content locked ({unlock}).")
@@ -232,12 +290,16 @@ def handle_mission_list(task):
     if not on_list(task):
         return False
     vars(task).pop(HUB_TAPPED, None)
-    point = find_icon(frame_of(task), ARROW_IMAGE, ARROW_MATCH, CARD_ROW, grey)
+    frame = frame_of(task)
+    tab = selected_tab(frame)
+    point = find_icon(frame, ARROW_IMAGE, ARROW_MATCH, CARD_ROW, grey)
     label = label_by(task, point) if point is not None else None
     mission = mission_of(label.name) if label is not None else None
     starts = vars(task).get(STARTS, {}).get(mission, 0)
     # Only what decides the action, so a card label OCR reads on one pass and misses on the next cannot hold off the stop.
-    if point is None:
+    if tab != LIST_TAB:
+        reading = ("tab", tab)
+    elif point is None:
         reading = ("none",)
     elif mission is None:
         reading = ("unknown",)
@@ -247,10 +309,19 @@ def handle_mission_list(task):
         reading = ("start", mission)
     if not settled(task, reading):
         return True
+    if reading[0] == "tab":
+        if tab is None:
+            return stop(task, "Battle Missions: Story could not tell which difficulty tab is selected, so it stopped. "
+                              "Select NORMAL, then start Story again.")
+        return stop(task, f"Battle Missions: the {tab} tab is selected and Story plays NORMAL only, so it stopped. "
+                          "Select NORMAL, then start Story again.")
     if reading[0] == "none":
-        cards = ", ".join(missions_read(task)) or "none"
-        return stop(task, f"Battle Missions: no open mission is left on the list (cards read: {cards}). The rest are cleared "
-                          "or locked. Story stopped.")
+        cards = ", ".join(missions_read(task))
+        popup = popup_over(task) if not cards else ""
+        if popup:
+            return stop(task, f"Battle Missions: a window covers the list ({popup}), so no card could be read. Story stopped.")
+        return stop(task, f"Battle Missions: no open mission is left on the list (cards read: {cards or 'none'}). The rest "
+                          "are cleared or locked. Story stopped.")
     if reading[0] == "unknown":
         name = f"reads '{label.name.strip()}'" if label is not None else "has no label Story could read"
         return stop(task, f"Battle Missions: the next open card {name}, not B1 to B6, so it may be the Promotion Mission. "

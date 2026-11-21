@@ -85,6 +85,15 @@ FORMATION_GROWTH = (
 # B4's lock popup.
 LOCKED_B4 = (("Content locked", 0.502, 0.401), ("Clear Chapter 1, B3 Battle Missions", 0.347, 0.514),
              ("Clear Story Act 1 - Chapter 1 #09 [Faded Memories]", 0.411, 0.602), ("点击屏幕关闭窗口", 0.501, 0.935))
+# ABYSS's lock popup, with OCR reading two icons as text beside the unlock line.
+LOCKED_ABYSS = (("日", 0.500, 0.330), ("Content locked", 0.502, 0.446), ("▲", 0.799, 0.481),
+                ("Clear Chapter 3 Hard, B6 Battle Missions", 0.369, 0.560), ("D", 0.771, 0.559), ("点击屏幕关闭窗口", 0.501, 0.935))
+# The list after B3 under the window that offers the next story's tutorial: no card label reads through it.
+LIST_POPUP = (
+    ("Battle Missions", 0.151, 0.046), ("Chapter1", 0.536, 0.040), ("N", 0.973, 0.030), ("A Promise Renewed", 0.501, 0.465),
+    ("You can progress through a new story.", 0.499, 0.510), ("Proceed with Tutorial", 0.505, 0.636), ("9/18", 0.359, 0.931),
+    ("NORMAL", 0.522, 0.932), ("HARD", 0.703, 0.933), ("日", 0.773, 0.933), ("ABYSS", 0.883, 0.933), ("日", 0.953, 0.933),
+)
 # B1's result.
 RESULT_B1 = (
     ("Lv.06", 0.61, 0.114), ("+400", 0.868, 0.122), ("(800/1500)", 0.931, 0.122), ("MVP", 0.087, 0.2),
@@ -100,8 +109,14 @@ CROPS = {
     "mission_list_tutorial": (500, 0), "mission_list_b2": (500, 0), "mission_list_cleared": (500, 0), "mission_detail_b2": (500, 0),
     "team_battle_clean": (625, 0), "team_battle_dimmed": (625, 0), "mission_result_buttons": (940, 1080),
     "battle_auto_off": (0, 1344), "battle_auto_on": (0, 1344), "battle_auto_off_dark": (0, 1344), "battle_auto_on_dark": (0, 1344),
-    "story_bar_off": (0, 1344),
+    "story_bar_off": (0, 1344), "mission_tabs_normal": (960, 0), "mission_tabs_tutorial": (960, 0), "mission_tabs_popup": (960, 0),
 }
+# The difficulty tabs under each list crop, NORMAL selected: plain, under the tutorial's dimming, and under a window.
+TAB_ROWS = {"mission_list_tutorial": "mission_tabs_tutorial", "mission_list_b2": "mission_tabs_normal",
+            "mission_list_cleared": "mission_tabs_normal", "mission_detail_b2": "mission_tabs_normal"}
+# Each tab's pill as pixel x ranges of equal width, centred on its caption.
+PILLS = {"NORMAL": (830, 1175), "HARD": (1178, 1523), "ABYSS": (1523, 1868)}
+TABS_TOP, TABS_BOTTOM = 960, 1060
 # Each formation slot's column in the formation bands, as pixel x ranges, for blanking one out.
 SLOT_COLUMNS = ((0, 307), (326, 710), (730, 1114))
 # The arrows on the two lists, read off the captures.
@@ -122,13 +137,53 @@ def frame_with(*crops, empty=()):
         A `(height, width, 3)` BGR array.
     """
     frame = np.zeros((HEIGHT, WIDTH, 3), dtype=np.uint8)
-    for crop in crops:
+    for crop in crops + tuple(TAB_ROWS[crop] for crop in crops if crop in TAB_ROWS):
         patch = cv2.imread(str(IMAGES / f"{crop}.png"))
         top, left = CROPS[crop]
         frame[top:top + patch.shape[0], left:left + patch.shape[1]] = patch
         for slot in empty:
             start, end = SLOT_COLUMNS[slot]
             frame[top:top + patch.shape[0], start:end] = (52, 52, 52)
+    return frame
+
+
+def pills_moved(frame, source, target, swap=True):
+    """Paint one tab's pill over another's, as a list on a tab no capture shows.
+
+    Synthetic: HARD and ABYSS are locked on the account the captures come from, so no capture has them selected.
+    Swapping NORMAL's selected pill with theirs draws them the way the game draws NORMAL selected.
+
+    Args:
+        frame: A frame whose tab row came from a capture.
+        source: The pill to copy, such as "NORMAL".
+        target: The pill to paint over.
+        swap: Whether `target`'s pill goes to `source`'s place in turn, or `source` keeps its own.
+
+    Returns:
+        A copy of the frame with the pills moved.
+    """
+    frame = frame.copy()
+    (from_left, from_right), (to_left, to_right) = PILLS[source], PILLS[target]
+    moved = frame[TABS_TOP:TABS_BOTTOM, from_left:from_right].copy()
+    if swap:
+        frame[TABS_TOP:TABS_BOTTOM, from_left:from_right] = frame[TABS_TOP:TABS_BOTTOM, to_left:to_right]
+    frame[TABS_TOP:TABS_BOTTOM, to_left:to_right] = moved
+    return frame
+
+
+def without_tabs(frame, pill=None):
+    """Black out a frame's tab row, or one pill of it.
+
+    Args:
+        frame: A frame with a tab row.
+        pill: The one pill to black out, such as "HARD", or None for the whole row.
+
+    Returns:
+        A copy with nothing drawn there.
+    """
+    frame = frame.copy()
+    left, right = PILLS[pill] if pill else (0, WIDTH)
+    frame[TABS_TOP:TABS_BOTTOM, left:right] = 0
     return frame
 
 
@@ -372,6 +427,81 @@ class TestList(Clocked):
         for mark in battle_missions.MARKS:
             self.assertNotIn(mark, vars(self.story))
 
+    def test_a_window_over_the_list_is_named_when_no_card_reads(self):
+        answers = self.passes(battle_missions.handle_mission_list, LIST_POPUP, frame_with("mission_tabs_popup"), 5)
+        self.assertEqual([True, True, True], answers)
+        self.assertEqual([], self.story.taps)
+        self.assertFalse(self.story.enabled)
+        self.assertEqual(["Battle Missions: a window covers the list (A Promise Renewed; You can progress through a new story.; "
+                          "Proceed with Tutorial), so no card could be read. Story stopped."], self.story.notifications)
+
+    def test_a_list_that_reads_its_cards_is_not_taken_for_a_window(self):
+        """A stray line read in the middle of the list leaves the stop naming the cards it read."""
+        texts = LIST_CLEARED + (("Chapter 1 complete", 0.500, 0.650),)
+        self.passes(battle_missions.handle_mission_list, texts, frame_with("mission_list_cleared"), 5)
+        self.assertFalse(self.story.enabled)
+        self.assertIn("no open mission is left on the list (cards read: B3, B4, B5)", self.story.notifications[0])
+
+    def test_a_list_whose_labels_do_not_read_is_not_taken_for_a_window(self):
+        """Its card captions, the one-letter marks and the star rows sit where a window would write."""
+        texts = tuple(box for box in LIST_B2 if box[0] not in ("B1", "B2", "B3"))
+        self.passes(battle_missions.handle_mission_list, texts, frame_with("mission_list_cleared"), 5)
+        self.assertFalse(self.story.enabled)
+        self.assertIn("no open mission is left on the list (cards read: none)", self.story.notifications[0])
+
+
+class TestTabs(Clocked):
+    """Story plays the NORMAL tab only, and stops on any other or on a tab row it cannot read."""
+
+    def test_the_selected_tab_is_read_off_its_pill(self):
+        normal = frame_with("mission_list_b2")
+        for name, frame, tab in (("NORMAL", normal, "NORMAL"), ("NORMAL dimmed", frame_with("mission_list_tutorial"), "NORMAL"),
+                                 ("NORMAL under a window", frame_with("mission_tabs_popup"), "NORMAL"),
+                                 ("HARD", pills_moved(normal, "NORMAL", "HARD"), "HARD"),
+                                 ("ABYSS", pills_moved(normal, "NORMAL", "ABYSS"), "ABYSS"),
+                                 ("HARD dimmed", pills_moved(frame_with("mission_list_tutorial"), "NORMAL", "HARD"), "HARD"),
+                                 ("none selected", pills_moved(normal, "HARD", "NORMAL", swap=False), None),
+                                 ("two selected", pills_moved(normal, "NORMAL", "HARD", swap=False), None),
+                                 ("HARD pill blacked out", without_tabs(normal, "HARD"), None),
+                                 ("tab row blacked out", without_tabs(normal), None), ("black", np.zeros_like(normal), None),
+                                 ("no frame", None, None)):
+            with self.subTest(tabs=name):
+                self.assertEqual(tab, battle_missions.selected_tab(frame))
+
+    def test_a_list_on_hard_or_abyss_stops_story_with_nothing_pressed(self):
+        """B2's arrow and label are on the list, so only the tab keeps Story from starting it."""
+        for tab in ("HARD", "ABYSS"):
+            with self.subTest(tab=tab):
+                self.setUp()
+                frame = pills_moved(frame_with("mission_list_b2"), "NORMAL", tab)
+                answers = self.passes(battle_missions.handle_mission_list, LIST_B2, frame, 5)
+                self.assertEqual([True, True, True], answers)
+                self.assertEqual([], self.story.taps)
+                self.assertFalse(self.story.enabled)
+                self.assertEqual([f"Battle Missions: the {tab} tab is selected and Story plays NORMAL only, so it stopped. "
+                                  "Select NORMAL, then start Story again."], self.story.notifications)
+                self.assertNotIn(battle_missions.STARTS, vars(self.story))
+
+    def test_a_tab_row_story_cannot_read_stops_story_with_nothing_pressed(self):
+        normal = frame_with("mission_list_b2")
+        for name, frame in (("none selected", pills_moved(normal, "HARD", "NORMAL", swap=False)),
+                            ("two selected", pills_moved(normal, "NORMAL", "HARD", swap=False)),
+                            ("tab row blacked out", without_tabs(normal))):
+            with self.subTest(tabs=name):
+                self.setUp()
+                self.passes(battle_missions.handle_mission_list, LIST_B2, frame, 5)
+                self.assertEqual([], self.story.taps)
+                self.assertFalse(self.story.enabled)
+                self.assertIn("could not tell which difficulty tab is selected", self.story.notifications[0])
+
+    def test_a_tab_read_for_a_moment_does_not_stop_story(self):
+        """A reading of another tab that does not hold, as on a list still fading in, never stops Story."""
+        normal = frame_with("mission_list_b2")
+        self.passes(battle_missions.handle_mission_list, LIST_B2, pills_moved(normal, "NORMAL", "HARD"), 2)
+        self.passes(battle_missions.handle_mission_list, LIST_B2, normal, 3)
+        self.assertTrue(self.story.enabled)
+        self.assertTappedAt(B2_ARROW)
+
 
 class TestStops(Clocked):
 
@@ -381,6 +511,19 @@ class TestStops(Clocked):
         self.assertEqual(["Story stopped on a locked screen: Content locked (Clear Chapter 1, B3 Battle Missions; "
                           "Clear Story Act 1 - Chapter 1 #09 [Faded Memories])."], self.story.notifications)
         self.assertEqual([], self.story.taps)
+
+    def test_the_lock_message_leaves_out_icons_read_as_text(self):
+        self.assertTrue(battle_missions.handle_mission_stop(self.story.show(LOCKED_ABYSS)))
+        self.assertEqual(["Story stopped on a locked screen: Content locked (Clear Chapter 3 Hard, B6 Battle Missions)."],
+                         self.story.notifications)
+
+    def test_content_locked_outside_the_popup_band_is_no_lock(self):
+        """The popup's caption reads at y 0.401 and 0.446; the same words elsewhere, as on a tile, stop nothing."""
+        for name, point in (("below", (0.502, 0.48)), ("above", (0.502, 0.28)), ("left", (0.15, 0.40)), ("right", (0.85, 0.40))):
+            with self.subTest(place=name):
+                self.assertFalse(battle_missions.handle_mission_stop(self.story.show((("Content locked",) + point,) + LIST_B2)))
+        self.assertTrue(self.story.enabled)
+        self.assertEqual([], self.story.notifications)
 
     def test_the_growth_tutorial_stops_story_and_skip_tutorial_is_never_pressed(self):
         self.assertTrue(battle_missions.handle_mission_stop(self.story.show(FORMATION_GROWTH, frame_with("team_battle_clean"))))
@@ -519,6 +662,13 @@ class TestStoryList(StoryList):
     def test_a_lock_popup_is_never_closed_and_tapped_again(self):
         self.assertEqual("handle_mission_stop", self.one_pass(LOCKED_B4))
         self.assertEqual([], self.story.taps)
+
+    def test_a_list_on_hard_never_reaches_storys_own_arrow_tap(self):
+        frame = pills_moved(frame_with("mission_list_b2"), "NORMAL", "HARD")
+        claimed = {self.one_pass(LIST_B2, frame) for _ in range(5)}
+        self.assertEqual({"handle_mission_list"}, claimed)
+        self.assertEqual([], self.story.taps)
+        self.assertFalse(self.story.enabled)
 
     def test_the_list_never_reaches_storys_own_arrow_tap(self):
         """Story's entrance tap would take whatever play arrow it saw, the Promotion card's included."""
