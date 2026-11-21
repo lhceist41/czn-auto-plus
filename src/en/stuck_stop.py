@@ -20,10 +20,13 @@ GAP_SECONDS = 30
 MESSAGE = "Stopped: the screen has not changed for 5 minutes. Check the game, then press Start again."
 
 # Ahead of upstream's own stop handler, which Chaos and Sortie run first, so a handler that claims every frame cannot
-# keep this from seeing the screen. Story has no such handler, so there it goes ahead of whatever its list starts with.
+# keep this from seeing the screen. Story has no such handler, so there it goes ahead of whatever its list starts with, the hold aside.
 ANCHOR = "handle_auto_stop"
 MODES = ("utils_chaos", "utils_sortie")
 STORY = "utils_story"
+# `remote`'s handler, first in every list on a debug run. Story's stop goes behind it, as in the other modes:
+# a held run gets no pass of the stop, and a hold longer than the gap restarts the clock on release.
+HOLD = "handle_remote"
 # Daily's list starts with `remote`'s handler, which stays first so a held bot does nothing, then the Rescue stop.
 DAILY = "src.en.daily"
 DAILY_ANCHOR = "handle_rescue_screen"
@@ -64,7 +67,7 @@ def stopping(utils):
 
 
 def install(utils):
-    """Put the stop first in the Chaos, Sortie and Story handler lists, and ahead of the Rescue stop in Daily's.
+    """Put the stop ahead of every handler but the hold in Chaos, Sortie and Story, and ahead of the Rescue stop in Daily's.
 
     Args:
         utils: The loaded `utils` module, or None when it is not importable yet.
@@ -73,9 +76,10 @@ def install(utils):
         return
     insert_before(ANCHOR, stopping(utils), only=MODES)
     story = loaded(STORY)
-    handler_list = getattr(story, "PAGE_HANDLERS", None)
-    if handler_list:
-        insert_before(handler_list[0].__name__, stopping(utils), only=(STORY,))
+    names = [handler.__name__ for handler in getattr(story, "PAGE_HANDLERS", None) or ()]
+    first = names.index(HOLD) + 1 if HOLD in names else 0
+    if first < len(names):
+        insert_before(names[first], stopping(utils), only=(STORY,))
     insert_before(DAILY_ANCHOR, stopping(utils), only=(DAILY,))
 
 

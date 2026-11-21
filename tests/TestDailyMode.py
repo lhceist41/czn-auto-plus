@@ -929,6 +929,24 @@ class TestHandlerList(unittest.TestCase):
             self.assertNotIn(name, names)
         self.assertIn("handle_non_battle_page", [handler.__name__ for handler in copies["utils_story"].PAGE_HANDLERS])
 
+    def test_after_every_install_every_mode_runs_the_hold_first_and_the_stuck_stop_next_to_its_first_own_handler(self):
+        """A held run takes no pass of the stop, so a still screen while held never ends it, and unheld the stop still comes first."""
+        real = {name: sys.modules[name] for name, _ in handlers.each_list()}
+        real.update({name: sys.modules[name] for name in ("utils", "utils_chaos", "utils_sortie", "utils_story", daily.__name__)})
+        copies = {name: stand_in(module) for name, module in real.items()}
+        with mock.patch.dict(sys.modules, copies):
+            for _ in range(INSTALLS):
+                for install in registered_installs():
+                    install()
+        first_own = {"utils_chaos": "handle_auto_stop", "utils_sortie": "handle_auto_stop", "utils_story": "handle_center_confirm",
+                     daily.__name__: "handle_rescue_screen"}
+        for mode, anchor in first_own.items():
+            with self.subTest(mode=mode):
+                names = [handler.__name__ for handler in copies[mode].PAGE_HANDLERS]
+                self.assertEqual("handle_remote", names[0])
+                self.assertEqual(1, names.count("stop_when_stuck"))
+                self.assertLess(names.index("stop_when_stuck"), names.index(anchor))
+
     def test_daily_is_applied_before_claims(self):
         """claims wraps the lists as it finds them, so nothing Daily's list gets later would be named in the frame log."""
         source = (REPO_ROOT / "src" / "globals.py").read_text(encoding="utf-8")

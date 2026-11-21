@@ -246,6 +246,45 @@ class TestStuckStop(unittest.TestCase):
         self.assertLessEqual(stopped_after, stuck_stop.STOP_SECONDS + 1)
         self.assertEqual([stuck_stop.MESSAGE], task.notifications)
 
+    def test_story_runs_the_stop_right_behind_the_hold(self):
+        """The hold has to take a held run's every frame, the stop's included, as it already does in the other modes."""
+        with Modes(utils_story=[named("handle_remote"), named("handle_center_confirm"), named("handle_story_complete")]) as loaded:
+            for _ in range(INSTALLS):
+                stuck_stop.install(fake_utils(self.clock))
+        self.assertEqual(["handle_remote", "stop_when_stuck", "handle_center_confirm", "handle_story_complete"], names(loaded["utils_story"]))
+
+    def test_a_held_story_run_never_stops_and_gets_the_full_five_minutes_after_release(self):
+        """A live check holds Story on a still screen for as long as it needs; the time held must not end the run on release."""
+        held = [False]
+
+        def handle_remote(task):
+            return held[0]
+
+        with Modes(utils_story=[handle_remote, named("handle_center_confirm"), named("handle_enter_story_or_battle")]) as loaded:
+            stuck_stop.install(fake_utils(self.clock))
+        page_handlers = loaded["utils_story"].PAGE_HANDLERS
+        task = FakeTask([("Chapter 1", 0.47, 0.04)])
+        task.name = "半自动剧情模式"
+
+        def run_for(seconds):
+            for elapsed in range(1, seconds + 1):
+                self.tick()
+                any(handler(task) for handler in page_handlers)
+                if task.disabled:
+                    return elapsed
+            return None
+
+        self.assertIsNone(run_for(stuck_stop.STOP_SECONDS // 2))
+        held[0] = True
+        self.assertIsNone(run_for(stuck_stop.STOP_SECONDS * 2))
+        self.assertEqual([], task.notifications)
+        held[0] = False
+        stopped_after = run_for(stuck_stop.STOP_SECONDS * 2)
+        self.assertIsNotNone(stopped_after)
+        self.assertGreater(stopped_after, stuck_stop.STOP_SECONDS)
+        self.assertLessEqual(stopped_after, stuck_stop.STOP_SECONDS + 1)
+        self.assertEqual([stuck_stop.MESSAGE], task.notifications)
+
     def test_a_frozen_spend_screen_still_stops(self):
         """The spend guard withholds upstream's taps there, so the stop is the only thing that ends the freeze."""
         stand_in = fake_utils(self.clock)
