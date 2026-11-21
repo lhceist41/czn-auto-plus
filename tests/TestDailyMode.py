@@ -103,6 +103,17 @@ SETTINGS = (
     ("Reset", 0.680, 0.892), ("Apply", 0.917, 0.894),
 )
 
+# 474, the Lobby during the tutorial: its Skip Tutorial pill covers the Menu point. The player's name is left out.
+TUTORIAL_LOBBY = (
+    ("等级", 0.055, 0.049), ("08", 0.057, 0.090), ("N", 0.137, 0.032), ("240/240+", 0.698, 0.050), ("⭐", 0.776, 0.053), ("E1", 0.777, 0.077),
+    ("Skip Tutorial", 0.879, 0.054), ("23%", 0.107, 0.085), ("Oh my. Do you need training? Great", 0.235, 0.170),
+    ("Act 1-Chapter 1, Episode 8", 0.824, 0.194), ("故事", 0.884, 0.157), ("Sortie", 0.885, 0.267), ("Simulation", 0.876, 0.352),
+    ("Chaos", 0.891, 0.442), ("方舟城市", 0.876, 0.530), ("Combatants", 0.868, 0.617), ("EVENT", 0.823, 0.704), ("营救", 0.886, 0.705),
+)
+SKIP_TUTORIAL = ("Skip Tutorial", 0.879, 0.055)
+# The pill's outline on every capture of it, which a tap anywhere inside presses.
+SKIP_TUTORIAL_PILL = (0.818, 0.020, 0.992, 0.091)
+
 # Where each target sits, written out here rather than read from the module, so a point drifting there fails a test.
 POINTS = {
     daily.BANNER_CLOSE: (0.968, 0.049),
@@ -142,6 +153,7 @@ NEAR = 0.01
 # Daily's own handlers in the order they must run, which the shape test holds the module to.
 OWN = (
     spend_guard.handle_rescue_screen,
+    daily.handle_daily_tutorial,
     daily.handle_daily_overtime,
     daily.handle_daily_items_obtained,
     daily.handle_daily_mail,
@@ -481,6 +493,65 @@ class TestFadedLobby(Daily):
         self.task.all_texts[0].confidence = daily.FADED_CONFIDENCE
         self.assertFalse(daily.handle_daily_faded_lobby(self.task))
         self.assertPressed(daily.MENU, daily.MENU)
+
+
+class TestTutorial(Daily):
+    """The tutorial's Skip Tutorial pill covers the Menu point, the banner's X and the menu's X, and a tap on it skips the tutorial."""
+
+    def test_a_tutorial_lobby_stops_daily_with_nothing_pressed(self):
+        self.assertTrue(run_pass(self.task.show(TUTORIAL_LOBBY)))
+        self.assertEqual([], self.task.clicks)
+        self.assertStopped("Skip Tutorial shows")
+
+    def test_the_plain_lobby_still_gets_the_menu_tap(self):
+        self.assertTrue(run_pass(self.task.show(LOBBY)))
+        self.assertPressed(daily.MENU)
+        self.assertEqual(0, self.task.disabled)
+
+    def test_the_pill_stops_daily_on_every_screen_it_presses_on(self):
+        for name, texts, frame in (("menu", MENU, None), ("notice", NOTICE, None), ("mail", MAIL, None), ("items", ITEMS, None),
+                                   ("banner", BANNER, corner("daily_corner_banner")), ("unknown", SETTINGS, None)):
+            with self.subTest(screen=name):
+                self.task = Task()
+                self.assertTrue(run_pass(self.task.show(texts + (SKIP_TUTORIAL,), frame)))
+                self.assertEqual([], self.task.clicks)
+                self.assertStopped("Skip Tutorial shows")
+
+    def test_the_pill_is_read_anywhere_and_with_its_space_dropped(self):
+        """Its text centre has sat at x 0.879-0.880, but a tap on the Menu point lands on the pill wherever its caption reads."""
+        for name, box in (("left of its place", ("Skip Tutorial", 0.70, 0.06)), ("lower", ("Skip Tutorial", 0.88, 0.15)),
+                          ("space dropped", ("SkipTutorial", 0.879, 0.055)), ("upper case", ("SKIP TUTORIAL", 0.879, 0.055))):
+            with self.subTest(pill=name):
+                self.task = Task()
+                self.assertTrue(run_pass(self.task.show(LOBBY + (box,))))
+                self.assertEqual([], self.task.clicks)
+                self.assertStopped("Skip Tutorial shows")
+
+    def test_a_pill_read_at_low_confidence_after_a_lobby_read_gets_no_faded_tap(self):
+        """A frame reading only the pill, faintly, would otherwise count as a faded Lobby and get the Menu tap on the pill."""
+        run_pass(self.task.show(LOBBY))
+        self.tick()
+        self.task.show((SKIP_TUTORIAL,))
+        self.task.all_texts[0].confidence = 0.5
+        self.assertTrue(run_pass(self.task))
+        self.assertPressed(daily.MENU)
+        self.assertStopped("Skip Tutorial shows")
+
+    def test_the_pill_mid_run_stops_daily_before_its_next_press(self):
+        screens = [LOBBY, MENU, MAIL + (SKIP_TUTORIAL,), ITEMS]
+        for texts in screens:
+            if not self.task.enabled:
+                break
+            run_pass(self.task.show(texts))
+            self.tick()
+        self.assertPressed(daily.MENU, daily.ENVELOPE)
+        self.assertStopped("Skip Tutorial shows")
+
+    def test_the_targets_it_covers_are_the_ones_measured(self):
+        """The Menu, the banner's X and the menu's X lie on the pill; Daily's other fixed points do not."""
+        left, top, right, bottom = SKIP_TUTORIAL_PILL
+        covered = {name for name, point in POINTS.items() if left <= point[0] <= right and top <= point[1] <= bottom}
+        self.assertEqual({daily.MENU, daily.BANNER_CLOSE, daily.MENU_CLOSE}, covered)
 
 
 class TestStops(Daily):

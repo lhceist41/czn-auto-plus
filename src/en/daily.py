@@ -3,7 +3,7 @@
 The Lobby, its menu and the Mail screen sit next to buttons that delete mail, open the Shop, refill Aether with Crystals,
 open Rescue or quit the game. So Daily presses only the fixed targets in `TARGETS`, each on the one screen it belongs to,
 every press goes through `press`, which refuses a box that reads as any of those, and each target has a per-run limit.
-A screen Daily does not know for 30 seconds stops it with nothing pressed.
+A screen Daily does not know for 30 seconds, and the tutorial, stop it with nothing pressed.
 
 Imported by ok-script before `ok_tasks/` is on `sys.path`, so upstream is reached only through `handlers.loaded`.
 """
@@ -75,6 +75,9 @@ CLAIM_ALL_REGION = (0.12, 0.86, 0.28, 0.95)
 # Items Obtained's title at (0.502, 0.377) and its close caption at (0.501, 0.935), above the `进入` at (0.500, 0.978).
 ITEMS_TITLE = ("Items Obtained", (0.40, 0.33, 0.60, 0.42))
 ITEMS_CAPTION = ("点击屏幕关闭窗口", (0.40, 0.90, 0.60, 0.965))
+# The tutorial's Skip Tutorial pill, read at (0.879, 0.055) wherever it shows. Its outline spans x 0.818-0.992 and
+# y 0.020-0.091, over the Lobby's Menu, the banner's X and the menu's X, and a tap on it skips the tutorial.
+SKIP_TUTORIAL = ("Skip Tutorial", (0.0, 0.0, 1.0, 1.0))
 
 # The entry banner shows no stable text, so it is told by its X with the three dots beside it, cut from a 1080p capture.
 # The X scored 1.00 on the banner it was cut from; the plain X of a node or mission detail, at the same place, at most 0.835
@@ -275,6 +278,18 @@ def claim_all_button(task):
     return None
 
 
+def handle_daily_tutorial(task):
+    """Stop while the tutorial's Skip Tutorial pill shows, ahead of every handler that presses.
+
+    Stopping on the first frame that reads it also keeps the faded-Lobby tap off the pill. That tap needs a Lobby read
+    moments before, which stops here while the pill shows, and a frame with no confident text, which a frame showing the
+    pill is not: OCR read the pill, white on black, on every capture that shows it.
+    """
+    if showing(task, SKIP_TUTORIAL) is None:
+        return False
+    return stop(task, "Stopped: the tutorial is running (Skip Tutorial shows), and Daily never skips it. Finish the tutorial, then press Start again.")
+
+
 def handle_daily_overtime(task):
     """Stop a run that has gone on far longer than its chores take."""
     if time.monotonic() - run_state(task)["started"] < RUN_SECONDS:
@@ -401,6 +416,7 @@ def handle_daily_unknown_screen(task):
 # its Lobby stop would end Daily on its first frame, and its blind taps and centred Confirm press what Daily never reads.
 PAGE_HANDLERS = [
     handle_rescue_screen,
+    handle_daily_tutorial,
     handle_daily_overtime,
     handle_daily_items_obtained,
     handle_daily_mail,
