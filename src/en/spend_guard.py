@@ -11,6 +11,7 @@ In-run Credits stay allowed: the shop, card removal, Meditation and Extract all 
 """
 
 import re
+from typing import NamedTuple
 
 from src.en.handlers import insert_before, loaded, register, wrap
 from src.en.notify import announce
@@ -77,6 +78,33 @@ STUCK_SECONDS = 10
 # Parked on the task: the stuck clock's value when a declined tap was last logged.
 LOGGED = "_en_spend_screen_logged"
 
+
+class Dialog(NamedTuple):
+    """A dialog told apart by its title, its "Do not show" label and its button row, each where the client draws it.
+
+    A position alone never tells two of these dialogs apart: the Rescue dialog draws its box at the same x as Story's.
+    """
+
+    name: str
+    # Folded, as `folded` leaves a box's text. `title_exact` asks for the whole title rather than a part of it.
+    title: str
+    title_exact: bool
+    title_region: tuple
+    # Folded, matched from the start of the label, since OCR sometimes runs the box's edge on as a trailing letter.
+    label: str
+    label_region: tuple
+    buttons: tuple
+    buttons_region: tuple
+
+
+# OCR read the last word as "dlialogue" once, so only the start of the title is matched. Read off five captures: title at
+# y 0.212-0.213, label at (0.519-0.520, 0.677), buttons at y 0.784-0.786.
+SKIP_DIALOG = Dialog("Story skip dialog", "doyouwanttoskipthecurrent", False, (0.30, 0.15, 0.70, 0.27),
+                     "donotshowuntilnextlogin", (0.40, 0.64, 0.66, 0.71), ("取消", "确认"), (0.25, 0.75, 0.75, 0.82))
+# Where that dialog retells the scene, three lines at y 0.293-0.371 on every capture, with room for a fourth. The title,
+# label and buttons all sit outside it.
+SYNOPSIS_REGION = (0.009, 0.25, 0.977, 0.42)
+
 TAPS_TAG = "no blind tap on a spend screen"
 CONFIRM_TAG = "no Confirm on an account spend"
 
@@ -106,6 +134,29 @@ def cleaned(text):
         The case-folded remainder.
     """
     return re.sub(r"[^一-鿿\w]", "", text).casefold()
+
+
+def shown(task, dialog):
+    """Say whether a dialog is on screen, its title, label and every button each read where the client draws them.
+
+    Args:
+        task: The running task, whose `all_texts` holds the current OCR pass.
+        dialog: The `Dialog` to look for.
+
+    Returns:
+        True only when all of them are there.
+    """
+    boxes = getattr(task, "all_texts", None) or []
+
+    def found(matches, region):
+        return any(matches(box) and in_region(box, region, task.width, task.height) for box in boxes)
+
+    if dialog.title_exact:
+        title = found(lambda box: folded(box.name) == dialog.title, dialog.title_region)
+    else:
+        title = found(lambda box: dialog.title in folded(box.name), dialog.title_region)
+    return (title and found(lambda box: folded(box.name).startswith(dialog.label), dialog.label_region)
+            and all(found(lambda box, button=button: cleaned(box.name) == button, dialog.buttons_region) for button in dialog.buttons))
 
 
 WORDS = {group: tuple(folded(word) for word in MARKERS.get(group, ()) + UNCAPTURED.get(group, ()))
@@ -253,7 +304,11 @@ def risky_confirm(task):
     """
     if centred_confirm(task) is None:
         return None
-    texts = read_texts(box for box in task.all_texts if in_region(box, CONFIRM_REGION, task.width, task.height))
+    boxes = [box for box in task.all_texts if in_region(box, CONFIRM_REGION, task.width, task.height)]
+    # The synopsis retells the scene, so a story in which the group retreats or buys something would stop Story at its skip.
+    if shown(task, SKIP_DIALOG):
+        boxes = [box for box in boxes if not in_region(box, SYNOPSIS_REGION, task.width, task.height)]
+    texts = read_texts(boxes)
     asked = getattr(task, "node_status", None) or {}
     for group in (ACCOUNT, MONEY):
         marker = marker_in(texts, group)

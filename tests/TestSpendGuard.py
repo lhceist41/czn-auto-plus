@@ -24,7 +24,7 @@ import utils_chaos  # noqa: E402
 import utils_sortie  # noqa: E402
 import utils_story  # noqa: E402
 
-from src.en import handlers, notify, reason, spend_guard  # noqa: E402
+from src.en import dialog_ticks, handlers, notify, reason, spend_guard  # noqa: E402
 from src.en.handlers import WRAPS  # noqa: E402
 from tests.fakes import HEIGHT, WIDTH, FakeBox  # noqa: E402
 
@@ -580,6 +580,89 @@ class TestRescueStop(unittest.TestCase):
         for module in (utils_chaos.__name__, utils_sortie.__name__):
             with self.subTest(mode=module):
                 self.assertLess(names[module].index("handle_rescue_screen"), names[module].index("handle_non_battle_page"))
+
+
+# Story's skip dialog as OCR read it off the Global client, its synopsis lines given by `skip_dialog`.
+SKIP_TITLE = ("Do you want to skip the current dialogue?", 0.5, 0.212)
+SKIP_SYNOPSIS_AT = (0.294, 0.331, 0.369)
+SKIP_FOOT = [("Main Characters", 0.5, 0.444), ("Do not show until next login", 0.519, 0.677), ("取消", 0.348, 0.786), ("确认", 0.662, 0.786)]
+SKIP_SYNOPSES = (
+    ("Renoa collapses and loses consciousness immediately after returning to the SS Nightmare. Elaine says it is",
+     "simply the tension leaving her body, and recommends that the Captain also rest while Renoa is being", "treated."),
+    ("The group discovers Renoa lying in a mysterious space, clutching a pocket watch. They attempt to Rescue",
+     "her and return, but Deforsa appears and the group faces total annihilation. At that moment, the Captain",
+     "uses a mysterious power to reverse time and defeats Deforsa."),
+)
+
+
+def skip_dialog(*synopsis, title=SKIP_TITLE, foot=SKIP_FOOT):
+    """Build a task showing Story's skip dialog.
+
+    Args:
+        *synopsis: The synopsis lines, top to bottom, at most three.
+        title: The title box, or None for a dialog without it.
+        foot: The boxes under the synopsis.
+
+    Returns:
+        The task.
+    """
+    texts = [title] if title else []
+    texts += [(line, 0.5, y) for line, y in zip(synopsis, SKIP_SYNOPSIS_AT)]
+    return FakeTask([*texts, *foot])
+
+
+class TestSkipSynopsis(unittest.TestCase):
+    """The skip dialog retells the scene, and a scene where someone retreats or buys something is no dialog that does."""
+
+    def test_captured_synopses_are_confirmed(self):
+        for synopsis in SKIP_SYNOPSES:
+            with self.subTest(synopsis=synopsis[0]):
+                task = skip_dialog(*synopsis)
+                self.assertIsNone(spend_guard.risky_confirm(task))
+                self.assertIs(True, confirm(task))
+                self.assertEqual(["确认"], task.clicked)
+
+    def test_a_marker_in_the_synopsis_is_confirmed(self):
+        for line in ("the group must retreat before the Chaos closes in.", "They Abandon the ship and Give Up the chase.",
+                     "Renoa wants to buy a pocket watch.", "a Purchase made long ago", "The records Delete themselves.",
+                     "Elaine can Erase a memory."):
+            with self.subTest(line=line):
+                task = skip_dialog("A sudden ambush puts the group in danger,", line, "and is left alone inside the Chaos.")
+                self.assertIsNone(spend_guard.risky_confirm(task))
+                self.assertIs(True, confirm(task))
+                self.assertEqual(["确认"], task.clicked)
+                self.assertFalse(task.disabled)
+
+    def test_the_same_line_on_any_other_dialog_still_stops(self):
+        line = "the group must retreat before the Chaos closes in."
+        cases = {
+            "no title": skip_dialog(line, title=None),
+            "another title": skip_dialog(line, title=("Leave this battle?", 0.5, 0.212)),
+            "no label": skip_dialog(line, foot=[box for box in SKIP_FOOT if not box[0].startswith("Do not show")]),
+            "the label where the Rescue dialog draws it": skip_dialog(
+                line, foot=[(name, x, 0.558 if name.startswith("Do not show") else y) for name, x, y in SKIP_FOOT]),
+            "no Cancel": skip_dialog(line, foot=[box for box in SKIP_FOOT if box[0] != "取消"]),
+            "buttons where another dialog draws them": skip_dialog(
+                line, foot=[(name, x, 0.669 if name in ("取消", "确认") else y) for name, x, y in SKIP_FOOT]),
+        }
+        for case, task in cases.items():
+            with self.subTest(case=case):
+                self.assertEqual(spend_guard.RETREAT, spend_guard.risky_confirm(task)[0])
+                self.assertIs(True, confirm(task))
+                self.assertTrue(task.disabled)
+
+    def test_a_marker_outside_the_synopsis_still_stops(self):
+        for name, extra in (("under the synopsis", ("Use 1 Aether?", 0.5, 0.55)), ("in the title", ("Retreat?", 0.5, 0.24)),
+                            ("a price", ("US$4.99", 0.5, 0.6))):
+            with self.subTest(where=name):
+                task = skip_dialog(*SKIP_SYNOPSES[0])
+                task.all_texts.append(FakeBox(*extra))
+                self.assertIsNotNone(spend_guard.risky_confirm(task))
+                self.assertIs(True, confirm(task))
+                self.assertTrue(task.disabled)
+
+    def test_the_skip_dialog_is_told_apart_by_the_same_whitelist_as_its_tick(self):
+        self.assertIn(spend_guard.SKIP_DIALOG, [dialog for dialog, _ in dialog_ticks.TICKS])
 
 
 class TestInstall(unittest.TestCase):

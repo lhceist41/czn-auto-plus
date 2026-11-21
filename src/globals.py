@@ -18,7 +18,7 @@ class Globals(QObject):
         # Everything English-only lives under src/en/ so upstream's files stay untouched.
         from src.ui.SponsorDialog import install_sponsor_dialog
         from src.en import (  # noqa: E501
-            battle, battle_missions, boss, claims, cursor, dashboard, deck, desire, devices, dialogue, dice, draft, enter, epiphany, equipment, etched_memory, events, forms, frame_log, game_language, heal, humanize,
+            battle, battle_missions, boss, claims, cursor, dashboard, deck, desire, devices, dialog_ticks, dialogue, dice, draft, enter, epiphany, equipment, etched_memory, events, forms, frame_log, game_language, heal, humanize,
             kept_forms, log_text, loot_cards, meditation, memory_limit, monitors, navigation, obtain, observe, ocr_text, overrides, persona, picker, piles, pins, reobserve, remote, rest, rewards, sections,
             reason, route, shell, shop, shutdown, spend_guard, story, story_relay, summary, task_list, templates, notify, stuck, stuck_stop, upload, zero_system,
         )
@@ -75,6 +75,8 @@ class Globals(QObject):
         upload.apply()
         # Before notify, which renames the stuck handler's list entry; a later wrap of it would find nothing to wrap.
         spend_guard.apply()
+        # After spend_guard, so the Rescue stop sits ahead of the tick and a Rescue dialog is stopped before its box is read.
+        dialog_ticks.apply()
         notify.apply()
         stuck.apply()
         stuck_stop.apply()
