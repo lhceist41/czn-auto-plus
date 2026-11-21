@@ -4,14 +4,15 @@ Two of upstream's fallbacks act without reading the screen. `handle_stuck_log` t
 button once a screen has sat still for ten seconds, and `handle_center_confirm` presses any centred Confirm whatever the
 dialog asks. Either can buy Aether with Crystals, pay real money, drop a stored save or abandon a run. The blind taps
 now decline on any screen that can spend or discard, and a centred Confirm on a dialog that spends outside the run,
-deletes or retreats unasked is cancelled once, announced, and the run stopped.
+deletes or retreats unasked is cancelled once, announced, and the run stopped. A Rescue screen or dialog stops the run
+before the centred Confirm sees it, with no input: pulls and their records are the user's to choose.
 
 In-run Credits stay allowed: the shop, card removal, Meditation and Extract all run on them.
 """
 
 import re
 
-from src.en.handlers import loaded, register, wrap
+from src.en.handlers import insert_before, loaded, register, wrap
 from src.en.notify import announce
 from src.en.screen import in_region
 
@@ -53,6 +54,18 @@ CURRENCY = r"(?:us\$|\$|€|£|₩|¥|krw|usd|jpy|cny)"
 MONEY_PRICE = re.compile(rf"{CURRENCY}\s?\d|\d\s?{CURRENCY}")
 # The shop's in-run price icon, from `coco_annotations.json`.
 PRICE_ICON = "credit_icon"
+
+# Read off the Global client's Rescue screens and their dialogs.
+RESCUE_MARKERS = ("Re-Rescue", "Rescue Record", "Remaining Multis", "Confirm Rescue", "Selective Rescue", "Rescue 1 time",
+                  "Rescue 10 time", "Free Rescue", "Rescue Merit")
+# Each from the start of a word, its spaces and hyphens optional: OCR drops a space now and then, and a plain substring
+# would read "you were rescued" as Re-Rescue.
+RESCUE_PHRASES = tuple(re.compile(r"(?<![a-z])" + r"[\s-]*".join(map(re.escape, re.split(r"[\s-]+", marker.casefold()))))
+                       for marker in RESCUE_MARKERS)
+# The title the Rescue screens print top left, which the catalog hands over as 营救. The Lobby's Rescue button reads
+# the same but sits low on the right.
+RESCUE_HEADER = ("营救", "rescue")
+RESCUE_HEADER_REGION = (0.0, 0.0, 0.25, 0.09)
 
 # Set in `node_status` by upstream when the run itself asked for the step: `handle_data_collected` after it tapped a
 # save's trash icon under the user's threshold, `handle_escape` after it pressed Retreat on the escape page.
@@ -143,12 +156,50 @@ def spends_or_discards(task):
         task: The running task, whose `all_texts` holds the current OCR pass.
 
     Returns:
-        True when a marker or a price in any currency is on screen, or the shop's price icon is.
+        True when a marker, a price in any currency or a Rescue screen is on screen, or the shop's price icon is.
     """
     texts = read_texts(getattr(task, "all_texts", None) or [])
-    if any(marker_in(texts, group) for group in (*WORDS, MONEY)):
+    if any(marker_in(texts, group) for group in (*WORDS, MONEY)) or rescue_marker(task):
         return True
     return bool(task.find_one(PRICE_ICON))
+
+
+def rescue_marker(task):
+    """Find what shows a Rescue screen or one of its dialogs.
+
+    Args:
+        task: The running task, whose `all_texts` holds the current OCR pass.
+
+    Returns:
+        The text that gave it away, or None.
+    """
+    for box in getattr(task, "all_texts", None) or []:
+        if any(phrase.search(box.name.casefold()) for phrase in RESCUE_PHRASES):
+            return box.name
+        if cleaned(box.name) in RESCUE_HEADER and in_region(box, RESCUE_HEADER_REGION, task.width, task.height):
+            return box.name
+    return None
+
+
+def handle_rescue_screen(task):
+    """Stop the run on a Rescue screen or dialog, pressing nothing.
+
+    A centred Confirm there rolls the pulls again and throws the unsaved ones away, or ends a Selective Rescue for
+    good, and the dialog band alone can hold nothing that says so.
+
+    Args:
+        task: The running task, whose `all_texts` holds the current OCR pass.
+
+    Returns:
+        True when the run has been stopped, which claims the frame.
+    """
+    marker = rescue_marker(task)
+    if marker is None:
+        return False
+    task.log_info(f"on a Rescue screen (read {marker!r}), pressing nothing")
+    announce(task, "Stopped on the Rescue screen: pulls and their records are yours to choose. Close it, then press Start again.")
+    task.disable()
+    return True
 
 
 def guarding_taps(original, utils):
@@ -260,7 +311,7 @@ def guarding_confirm(original):
 
 
 def install(utils):
-    """Wrap both of upstream's fallbacks wherever the run reaches them.
+    """Wrap both of upstream's fallbacks wherever the run reaches them, and stop on Rescue ahead of the centred Confirm.
 
     Args:
         utils: The loaded `utils` module, or None when it is not importable yet.
@@ -269,10 +320,12 @@ def install(utils):
         return
     wrap(utils, "handle_stuck_log", lambda handler: guarding_taps(handler, utils), TAPS_TAG)
     wrap(utils, "handle_center_confirm", guarding_confirm, CONFIRM_TAG)
+    # In Chaos and Sortie this is well ahead of their own Rescue header stop, which comes after the Confirm.
+    insert_before("handle_center_confirm", handle_rescue_screen)
 
 
 def apply():
-    """Keep blind taps off spend screens and stop the run at a centred Confirm that would spend, delete or retreat."""
+    """Keep blind taps off spend screens, stop on Rescue, and stop at a centred Confirm that would spend, delete or retreat."""
     global _patched
     if _patched:
         return

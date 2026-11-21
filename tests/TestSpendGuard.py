@@ -5,6 +5,7 @@ pack offer or a save deletion nobody asked for would go through on either. The g
 leave every in-run Credits confirm, and upstream's own asked-for deletion and retreat, alone.
 """
 
+import contextlib
 import inspect
 import re
 import sys
@@ -12,6 +13,7 @@ import time
 import types
 import unittest
 from pathlib import Path
+from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
@@ -19,6 +21,8 @@ sys.path.insert(0, str(REPO_ROOT / "ok_tasks"))
 
 import utils  # noqa: E402
 import utils_chaos  # noqa: E402
+import utils_sortie  # noqa: E402
+import utils_story  # noqa: E402
 
 from src.en import handlers, notify, reason, spend_guard  # noqa: E402
 from src.en.handlers import WRAPS  # noqa: E402
@@ -147,6 +151,95 @@ def every_marker():
         `(group, word)` pairs.
     """
     return [(group, word) for table in (spend_guard.MARKERS, spend_guard.UNCAPTURED) for group, words in table.items() for word in words]
+
+
+# Rescue screens and dialogs as OCR read them off the Global client.
+RESCUE_SCREENS = {
+    "Selective Rescue results": [("Skip Tutorial", 0.88, 0.055), ("Confirm Rescue", 0.912, 0.702), ("Selective Rescue up to 20 times.", 0.622, 0.795),
+                                 ("Save Log", 0.912, 0.81), ("Remaining Multis:", 0.723, 0.917), ("19", 0.819, 0.916), ("Re-Rescue", 0.911, 0.912)],
+    "Save Rescue Records": [("Save Rescue Records", 0.501, 0.101), ("This is your current Rescue Record.", 0.519, 0.519),
+                            ("No saved files available.", 0.528, 0.721), ("取消", 0.349, 0.89), ("Save", 0.664, 0.89)],
+    "Rescue Records Loss": [("Rescue Records Loss", 0.502, 0.339), ("Your current Rescue Records are not saved.", 0.501, 0.448),
+                            ("Unsaved records will be lost and cannot be recovered.", 0.502, 0.487),
+                            ("Do you Want to proceed with Re-Rescue?", 0.501, 0.526), ("取消", 0.346, 0.654), ("确认", 0.667, 0.657)],
+    "Change Saved Rescue Records": [("Change Saved Rescue Records", 0.503, 0.339), ("Re-Rescue will erase your current Rescue Records.", 0.5, 0.45),
+                                    ("Unsaved Rescue Records cannot be recovered.", 0.501, 0.486),
+                                    ("Do you Want to proceed with Re-Rescue?", 0.501, 0.526), ("取消", 0.347, 0.656), ("确认", 0.667, 0.656)],
+    "ticket banner": [("营救", 0.116, 0.047), ("235", 0.709, 0.049), ("Shop", 0.109, 0.923), ("Agent Info", 0.389, 0.928),
+                      ("Rescue 1 time(s)", 0.633, 0.913), ("Rescue 10 time(s)", 0.848, 0.914), ("10", 0.96, 0.914)],
+    "Selective Rescue banner": [("营救", 0.116, 0.048), ("Special Signal Selective Rescue", 0.386, 0.255),
+                                ("Ends when a Rescue record is", 0.33, 0.521), ("Remaining Rescue Count: 20", 0.883, 0.837),
+                                ("Selective Rescue 10 time(s)", 0.849, 0.912), ("免费", 0.95, 0.912)],
+    "event banner": [("营救", 0.116, 0.046), ("Free Rescue Count 0 / 20", 0.299, 0.646), ("Rescue Merit", 0.791, 0.751),
+                     ("Rescue 1 time(s)", 0.634, 0.911), ("免费", 0.732, 0.914), ("Rescue 10 time(s)", 0.85, 0.912), ("免费", 0.949, 0.912)],
+}
+# The Lobby's own Rescue button, and a Chaos result whose mission is named for a rescue.
+LOBBY = [("Sortie", 0.885, 0.267), ("θ Chaos", 0.883, 0.441), ("Combatants", 0.868, 0.617), ("EVENT", 0.823, 0.704), ("营救", 0.886, 0.705)]
+CHAOS_RESULT = [("The Blue Pot", 0.681, 0.239), ("Chaos Size | Small", 0.693, 0.274), ("Rescue Renoa", 0.663, 0.358), ("Reward", 0.607, 0.627),
+                ("确认", 0.918, 0.918)]
+# Upstream's lists, by the names the guard cares about: Story presses a centred Confirm first, Chaos and Sortie after the stuck fallback.
+STORY_ORDER = ("handle_center_confirm", "handle_stuck_log")
+CHAOS_ORDER = ("handle_stuck_log", "handle_center_confirm")
+
+
+def rescue_utils():
+    """Build a stand-in for `utils` whose centred Confirm presses only a Confirm upstream would find.
+
+    Returns:
+        A namespace.
+    """
+    stand_in = fake_utils()
+
+    def handle_center_confirm(task):
+        if spend_guard.centred_confirm(task) is None:
+            return False
+        return upstream_confirm(task)
+
+    stand_in.handle_center_confirm = handle_center_confirm
+    return stand_in
+
+
+@contextlib.contextmanager
+def stand_in_mode(order):
+    """Install the guard on a stand-in mode, and leave every handler list as it was afterwards.
+
+    The install edits every list holding the anchors, the real modes' among them.
+
+    Args:
+        order: The stand-in's handler names, in upstream's order.
+
+    Yields:
+        The installed list.
+    """
+    saved = [(entries, list(entries)) for _, entries in handlers.each_list()]
+    mode = types.ModuleType("fake_mode_for_rescue_stop_test")
+    stand_in = rescue_utils()
+    mode.PAGE_HANDLERS = [getattr(stand_in, name) for name in order]
+    sys.modules[mode.__name__] = mode
+    try:
+        spend_guard.install(stand_in)
+        yield mode.PAGE_HANDLERS
+    finally:
+        sys.modules.pop(mode.__name__, None)
+        for entries, before in saved:
+            entries[:] = before
+
+
+def run_screen(texts, order=STORY_ORDER, frozen_for=0):
+    """Put a screen in front of an installed stand-in mode and let its list run.
+
+    Args:
+        texts: `(name, x, y)` triples.
+        order: The stand-in's handler names.
+        frozen_for: How long the picture has looked the same, in seconds.
+
+    Returns:
+        The task, and the name of the handler that claimed the frame or None.
+    """
+    task = FakeTask(texts, frozen_for=frozen_for)
+    with stand_in_mode(order) as entries:
+        claimed = next((handler.__name__ for handler in entries if handler(task)), None)
+    return task, claimed
 
 
 class TestConfirmGuard(unittest.TestCase):
@@ -409,6 +502,86 @@ class TestBlindTaps(unittest.TestCase):
         self.assertIn("Stuck on the same screen", task.notifications[0])
 
 
+class TestRescueStop(unittest.TestCase):
+    """A Rescue screen or dialog, whose pulls and records are the user's to choose."""
+
+    def assertStoppedWithoutInput(self, task, claimed):
+        self.assertEqual("handle_rescue_screen", claimed)
+        self.assertTrue(task.disabled)
+        self.assertEqual([], task.clicked)
+        self.assertEqual(1, len(task.notifications))
+        self.assertTrue(task.notifications[0].startswith("Stopped on the Rescue screen"))
+
+    def assertNotStopped(self, task, claimed):
+        self.assertNotEqual("handle_rescue_screen", claimed)
+        self.assertFalse(task.disabled)
+        self.assertEqual([], task.notifications)
+
+    def test_every_rescue_screen_stops_the_run_without_input(self):
+        for order in (STORY_ORDER, CHAOS_ORDER):
+            for name, texts in RESCUE_SCREENS.items():
+                with self.subTest(screen=name, order=order):
+                    self.assertStoppedWithoutInput(*run_screen(texts, order, frozen_for=15))
+
+    def test_each_rescue_phrase_stops_however_ocr_spaces_it(self):
+        for marker in spend_guard.RESCUE_MARKERS:
+            for shown in (marker, marker.upper(), marker.replace(" ", "").replace("-", ""), marker.replace(" ", "-"), f"Use {marker}?"):
+                with self.subTest(shown=shown):
+                    self.assertStoppedWithoutInput(*run_screen([(shown, 0.5, 0.5)]))
+
+    def test_the_rescue_header_stops_the_run(self):
+        for header in ("营救", "Rescue"):
+            with self.subTest(header=header):
+                self.assertStoppedWithoutInput(*run_screen([(header, 0.116, 0.047)]))
+
+    def test_the_lobby_rescue_button_does_not_stop_the_run(self):
+        task, claimed = run_screen(LOBBY)
+        self.assertNotStopped(task, claimed)
+        self.assertIsNone(spend_guard.rescue_marker(task))
+
+    def test_a_mission_named_rescue_does_not_stop_the_run(self):
+        task, claimed = run_screen(CHAOS_RESULT, CHAOS_ORDER)
+        self.assertNotStopped(task, claimed)
+        self.assertIsNone(spend_guard.rescue_marker(task))
+
+    def test_a_line_that_runs_a_word_into_rescue_does_not_stop_the_run(self):
+        """Folded the way the other markers are, "were rescued" would read as Re-Rescue."""
+        for line in ("You were rescued by Renoa.", "Hold on before rescue arrives.", "A carefree rescuer"):
+            with self.subTest(line=line):
+                task, claimed = run_screen([(line, 0.5, 0.8)], frozen_for=15)
+                self.assertNotStopped(task, claimed)
+                self.assertEqual(["blind tap"], task.clicked, "upstream's recovery stays")
+
+    def test_a_confirm_split_from_rescue_on_the_results_grid_stops_before_it_is_pressed(self):
+        """Should OCR split Confirm Rescue, the band holds nothing the Confirm guard reads, and the Confirm would end the Selective Rescue."""
+        texts = [entry for entry in RESCUE_SCREENS["Selective Rescue results"] if entry[0] != "Confirm Rescue"]
+        texts += [("确认", 0.895, 0.702), ("营救", 0.935, 0.702)]
+        self.assertIsNone(spend_guard.risky_confirm(FakeTask(texts)))
+        self.assertStoppedWithoutInput(*run_screen(texts))
+
+    def test_a_rescue_screen_gets_no_blind_tap(self):
+        stand_in = fake_utils()
+        for name, texts in RESCUE_SCREENS.items():
+            with self.subTest(screen=name):
+                task = FakeTask(texts, frozen_for=15)
+                self.assertIs(False, spend_guard.guarding_taps(stand_in.handle_stuck_log, stand_in)(task))
+                self.assertEqual([], task.clicked)
+
+    def test_the_rescue_stop_runs_ahead_of_the_centred_confirm_in_every_mode(self):
+        """Chaos and Sortie stop on the Rescue header themselves, but only after the centred Confirm had its turn."""
+        modes = (utils_story, utils_chaos, utils_sortie)
+        # Other tests stand modules of their own in for the modes, or take them out, and the install reaches only what is loaded.
+        with mock.patch.dict(sys.modules, {module.__name__: module for module in modes}), stand_in_mode(STORY_ORDER):
+            names = {module.__name__: [handler.__name__ for handler in module.PAGE_HANDLERS] for module in modes}
+        for module, listed in names.items():
+            with self.subTest(mode=module):
+                self.assertEqual(1, listed.count("handle_rescue_screen"))
+                self.assertLess(listed.index("handle_rescue_screen"), listed.index("handle_center_confirm"))
+        for module in (utils_chaos.__name__, utils_sortie.__name__):
+            with self.subTest(mode=module):
+                self.assertLess(names[module].index("handle_rescue_screen"), names[module].index("handle_non_battle_page"))
+
+
 class TestInstall(unittest.TestCase):
 
     def test_the_guard_is_applied_before_notify(self):
@@ -430,8 +603,8 @@ class TestInstall(unittest.TestCase):
             sys.modules.pop(mode.__name__, None)
         self.assertEqual([spend_guard.CONFIRM_TAG], list(getattr(stand_in.handle_center_confirm, WRAPS)))
         self.assertEqual([spend_guard.TAPS_TAG], list(getattr(stand_in.handle_stuck_log, WRAPS)))
-        self.assertEqual([stand_in.handle_center_confirm, stand_in.handle_stuck_log], mode.PAGE_HANDLERS)
-        self.assertEqual(["handle_center_confirm", "handle_stuck_log"], [handler.__name__ for handler in mode.PAGE_HANDLERS])
+        self.assertEqual([spend_guard.handle_rescue_screen, stand_in.handle_center_confirm, stand_in.handle_stuck_log], mode.PAGE_HANDLERS)
+        self.assertEqual(["handle_rescue_screen", "handle_center_confirm", "handle_stuck_log"], [handler.__name__ for handler in mode.PAGE_HANDLERS])
 
 
 if __name__ == "__main__":
