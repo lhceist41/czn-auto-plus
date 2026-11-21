@@ -211,6 +211,44 @@ def serve_remote(test):
     return server.server_port
 
 
+def serve_error(test, status, body=b"", content_type="text/plain; charset=utf-8", length=None):
+    """Answer every POST with one HTTP error, standing in for a port that refuses, and return its port.
+
+    Args:
+        test: The test the server lives for.
+        status: The status to answer with.
+        body: The bytes sent after the headers.
+        content_type: The Content-Type to send.
+        length: The Content-Length to send instead of the body's own size. A longer one keeps the reply open, as a
+            stalled port would.
+    """
+    release = threading.Event()
+
+    class Refuse(http.server.BaseHTTPRequestHandler):
+
+        def do_POST(self):
+            # Read first, so no request bytes are left to make Windows reset the connection under the reply.
+            self.rfile.read(int(self.headers.get("Content-Length") or 0))
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body) if length is None else length))
+            self.end_headers()
+            self.wfile.write(body)
+            self.wfile.flush()
+            if length is not None:
+                release.wait(10)
+
+        def log_message(self, *args):
+            """Keep each request out of the test output."""
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Refuse)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    test.addCleanup(server.server_close)
+    test.addCleanup(server.shutdown)
+    test.addCleanup(release.set)
+    return server.server_port
+
+
 def raw_post(port, headers, host=True, command="status", body=b"{}", length=None, late=False):
     """POST `body` to a command with exactly `headers`, as a browser or another local program might.
 
@@ -564,6 +602,65 @@ class TestRemote(unittest.TestCase):
             self.assertEqual("status ran", czn_mcp.call("status"))
             self.assertIsNotNone(remote._last_contact)
         self.assertEqual([{}], ran)
+
+    def test_the_mcp_bridge_shows_a_refusal_as_a_refusal(self):
+        """Told nothing answers, a live lane goes off to start a debug run that is already up and refusing it."""
+        port = serve_remote(self)
+        ran = []
+        with standing_in(remote, status=lambda **kwargs: ran.append(kwargs) or "status ran", HOST="127.0.0.2"), \
+                standing_in(czn_mcp, URL=f"http://127.0.0.1:{port}"):
+            with self.assertRaises(czn_mcp.ToolError) as raised:
+                czn_mcp.call("status")
+        self.assertEqual([], ran)
+        self.assertEqual(f"the debug run answered status with HTTP 403 Forbidden: refused: Host '127.0.0.1:{port}' is "
+                         f"not 127.0.0.2:{port} or localhost:{port}", str(raised.exception))
+
+    def test_the_mcp_bridge_shows_the_status_of_an_error_with_no_text_to_show(self):
+        """Anything but a `ToolError` reaches Claude as a bare "Error executing tool", without the status."""
+        cases = {
+            "an empty body": (500, b"", "text/plain; charset=utf-8", "HTTP 500 Internal Server Error"),
+            "an image": (403, b"\x89PNG\r\n\x1a\n\x00\xff", "image/png", "HTTP 403 Forbidden"),
+            "bytes that are not UTF-8": (400, b"refused: \xff", "text/plain; charset=utf-8",
+                                         "HTTP 400 Bad Request: refused: �"),
+            "an unknown charset": (400, b"refused: x", "text/plain; charset=no-such-charset", "HTTP 400 Bad Request"),
+        }
+        for case, (status, body, content_type, shown) in cases.items():
+            with self.subTest(case):
+                port = serve_error(self, status, body, content_type)
+                with standing_in(czn_mcp, URL=f"http://127.0.0.1:{port}"):
+                    with self.assertRaises(czn_mcp.ToolError) as raised:
+                        czn_mcp.call("status")
+                self.assertEqual(f"the debug run answered status with {shown}", str(raised.exception))
+
+    def test_the_mcp_bridge_waits_on_a_refusal_text_for_one_read_at_most(self):
+        """A body promising more than comes must not hold the tool call: what came is shown, or the status alone."""
+        cases = {
+            "part of the text came": (b"refused: too big", ": refused: too big", 2, 0, 1),
+            "none of it came": (b"", "", 0.5, 0.4, 3),
+        }
+        for case, (body, shown, timeout, at_least, at_most) in cases.items():
+            with self.subTest(case):
+                port = serve_error(self, 413, body, length=1000)
+                with standing_in(czn_mcp, URL=f"http://127.0.0.1:{port}", TIMEOUT=timeout):
+                    started = time.monotonic()
+                    with self.assertRaises(czn_mcp.ToolError) as raised:
+                        czn_mcp.call("status")
+                    seconds = time.monotonic() - started
+                self.assertEqual(f"the debug run answered status with HTTP 413 Request Entity Too Large{shown}",
+                                 str(raised.exception))
+                self.assertGreaterEqual(seconds, at_least)
+                self.assertLess(seconds, at_most)
+
+    def test_the_mcp_bridge_still_says_nothing_answers_on_a_closed_port(self):
+        """Only a port with nothing on it needs a `main_debug.py` run started."""
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            port = probe.getsockname()[1]
+        with standing_in(czn_mcp, URL=f"http://127.0.0.1:{port}"):
+            with self.assertRaises(czn_mcp.ToolError) as raised:
+                czn_mcp.call("status")
+        self.assertTrue(str(raised.exception).startswith(f"nothing answering on http://127.0.0.1:{port} - start"),
+                        str(raised.exception))
 
     def test_a_request_a_web_page_could_send_runs_nothing(self):
         """Loopback alone lets any page open in a browser here click, start a mode or end the app through the port."""

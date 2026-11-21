@@ -24,6 +24,8 @@ from mcp.server.mcpserver.exceptions import ToolError
 URL = "http://127.0.0.1:47821"
 # Seconds to wait for a reply. Above the remote's own 15 s wait for the page loop, so its clearer error arrives first.
 TIMEOUT = 30
+# Most bytes of a refused request's text to show. The port's own refusals are one short line.
+REFUSAL_LIMIT = 4096
 # Seconds between pings, which keep "MCP connected" in the app's title. Below the remote's `STALE`.
 HEARTBEAT = 5
 
@@ -45,19 +47,44 @@ def call(command, **kwargs):
         The command's result, decoded from JSON.
 
     Raises:
-        ToolError: The debug run is not answering, or the command failed there. Any other exception reaches Claude as
-            a bare "Error executing tool", without its message.
+        ToolError: The debug run is not answering, refused the request, or the command failed there. Any other
+            exception reaches Claude as a bare "Error executing tool", without its message.
     """
     request = urllib.request.Request(f"{URL}/{command}", data=json.dumps(kwargs).encode("utf-8"), method="POST",
                                      headers={"Content-Type": "application/json"})
     try:
         with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
             reply = json.load(response)
+    except urllib.error.HTTPError as error:
+        text = refusal(error)
+        raise ToolError(f"the debug run answered {command} with HTTP {error.code} {error.reason}{text}") from error
     except urllib.error.URLError as error:
         raise ToolError(f"nothing answering on {URL} - start `python main_debug.py` first ({error.reason})") from error
     if not reply["ok"]:
         raise ToolError(reply["error"])
     return reply["result"]
+
+
+def refusal(error):
+    """Return the text an HTTP error came with, as `": <text>"`, or nothing when it has none worth showing.
+
+    A single read, so a body that trickles or never comes costs one `TIMEOUT`, not one per byte.
+
+    Args:
+        error: The `urllib.error.HTTPError` raised for the reply.
+
+    Returns:
+        The text, or an empty string for an empty, non-text or unreadable body.
+    """
+    with error:
+        # Whatever goes wrong here, the status alone must still reach Claude as a `ToolError`.
+        try:
+            if not error.headers.get_content_type().startswith("text/"):
+                return ""
+            text = error.read1(REFUSAL_LIMIT).decode(error.headers.get_content_charset() or "utf-8", "replace").strip()
+        except Exception:
+            return ""
+    return f": {text}" if text else ""
 
 
 def ping():
