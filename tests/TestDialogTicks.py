@@ -327,6 +327,8 @@ class TestTick(unittest.TestCase):
             "skip Confirm missing": (without(SKIP_SYNOPSIS, "确认"), "dont_show_skip_synopsis"),
             "skip buttons out of place": (moved(SKIP_SYNOPSIS, ("取消", 0.348, 0.669), ("确认", 0.667, 0.669)), "dont_show_skip_synopsis"),
             "skip with Enter for Confirm": ([(("进入" if name == "确认" else name), x, y) for name, x, y in SKIP_SYNOPSIS], "dont_show_skip_synopsis"),
+            "skip with the Battle Prep label": ([(("Do not show again today" if name.startswith("Do not show") else name), x, y)
+                                                 for name, x, y in SKIP_SYNOPSIS], "dont_show_skip_synopsis"),
             "prep title missing": (without(PREP, "Battle Prep Confirmation"), "dont_show_prep"),
             "prep title out of place": (moved(PREP, ("Battle Prep Confirmation", 0.499, 0.3)), "dont_show_prep"),
             "prep label missing": (without(PREP, "Do not show again today"), "dont_show_prep"),

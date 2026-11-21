@@ -396,6 +396,7 @@ class TestConfirmGuard(unittest.TestCase):
 
     def test_a_back_out_ahead_still_claims_its_dialog(self):
         """`src/en/reason.py` declines the Charge Reason dialog ahead of the Confirm, which the guard must leave to it."""
+        saved = [(entries, list(entries)) for _, entries in handlers.each_list()]
         mode = types.ModuleType("fake_sortie_for_spend_guard_test")
         mode.PAGE_HANDLERS = [lambda task: False]
         mode.PAGE_HANDLERS[0].__name__ = "handle_close_page"
@@ -412,6 +413,8 @@ class TestConfirmGuard(unittest.TestCase):
             claimed_by = next(handler.__name__ for handler in mode.PAGE_HANDLERS if handler(task))
         finally:
             sys.modules.pop(mode.__name__, None)
+            for entries, before in saved:
+                entries[:] = before
         self.assertEqual("handle_charge_reason", claimed_by)
         self.assertEqual([reason.DECLINE_POINT], clicks)
         self.assertFalse(task.disabled)
@@ -483,6 +486,7 @@ class TestBlindTaps(unittest.TestCase):
 
     def test_notify_still_reports_a_guarded_screen(self):
         """notify renames the list entry, so the guard has to be installed first and sit inside it."""
+        saved = [(entries, list(entries)) for _, entries in handlers.each_list()]
         mode = types.ModuleType("fake_chaos_for_spend_guard_test")
         stand_in = fake_utils()
         mode.PAGE_HANDLERS = [stand_in.handle_stuck_log]
@@ -495,6 +499,8 @@ class TestBlindTaps(unittest.TestCase):
             entry = mode.PAGE_HANDLERS[0]
         finally:
             sys.modules.pop(mode.__name__, None)
+            for entries, before in saved:
+                entries[:] = before
         task = FakeTask([("德朗商店", 0.1, 0.05)], frozen_for=notify.STUCK_SECONDS + 5)
         self.assertIs(False, entry(task))
         self.assertEqual([], task.clicked)
@@ -626,12 +632,16 @@ class TestSkipSynopsis(unittest.TestCase):
         for line in ("the group must retreat before the Chaos closes in.", "They Abandon the ship and Give Up the chase.",
                      "Renoa wants to buy a pocket watch.", "a Purchase made long ago", "The records Delete themselves.",
                      "Elaine can Erase a memory."):
-            with self.subTest(line=line):
-                task = skip_dialog("A sudden ambush puts the group in danger,", line, "and is left alone inside the Chaos.")
-                self.assertIsNone(spend_guard.risky_confirm(task))
-                self.assertIs(True, confirm(task))
-                self.assertEqual(["确认"], task.clicked)
-                self.assertFalse(task.disabled)
+            for row in range(len(SKIP_SYNOPSIS_AT)):
+                with self.subTest(line=line, row=row):
+                    synopsis = ["A sudden ambush puts the group in danger,", "the Captain's Life Core has malfunctioned,",
+                                "and is left alone inside the Chaos."]
+                    synopsis[row] = line
+                    task = skip_dialog(*synopsis)
+                    self.assertIsNone(spend_guard.risky_confirm(task))
+                    self.assertIs(True, confirm(task))
+                    self.assertEqual(["确认"], task.clicked)
+                    self.assertFalse(task.disabled)
 
     def test_the_same_line_on_any_other_dialog_still_stops(self):
         line = "the group must retreat before the Chaos closes in."
@@ -675,6 +685,7 @@ class TestInstall(unittest.TestCase):
         self.assertLess(applied.index("spend_guard"), applied.index("notify"))
 
     def test_each_guard_is_applied_once_however_often_the_install_runs(self):
+        saved = [(entries, list(entries)) for _, entries in handlers.each_list()]
         mode = types.ModuleType("fake_mode_for_spend_guard_install_test")
         stand_in = fake_utils()
         mode.PAGE_HANDLERS = [stand_in.handle_center_confirm, stand_in.handle_stuck_log]
@@ -684,6 +695,8 @@ class TestInstall(unittest.TestCase):
                 spend_guard.install(stand_in)
         finally:
             sys.modules.pop(mode.__name__, None)
+            for entries, before in saved:
+                entries[:] = before
         self.assertEqual([spend_guard.CONFIRM_TAG], list(getattr(stand_in.handle_center_confirm, WRAPS)))
         self.assertEqual([spend_guard.TAPS_TAG], list(getattr(stand_in.handle_stuck_log, WRAPS)))
         self.assertEqual([spend_guard.handle_rescue_screen, stand_in.handle_center_confirm, stand_in.handle_stuck_log], mode.PAGE_HANDLERS)

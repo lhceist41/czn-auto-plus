@@ -525,6 +525,18 @@ class TestBanner(Daily):
                 self.assertFalse(daily.handle_daily_banner(self.task.show(BANNER, frame)))
         self.assertEqual([], self.task.clicks)
 
+    def test_the_banner_x_outside_the_corner_is_not_the_banner(self):
+        """7: a banner's X elsewhere would still get the tap at the corner's fixed point.
+
+        Each X reaches 2 px past the corner's left or bottom edge, so a corner widened by 2 px takes in the whole X.
+        """
+        for where, region in (("across the left edge", (0.859375, 0.0, 0.959375, 0.12)), ("across the bottom edge", (0.90, 0.0454, 1.0, 0.1654))):
+            with self.subTest(where=where):
+                frame = placed("daily_corner_banner", region)
+                self.assertIsNotNone(daily.find_icon(frame, daily.BANNER_CLOSE_IMAGE, daily.BANNER_MATCH, (0.0, 0.0, 1.0, 1.0)))
+                self.assertFalse(daily.handle_daily_banner(self.task.show(BANNER, frame)))
+        self.assertEqual([], self.task.clicks)
+
     def test_the_banner_check_stands_down_on_a_screen_another_check_knows(self):
         frame = corner("daily_corner_banner")
         for screen in (LOBBY, MENU, NOTICE):
@@ -538,7 +550,7 @@ class TestFadedLobby(Daily):
     def test_a_faded_lobby_moments_after_a_lobby_read_gets_the_menu_tap(self):
         """8"""
         run_pass(self.task.show(LOBBY))
-        self.tick(daily.FADED_SECONDS - 1)
+        self.tick(19)
         self.assertTrue(run_pass(self.task.show(FADED)))
         self.assertPressed(daily.MENU, daily.MENU)
 
@@ -546,9 +558,9 @@ class TestFadedLobby(Daily):
         """8: a screen reading nothing could be a loading screen or anything else."""
         self.assertFalse(daily.handle_daily_faded_lobby(self.task.show(FADED)))
         run_pass(self.task.show(LOBBY))
-        self.tick(daily.FADED_SECONDS)
+        self.tick(20)
         self.assertFalse(daily.handle_daily_faded_lobby(self.task.show(FADED)))
-        self.tick(-daily.FADED_SECONDS)
+        self.tick(-20)
         self.state()["steps"]["mail"] = daily.DONE
         self.assertFalse(daily.handle_daily_faded_lobby(self.task.show(FADED)))
         self.assertPressed(daily.MENU)
@@ -564,9 +576,11 @@ class TestFadedLobby(Daily):
         self.task.show((("rort", 0.083, 0.531),))
         self.task.all_texts[0].confidence = 0.585
         self.assertTrue(daily.handle_daily_faded_lobby(self.task))
-        self.task.all_texts[0].confidence = daily.FADED_CONFIDENCE
+        self.task.all_texts[0].confidence = 0.69
+        self.assertTrue(daily.handle_daily_faded_lobby(self.task))
+        self.task.all_texts[0].confidence = 0.7
         self.assertFalse(daily.handle_daily_faded_lobby(self.task))
-        self.assertPressed(daily.MENU, daily.MENU)
+        self.assertPressed(daily.MENU, daily.MENU, daily.MENU)
 
 
 class TestFadedStart(Daily):
@@ -721,7 +735,7 @@ class TestStops(Daily):
 
     def test_an_unknown_screen_gets_no_press_and_stops_after_thirty_seconds(self):
         """9"""
-        for elapsed in range(daily.UNKNOWN_SECONDS):
+        for elapsed in range(30):
             self.assertTrue(run_pass(self.task.show(SETTINGS)), elapsed)
             self.assertEqual(0, self.task.disabled, elapsed)
             self.tick()
@@ -731,7 +745,7 @@ class TestStops(Daily):
 
     def test_a_known_screen_restarts_the_unknown_clock(self):
         run_pass(self.task.show(SETTINGS))
-        self.tick(daily.UNKNOWN_SECONDS - 1)
+        self.tick(29)
         run_pass(self.task.show(NOTICE))
         self.tick()
         run_pass(self.task.show(SETTINGS))

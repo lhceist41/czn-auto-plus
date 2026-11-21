@@ -220,8 +220,9 @@ class TestRefused(GuardTest):
 
     def test_the_rim_around_the_outline_is_guarded_and_the_next_pixel_out_is_not(self):
         # Written out rather than taken from the box, so an edit that shrinks or moves the box fails here.
+        # At 1080p (0.900, 0.0065) is row 7 and (0.900, 0.1038) row 112, the box's outermost rows.
         for point in ((0.812, 0.096), (0.995, 0.015), (0.900, 0.102), (0.900, 0.1035), (0.900, 0.009), (0.9995, 0.050),
-                      (0.809, 0.050)):
+                      (0.809, 0.050), (0.900, 0.0065), (0.900, 0.1038)):
             with self.subTest(point=point):
                 task = mode(StoryMode, pill_read())
                 self.assertRefused(task, lambda: task.click(*point))
@@ -352,26 +353,31 @@ class TestDrift(unittest.TestCase):
         # outside the box the whole drift must stay off the outline as drawn, at every 16:9 size from 720p up. The
         # bounds are the outer edges of its first and last bright column and row on the 1080p captures that show it,
         # and a landing pixel is on the outline when any part of it lies within them, since where the game hit-tests
-        # inside a pixel is unknown.
+        # inside a pixel is unknown. The drift is humanize's own, its random draw forced past the clip in one direction.
         drawn_left, drawn_top, drawn_right, drawn_bottom = 1569 / 1920, 21 / 1080, 1905 / 1920, 99 / 1080
         spread = humanize.human_input_option.config_type[humanize.SPREAD_PX]["max"]
+
+        def drifted(x, y, width, height, sign):
+            interaction = SimpleNamespace(capture=SimpleNamespace(width=width, height=height))
+            with mock.patch.object(humanize.random, "gauss", lambda mu, sigma: sign * 1e9):
+                return humanize.nudge(interaction, x, y, {humanize.SPREAD_PX: spread})
+
         landings = []
         for height in range(720, 2161):
             width = round(16 * height / 9)
-            reach = spread * height / humanize.REFERENCE_HEIGHT
             task = SimpleNamespace(width=width, height=height)
             x, y = pixels((0.900, 0.050), width, height)
             above = next(row for row in range(y, -1, -1) if not skip_tutorial.guarded(task, x, row))
             below = next(row for row in range(y, height) if not skip_tutorial.guarded(task, x, row))
             left = next(column for column in range(x, -1, -1) if not skip_tutorial.guarded(task, column, y))
             right = next((column for column in range(x, width) if not skip_tutorial.guarded(task, column, y)), None)
-            if (min(height - 1, round(above + reach)) + 1) / height > drawn_top:
+            if (drifted(x, above, width, height, 1)[1] + 1) / height > drawn_top:
                 landings.append((width, height, "above"))
-            if max(0, round(below - reach)) / height < drawn_bottom:
+            if drifted(x, below, width, height, -1)[1] / height < drawn_bottom:
                 landings.append((width, height, "below"))
-            if (min(width - 1, round(left + reach)) + 1) / width > drawn_left:
+            if (drifted(left, y, width, height, 1)[0] + 1) / width > drawn_left:
                 landings.append((width, height, "left"))
-            if right is not None and max(0, round(right - reach)) / width < drawn_right:
+            if right is not None and drifted(right, y, width, height, -1)[0] / width < drawn_right:
                 landings.append((width, height, "right"))
         self.assertEqual(landings[:5], [], f"{len(landings)} drifted taps land on the outline")
 
