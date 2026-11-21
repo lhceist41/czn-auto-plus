@@ -450,7 +450,7 @@ class TestRemote(unittest.TestCase):
 
     def test_a_hold_replies_only_after_the_page_loop_comes_round(self):
         """Told the hold took while the loop has not come round, a caller clicks while the bot can still act."""
-        executor = idle_executor()
+        executor = idle_executor(current_task=ChaosMode())
         loop = PageLoop(self, start=False)
         outcome = []
         with standing_in(remote, _executor=lambda: executor):
@@ -469,7 +469,7 @@ class TestRemote(unittest.TestCase):
 
     def test_a_click_decided_before_the_hold_lands_before_the_reply(self):
         """A click landing after the reply goes onto the screen the caller is already stepping through by hand."""
-        executor = idle_executor()
+        executor = idle_executor(current_task=ChaosMode())
         started = threading.Event()
         clicks = []
         calls = []
@@ -497,7 +497,7 @@ class TestRemote(unittest.TestCase):
 
     def test_a_hold_the_loop_never_takes_says_so_and_stays_held(self):
         """A caller told the hold took would act while a battle may still play the card it had picked."""
-        executor = idle_executor()
+        executor = idle_executor(current_task=ChaosMode())
         with standing_in(remote, _executor=lambda: executor, ACTION_TIMEOUT=0.05):
             started = time.monotonic()
             reply = remote.hold(True)
@@ -510,6 +510,75 @@ class TestRemote(unittest.TestCase):
         # The given-up wait never runs when the loop comes round late, and the bot is still held then.
         self.assertTrue(remote.handle_remote(types.SimpleNamespace()))
         self.assertTrue(remote._actions.empty())
+
+    def test_a_hold_with_nothing_running_replies_at_once(self):
+        """Holding first and then starting the mode is the usual way in, and it would cost 15 s and a false `taken`."""
+        executor = idle_executor()
+        with standing_in(remote, _executor=lambda: executor, ACTION_TIMEOUT=2):
+            started = time.monotonic()
+            reply = remote.hold(True)
+        self.assertLess(time.monotonic() - started, 1)
+        self.assertIs(True, reply["taken"])
+        self.assertNotIn("reason", reply)
+        self.assertIs(True, reply["held"])
+        self.assertIsNone(reply["running"])
+        self.assertTrue(remote._actions.empty())
+
+    def test_a_hold_with_no_task_running_still_waits_while_something_can_act(self):
+        """Each of these can send input with no task running, or start a task that never reaches the remote."""
+        starting = types.SimpleNamespace(start_controller=types.SimpleNamespace(starting=True))
+        cases = (
+            ("a mode switched on but not yet picked up", idle_executor(tasks=[ChaosMode()]), None),
+            ("a stopped mode still in its last pass", idle_executor(tasks=[types.SimpleNamespace(enabled=False, running=True)]), None),
+            ("a mode being started", idle_executor(), starting),
+            ("a queued executor job", idle_executor(job_queue=["ExecutorJob(2, run code, owner=None)"]), None),
+            ("a running executor job", idle_executor(current_job="ExecutorJob(1, run code, owner=None)"), None),
+        )
+        for name, executor, app in cases:
+            with self.subTest(name), standing_in(remote, _executor=lambda: executor, ACTION_TIMEOUT=0.05), \
+                    standing_in(og, app=app):
+                reply = remote.hold(True)
+                self.assertIs(False, reply["taken"])
+                self.assertIn("did not come round", reply["reason"])
+                self.assertTrue(remote._held.is_set())
+            self.tearDown()
+
+    def test_a_mode_started_as_an_idle_hold_replies_sends_nothing(self):
+        """A mode started between the look and the reply would click on a screen the caller is told is theirs."""
+        executor = idle_executor()
+        clicks = []
+
+        def acting(task):
+            clicks.append("clicked")
+            return True
+
+        loop = PageLoop(self, acting, start=False)
+        idle = remote._idle
+
+        def starting_in_between(seen):
+            answer = idle(seen)
+            # ok-script sets the running task before it calls the mode's `run`, whose pass then reaches the handlers.
+            executor.current_task = ChaosMode()
+            loop.go.set()
+            self.assertTrue(wait_for(lambda: vars(loop.task).get(remote.HELD) or clicks))
+            return answer
+
+        with standing_in(remote, _executor=lambda: executor, _idle=starting_in_between, ACTION_TIMEOUT=2):
+            reply = remote.hold(True)
+        self.assertIs(True, reply["taken"])
+        self.assertEqual("ChaosMode", reply["running"])
+        time.sleep(0.1)
+        self.assertEqual([], clicks)
+        self.assertIs(True, vars(loop.task).get(remote.HELD))
+
+    def test_a_hold_before_the_executor_is_built_answers_at_once_and_stays_held(self):
+        """Nothing can click before the executor exists, so a 15 s wait there only delays the same answer."""
+        with standing_in(og, executor=None), standing_in(remote, ACTION_TIMEOUT=2):
+            started = time.monotonic()
+            with self.assertRaisesRegex(RuntimeError, "has not started"):
+                remote.hold(True)
+        self.assertLess(time.monotonic() - started, 1)
+        self.assertTrue(remote._held.is_set())
 
     def test_a_release_replies_at_once_with_nothing_to_wait_for(self):
         """A release that waited on the loop would leave a bot whose loop is busy held for another 15 s."""
@@ -535,7 +604,7 @@ class TestRemote(unittest.TestCase):
     def test_the_mcp_hold_tool_passes_taken_and_its_reason_through(self):
         """Dropped on the way, a hold the loop never took would read as one that did."""
         port = serve_remote(self)
-        executor = idle_executor()
+        executor = idle_executor(current_task=ChaosMode())
         with standing_in(remote, _executor=lambda: executor, ACTION_TIMEOUT=0.05), \
                 standing_in(czn_mcp, URL=f"http://127.0.0.1:{port}"):
             reply = czn_mcp.hold(True)

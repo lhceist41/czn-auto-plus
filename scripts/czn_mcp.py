@@ -156,9 +156,10 @@ def press_key(key: str) -> str:
 @server.tool()
 def hold(on: bool = True) -> dict:
     """Hold the bot so it stops acting on frames, or release it with `on=False`. A held bot still reads every frame.
-    A hold replies once the bot's own clicks have stopped, with `taken: true`. With `taken: false` the page loop did not
-    come round in 15 s (the `reason` says why): the bot stays held, but a click it had decided on may still land, so
-    take a screenshot before acting."""
+    A hold replies once the bot's own clicks have stopped, with `taken: true`, and at once when nothing is running. A
+    release sent while the hold waits also gives `taken: true`, but with `held: false`: the bot acts again. With
+    `taken: false` the page loop did not come round in 15 s (the `reason` says why): the bot stays held, but a click it
+    had decided on may still land, so take a screenshot before acting."""
     return call("hold", on=on)
 
 

@@ -33,7 +33,8 @@ logger = Logger.get_logger(__name__)
 # Loopback only, so nothing off this machine can reach it. `scripts/czn_mcp.py` carries the same address.
 HOST = "127.0.0.1"
 PORT = 47821
-# Seconds an action waits for the bot's page loop. A battle keeps the loop for its whole length.
+# Seconds an action waits for the bot's page loop. A paused mode, a break between passes or one long handler keeps the
+# loop past it.
 ACTION_TIMEOUT = 15
 # Seconds a caller waits on for an action the bot's thread had already started when `ACTION_TIMEOUT` ran out. A drag
 # takes about 1.5 s.
@@ -270,7 +271,8 @@ def on_bot_thread(action):
     future = concurrent.futures.Future()
     _actions.put((action, future))
     if not concurrent.futures.wait([future], ACTION_TIMEOUT).done and future.cancel():
-        raise TimeoutError(f"the page loop did not come round in {ACTION_TIMEOUT}s, so nothing was sent: no mode is running, or a battle has the loop")
+        raise TimeoutError(f"the page loop did not come round in {ACTION_TIMEOUT}s, so nothing was sent: no mode is running, "
+                           "the mode is paused or resting between passes, or one handler still has the loop")
     # Too late to cancel once the bot's thread has started it, so its input is landing: a caller told otherwise would send it twice.
     if not concurrent.futures.wait([future], RUNNING_TIMEOUT).done:
         raise TimeoutError(f"the action started but had not finished {RUNNING_TIMEOUT}s later, so it may still land: take a screenshot before sending it again")
@@ -411,12 +413,42 @@ def press_key(key):
     return _send(f"key {key}", lambda task: task.send_key(key, after_sleep=AFTER_INPUT))
 
 
+def _idle(executor):
+    """Whether no task can send input outside `handle_remote`: none running, switched on or being started, and no
+    executor job queued or marked current.
+
+    ok-script sets `current_task` before it calls a mode's `run`, and each pass reads the screen before its first
+    handler, so a mode started after this answered still reaches `handle_remote` before any input of its own.
+
+    A job ok-script has taken off its queue is not seen until it marks it current. Jobs never pass the hold, so a job
+    running beside a caller is outside it whatever this answers.
+
+    Args:
+        executor: ok-script's task executor.
+    """
+    from ok import og
+
+    if executor.current_task is not None:
+        return False
+    # The start controller switches the mode on before it stops starting, so reading this first leaves no gap.
+    if getattr(getattr(getattr(og, "app", None), "start_controller", None), "starting", False):
+        return False
+    # Covers a mode switched on from the window, and a trigger task, which leaves `current_task` empty between passes.
+    # `running` covers a stopped mode still in its last pass: ok-script empties `current_task` as it raises the stop,
+    # and a handler that catches that raise carries on.
+    if any(task.enabled or task.running for task in executor.get_all_tasks()):
+        return False
+    # No read order closes the gap between a job leaving the queue and becoming current: see the docstring.
+    return not getattr(executor, "_job_queue", None) and executor.current_job is None
+
+
 def hold(on=True):
     """Stop the bot acting on frames, or let it carry on. A held bot still reads every frame, so `texts` stays current.
 
     A hold replies only once the page loop has come round to `handle_remote`, so no handler is mid-call and no input one
     decided on before the hold can land after the reply. A click a handler decided on is left to land rather than
-    dropped, since the handler has already counted it.
+    dropped, since the handler has already counted it. With nothing running or about to run it replies at once: a mode
+    started after that meets `handle_remote`, already holding, before it sends anything.
 
     Args:
         on: True to hold the bot, False to release it.
@@ -424,6 +456,9 @@ def hold(on=True):
     Returns:
         The status. A hold adds `taken`, and with False a `reason`: the loop did not come round in time, the bot stays
         held, and a handler still busy may yet send what it decided on.
+
+    Raises:
+        RuntimeError: The task executor has not been built, so nothing can click yet. The bot stays held.
     """
     if not on:
         _held.clear()
@@ -431,12 +466,15 @@ def hold(on=True):
         return status()
     _held.set()
     logger.info("remote hold")
+    # Only after the hold is set, so a mode that starts once this has looked still finds the bot held.
+    if _idle(_executor()):
+        return {**status(), "taken": True}
     try:
         on_bot_thread(lambda task: None)
     except TimeoutError:
-        reason = (f"the page loop did not come round in {ACTION_TIMEOUT}s: no mode is running, or a battle or another "
-                  "handler still has the loop and may yet send an input it decided on. The bot stays held: take a "
-                  "screenshot before acting")
+        reason = (f"the page loop did not come round in {ACTION_TIMEOUT}s: the mode is paused or resting between "
+                  "passes, one handler still has the loop, or a task or job that never reaches the remote is running, "
+                  "and it may yet send an input it decided on. The bot stays held: take a screenshot before acting")
         logger.warning(f"remote hold not taken yet: {reason}")
         return {**status(), "taken": False, "reason": reason}
     return {**status(), "taken": True}
