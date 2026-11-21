@@ -13,13 +13,14 @@ import time
 from collections import Counter, namedtuple
 from pathlib import Path
 
+import numpy as np
 from ok import Logger, TriggerTask
 
 from src.en.handlers import loaded
 from src.en.notify import announce
-from src.en.screen import centre_of, frame_of, in_region, text_in_region
+from src.en.screen import centre_of, colour_share, frame_of, in_region, patch_of, text_in_region
 from src.en.spend_guard import ACCOUNT, DELETION, MONEY, PURCHASE, RESCUE_HEADER, RESCUE_PHRASES, cleaned, folded, handle_rescue_screen, marker_in
-from src.en.story import find_icon, tap
+from src.en.story import find_icon, grey, tap
 
 logger = Logger.get_logger(__name__)
 
@@ -34,20 +35,23 @@ ENVELOPE = "the menu's Mail"
 MENU_CLOSE = "the menu's X"
 CLAIM_ALL = "Claim All"
 ITEMS_CLOSE = "the Items Obtained caption"
-MAIL_BACK = "the Mail screen's back arrow"
+MAIL_CLOSE = "the Mail popup's X"
+WAKE = "the faded Lobby's sky"
 TARGETS = {
     BANNER_CLOSE: (0.968, 0.049),
     NOTICE_CLOSE: (0.911, 0.120),
     MENU: (0.959, 0.046),
     ENVELOPE: (0.962, 0.280),
     MENU_CLOSE: (0.961, 0.049),
-    MAIL_BACK: (0.068, 0.089),
+    MAIL_CLOSE: (0.936, 0.093),
+    WAKE: (0.300, 0.420),
     CLAIM_ALL: None,
     ITEMS_CLOSE: None,
 }
-# How often each target may be pressed in one run. Claim All gets one retry for a tap the game ignored; the rest allow two
-# retries for a screen slow to change. Menu and the menu's Mail count only until the Mail screen shows, so a later step may open the menu again.
-TAP_LIMITS = {BANNER_CLOSE: 3, NOTICE_CLOSE: 3, MENU: 3, ENVELOPE: 3, MENU_CLOSE: 3, MAIL_BACK: 3, CLAIM_ALL: 2, ITEMS_CLOSE: 3}
+# How often each target may be pressed in one run. Claim All and the wake tap get one retry for a tap the game ignored; the
+# rest allow two retries for a screen slow to change. Menu and the menu's Mail count only until the Mail screen shows, so a
+# later step may open the menu again.
+TAP_LIMITS = {BANNER_CLOSE: 3, NOTICE_CLOSE: 3, MENU: 3, ENVELOPE: 3, MENU_CLOSE: 3, MAIL_CLOSE: 3, WAKE: 2, CLAIM_ALL: 2, ITEMS_CLOSE: 3}
 TOWARD_MAIL = (MENU, ENVELOPE)
 
 # What `press` refuses whatever it was asked to press: mail deletion, the Shop, a purchase, Crystals or any account
@@ -66,12 +70,21 @@ MENU_SUPPLY = ("Arkhianon Supply", (0.77, 0.13, 0.88, 0.19))
 # The Notice board's two tabs, at (0.216, 0.119) and (0.403, 0.119).
 NOTICE_TAB = ("Notice", (0.15, 0.08, 0.30, 0.16))
 UPDATE_TAB = ("Update", (0.33, 0.08, 0.47, 0.16))
-# The Mail screen's title at (0.107, 0.090) and its `003 / 100` count at (0.844, 0.090).
+# The Mail popup's title at (0.107, 0.090) and its `003 / 100` count at (0.844, 0.090). Its X sits 0.024 right of a
+# column of three dots, and the envelope beside the title, which OCR reads as `√`, is no back arrow.
 MAIL_TITLE = ("Mail", (0.06, 0.06, 0.16, 0.12))
 MAIL_COUNT_REGION = (0.78, 0.06, 0.90, 0.12)
 MAIL_COUNT = re.compile(r"\d{3}/100")
 # Claim All, read at (0.194, 0.904). `Delete read mail` reads 0.19 to its right, so the band stops short of it.
 CLAIM_ALL_REGION = (0.12, 0.86, 0.28, 0.95)
+# Claim All's face between its icon and its caption: orange while there is mail to claim, a flat grey (195, 195, 195) once
+# there is none. A press on the grey button opens nothing and only shows `All items in the mail have been received.`,
+# centred at (0.500, 0.275).
+CLAIM_ALL_FACE = (0.085, 0.880, 0.150, 0.925)
+GREYED_LOW = np.array((0, 0, 150))
+GREYED_HIGH = np.array((180, 30, 230))
+GREYED_SHARE = 0.9
+MAIL_EMPTY = ("All items in the mail have been received", (0.30, 0.22, 0.70, 0.33))
 # Items Obtained's title at (0.502, 0.377) and its close caption at (0.501, 0.935), above the `进入` at (0.500, 0.978).
 ITEMS_TITLE = ("Items Obtained", (0.40, 0.33, 0.60, 0.42))
 ITEMS_CAPTION = ("点击屏幕关闭窗口", (0.40, 0.90, 0.60, 0.965))
@@ -92,6 +105,15 @@ BANNER_MATCH = 0.92
 UNKNOWN_SECONDS = 30
 FADED_SECONDS = 20
 FADED_CONFIDENCE = 0.7
+# The faded Lobby without a Lobby read, as at a start on an idle Lobby, is told by its scene: the ring's left arm, cut
+# from a 1080p capture, which the Lobby's level and name cover while its UI shows. It scored 0.94 to 0.96 on four
+# other faded Lobby captures, the character standing or gone, and 0.46 at most over 651 other captures, black, loading,
+# cut-scenes and the Lobby with its UI among them. The wake taps open sky, which brings the UI back.
+FADED_SCENE_IMAGE = Path(__file__).with_name("images") / "lobby_faded_scene.png"
+FADED_SCENE_REGION = (0.0, 0.02, 0.23, 0.28)
+FADED_SCENE_MATCH = 0.8
+# How long the UI gets to come back after the wake tap before it is tapped again.
+WAKE_WAIT = 3
 # How long Claim All gets to open Items Obtained before it is pressed again, or taken as having had nothing to claim.
 CLAIM_WAIT = 5
 RUN_SECONDS = 600
@@ -115,12 +137,13 @@ def run_state(task):
 
     Returns:
         A dict: each step's state, the presses per target, when the run started, when the Lobby was last read, when an
-        unknown screen and the Mail screen were first seen, when Claim All was last pressed, and what the mail step found.
+        unknown screen and the Mail screen were first seen, when Claim All and the wake were last pressed, and what the
+        mail step found.
     """
     state = vars(task).get(RUN)
     if state is None:
         state = {"steps": {step.name: PENDING for step in STEPS}, "taps": Counter(), "started": time.monotonic(),
-                 "lobby_seen": None, "unknown_since": None, "mail_seen": None, "claim_pressed": None, "mail": None}
+                 "lobby_seen": None, "unknown_since": None, "mail_seen": None, "claim_pressed": None, "woken": None, "mail": None}
         setattr(task, RUN, state)
     return state
 
@@ -278,12 +301,29 @@ def claim_all_button(task):
     return None
 
 
+def claim_all_greyed(task):
+    """Say whether Claim All is drawn greyed out, with nothing left to claim.
+
+    Args:
+        task: The Daily task.
+
+    Returns:
+        True when its face is grey. False when it is orange, or there is no frame to read.
+    """
+    return colour_share(patch_of(frame_of(task), CLAIM_ALL_FACE), GREYED_LOW, GREYED_HIGH) >= GREYED_SHARE
+
+
+def reads_nothing(task):
+    """Say whether OCR read no confident text, as on a Lobby whose UI has faded out."""
+    return not any(box.name.strip() and getattr(box, "confidence", 1.0) >= FADED_CONFIDENCE for box in getattr(task, "all_texts", None) or [])
+
+
 def handle_daily_tutorial(task):
     """Stop while the tutorial's Skip Tutorial pill shows, ahead of every handler that presses.
 
-    Stopping on the first frame that reads it also keeps the faded-Lobby tap off the pill. That tap needs a Lobby read
-    moments before, which stops here while the pill shows, and a frame with no confident text, which a frame showing the
-    pill is not: OCR read the pill, white on black, on every capture that shows it.
+    OCR read the pill, white on black, on every capture that shows it, so this is Daily's own stop for it. A frame where
+    OCR misses the pill falls to the handlers below, and a press of the Lobby's Menu, the banner's X or the menu's X
+    there is left to the guard in `skip_tutorial`, which refuses any tap on the pill in every mode.
     """
     if showing(task, SKIP_TUTORIAL) is None:
         return False
@@ -311,8 +351,27 @@ def handle_daily_items_obtained(task):
     return press(task, ITEMS_CLOSE, caption)
 
 
+def nothing_to_claim(task, reason):
+    """Count the mail as done with nothing claimed, and close the Mail popup.
+
+    Args:
+        task: The Daily task.
+        reason: Why, for the log.
+
+    Returns:
+        True, which claims the frame.
+    """
+    task.log_info(f"{reason}, so there is no mail to claim")
+    state = run_state(task)
+    state["steps"]["mail"], state["mail"] = DONE, "nothing to claim"
+    return press(task, MAIL_CLOSE)
+
+
 def handle_daily_mail(task):
-    """Press Claim All while the mail is pending, wait for Items Obtained, and go back once it is done."""
+    """Press Claim All while the mail is pending, wait for Items Obtained, and close the popup once it is done.
+
+    A greyed Claim All is waited on like a missing one, since the popup may still be drawing, then taken as an empty mailbox.
+    """
     if not on_mail(task):
         return False
     recognised(task)
@@ -323,22 +382,22 @@ def handle_daily_mail(task):
     if state["mail_seen"] is None:
         state["mail_seen"] = now
     if state["steps"]["mail"] != PENDING:
-        return press(task, MAIL_BACK)
+        return press(task, MAIL_CLOSE)
+    if showing(task, MAIL_EMPTY) is not None:
+        return nothing_to_claim(task, "the game says every mail has been received")
     pressed = state["claim_pressed"]
     if pressed is not None and now - pressed < CLAIM_WAIT:
         return True
     if state["taps"][CLAIM_ALL] >= TAP_LIMITS[CLAIM_ALL]:
-        # Pressed and retried with no Items Obtained: the mailbox had nothing to claim.
-        task.log_info("Claim All opened nothing, so there was no mail to claim")
-        state["steps"]["mail"], state["mail"] = DONE, "nothing to claim"
-        return press(task, MAIL_BACK)
+        return nothing_to_claim(task, "Claim All opened nothing")
     button = claim_all_button(task)
-    if button is None and now - state["mail_seen"] < CLAIM_WAIT:
+    greyed = button is not None and claim_all_greyed(task)
+    if (button is None or greyed) and now - state["mail_seen"] < CLAIM_WAIT:
         return True
+    if greyed:
+        return nothing_to_claim(task, "Claim All is greyed out")
     if button is None:
-        task.log_info("no Claim All on the Mail screen, so there is no mail to claim")
-        state["steps"]["mail"], state["mail"] = DONE, "nothing to claim"
-        return press(task, MAIL_BACK)
+        return nothing_to_claim(task, "no Claim All on the Mail screen")
     state["claim_pressed"] = now
     return press(task, CLAIM_ALL, button)
 
@@ -384,19 +443,29 @@ def handle_daily_lobby(task):
 
 
 def handle_daily_faded_lobby(task):
-    """Tap Menu on a Lobby whose UI has faded out, the same tap the Lobby would get, which brings the UI back or opens the menu.
+    """Bring back the UI of a Lobby that has faded out.
 
-    Only while a chore is pending and the Lobby was read moments ago: a screen that reads nothing could be anything else.
+    Moments after a Lobby read, with a chore pending, it gets the Menu tap the Lobby would get, which brings the UI back
+    or opens the menu. Without that read, as at a start on an idle Lobby, it gets the wake tap on open sky, but only on
+    the faded Lobby's own scene: a screen that reads nothing could be anything else.
     """
-    if any(box.name.strip() and getattr(box, "confidence", 1.0) >= FADED_CONFIDENCE for box in getattr(task, "all_texts", None) or []):
+    if not reads_nothing(task):
         return False
     state = run_state(task)
+    now = time.monotonic()
     seen = state["lobby_seen"]
     step = pending_step(task)
-    if seen is None or time.monotonic() - seen >= FADED_SECONDS or step is None:
+    if seen is not None and now - seen < FADED_SECONDS and step is not None:
+        recognised(task)
+        return press(task, step.lobby_entry)
+    if find_icon(frame_of(task), FADED_SCENE_IMAGE, FADED_SCENE_MATCH, FADED_SCENE_REGION, grey) is None:
         return False
     recognised(task)
-    return press(task, step.lobby_entry)
+    woken = state["woken"]
+    if woken is not None and now - woken < WAKE_WAIT:
+        return True
+    state["woken"] = now
+    return press(task, WAKE)
 
 
 def handle_daily_unknown_screen(task):

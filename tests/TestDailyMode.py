@@ -29,7 +29,7 @@ import utils_sortie  # noqa: E402,F401
 import utils_story  # noqa: E402,F401
 from ok import TriggerTask  # noqa: E402
 
-from src.en import daily, handlers, spend_guard, stuck_stop  # noqa: E402
+from src.en import daily, handlers, skip_tutorial, spend_guard, stuck_stop  # noqa: E402
 from tests.fakes import HEIGHT, WIDTH, FakeBox  # noqa: E402
 
 START = 1_000.0
@@ -80,6 +80,9 @@ MAIL = (
 MAIL_AFTER = tuple(box for box in MAIL if box[0] not in ("√", "①", "Claim All", "Claim", "N")) + (
     ("静", 0.099, 0.242), ("Claim AIl", 0.194, 0.905), ("Delete", 0.851, 0.868),
 )
+# 522, the empty mailbox's popup on a live run: it reads as 276, Claim All greyed. A press on it shows the toast here.
+MAIL_EMPTY = MAIL_AFTER
+MAIL_TOAST = MAIL_AFTER + (("All items in the mail have been received.", 0.500, 0.275),)
 # 275, Items Obtained over the Mail screen.
 ITEMS = (
     ("Items Obtained", 0.502, 0.377), ("365,000", 0.287, 0.568), ("2,000", 0.384, 0.568), ("5", 0.487, 0.566), ("365", 0.566, 0.568),
@@ -87,6 +90,10 @@ ITEMS = (
 )
 # 264, the Lobby a few idle seconds later, its UI faded out: OCR reads nothing.
 FADED = ()
+# Where the faded-scene crops sit: x 0-441 and y 21-302 of a 1080p capture.
+SCENE_REGION = (0.0, 0.02, 0.23, 0.28)
+# Claim All's crops, from 274 (orange) and the live run's empty popup (greyed): x 57-480 and y 928-1026.
+CLAIM_ALL_CROP = (0.03, 0.86, 0.25, 0.95)
 # 222, the Selective Rescue screen, and 253, a paid Rescue's Crystal dialog.
 RESCUE = (
     ("√", 0.041, 0.043), ("营救", 0.116, 0.048), ("235", 0.71, 0.048), ("Skip Tutorial", 0.88, 0.054), ("Special Signal Selective Rescue", 0.386, 0.255),
@@ -121,12 +128,13 @@ POINTS = {
     daily.MENU: (0.959, 0.046),
     daily.ENVELOPE: (0.962, 0.280),
     daily.MENU_CLOSE: (0.961, 0.049),
-    daily.MAIL_BACK: (0.068, 0.089),
+    daily.MAIL_CLOSE: (0.936, 0.093),
+    daily.WAKE: (0.300, 0.420),
     daily.CLAIM_ALL: (0.194, 0.904),
     daily.ITEMS_CLOSE: (0.501, 0.935),
 }
 # What Daily must never press, by where it sits. Power is the icon's centre in 265 (rows 972-1022 of 1080) and the
-# `End` key label under it in 273.
+# `End` key label under it in 273. Skip Tutorial is a box over three targets, not a point: `TestTutorial` covers it.
 NEVER = {
     "Delete read mail": (0.380, 0.905),
     "the open mail's Claim, then Delete": (0.850, 0.867),
@@ -143,8 +151,9 @@ NEVER = {
     "the menu's settings": (0.962, 0.813),
     "the menu's power": (0.962, 0.923),
     "the power's End label": (0.962, 0.949),
-    "Skip Tutorial": (0.879, 0.055),
     "Items Obtained's 进入": (0.500, 0.978),
+    "the Mail popup's dots": (0.912, 0.093),
+    "the Mail popup's envelope": (0.068, 0.089),
 }
 # How close a tap may come to a point before it counts as pressing it: about 19 px across and 11 px down at 1080p. The
 # banner's dots sit 0.015 left of where the Lobby's Menu is tapped, but only on the banner, where Daily taps the X instead.
@@ -183,6 +192,33 @@ def corner(name):
     patch = cv2.imread(str(REPO_ROOT / "tests" / "images" / f"{name}.png"))
     frame[:patch.shape[0], WIDTH - patch.shape[1]:] = patch
     return frame
+
+
+def placed(name, region):
+    """Put a crop of a capture back where it was cut, into an otherwise black frame.
+
+    Args:
+        name: The crop's base name in `tests/images/`.
+        region: Where it was cut, as `(left, top, right, bottom)` fractions of a 1080p capture.
+
+    Returns:
+        A `(height, width, 3)` BGR array.
+    """
+    frame = np.zeros((HEIGHT, WIDTH, 3), dtype=np.uint8)
+    patch = cv2.imread(str(REPO_ROOT / "tests" / "images" / f"{name}.png"))
+    left, top = int(region[0] * WIDTH), int(region[1] * HEIGHT)
+    frame[top:top + patch.shape[0], left:left + patch.shape[1]] = patch
+    return frame
+
+
+def faded_lobby(name="daily_faded_lobby"):
+    """Give a faded Lobby's frame: 272 by default, `daily_faded_lobby_character` for 352, whose character still stands."""
+    return placed(name, SCENE_REGION)
+
+
+def claim_all(lit):
+    """Give a Mail frame's Claim All: orange from 274 when lit, greyed from the live run's empty popup when not."""
+    return placed("daily_claim_all_lit" if lit else "daily_claim_all_greyed", CLAIM_ALL_CROP)
 
 
 class Clock:
@@ -307,14 +343,14 @@ class Daily(unittest.TestCase):
 
 class TestMail(Daily):
 
-    def test_after_the_claim_nothing_reading_delete_is_pressed_and_only_the_back_arrow_once_claimed(self):
+    def test_after_the_claim_nothing_reading_delete_is_pressed_and_only_the_x_once_claimed(self):
         """1: the open mail's Claim turns into Delete in place, and `Delete read mail` sits 0.19 right of Claim All."""
         self.assertTrue(run_pass(self.task.show(MAIL_AFTER)))
         self.assertPressed(daily.CLAIM_ALL)
         self.task.clicks.clear()
         self.state()["steps"]["mail"] = daily.DONE
         self.assertTrue(run_pass(self.task.show(MAIL_AFTER)))
-        self.assertPressed(daily.MAIL_BACK)
+        self.assertPressed(daily.MAIL_CLOSE)
         self.assertNothingForbidden()
 
     def test_claim_all_is_pressed_once_waited_on_then_retried_once_and_a_third_press_refused(self):
@@ -333,12 +369,12 @@ class TestMail(Daily):
         self.assertPressed(daily.CLAIM_ALL, daily.CLAIM_ALL)
         self.assertStopped("Claim All was pressed 2 times")
 
-    def test_claim_all_that_opens_nothing_twice_counts_as_no_mail_and_goes_back(self):
+    def test_claim_all_that_opens_nothing_twice_counts_as_no_mail_and_closes(self):
         self.task.show(MAIL)
         for _ in range(2 * daily.CLAIM_WAIT + 1):
             run_pass(self.task)
             self.tick()
-        self.assertPressed(daily.CLAIM_ALL, daily.CLAIM_ALL, daily.MAIL_BACK)
+        self.assertPressed(daily.CLAIM_ALL, daily.CLAIM_ALL, daily.MAIL_CLOSE)
         self.assertEqual("nothing to claim", self.state()["mail"])
         self.assertEqual(0, self.task.disabled)
 
@@ -379,6 +415,44 @@ class TestMail(Daily):
     def test_claim_all_outside_its_band_is_not_claim_all(self):
         screen = tuple((name, 0.380, y) if name == "Claim All" else (name, x, y) for name, x, y in MAIL if name != "Delete read mail")
         self.assertIsNone(daily.claim_all_button(self.task.show(screen)))
+
+    def test_a_greyed_claim_all_is_never_pressed_and_counts_as_no_mail_once_waited_on(self):
+        """A live run pressed the greyed button twice. It is waited on as a missing one would be, since the popup may still be drawing."""
+        self.task.show(MAIL_EMPTY, claim_all(lit=False))
+        for _ in range(daily.CLAIM_WAIT):
+            self.assertTrue(run_pass(self.task))
+            self.tick()
+        self.assertEqual([], self.task.clicks)
+        self.assertTrue(run_pass(self.task))
+        self.assertPressed(daily.MAIL_CLOSE)
+        self.assertEqual("nothing to claim", self.state()["mail"])
+        self.assertIn("Claim All is greyed out, so there is no mail to claim", self.task.logged)
+        self.assertNothingForbidden()
+
+    def test_a_claim_all_turning_orange_inside_the_wait_is_pressed(self):
+        self.task.show(MAIL, claim_all(lit=False))
+        self.assertTrue(run_pass(self.task))
+        self.tick(daily.CLAIM_WAIT - 1)
+        self.assertTrue(run_pass(self.task.show(MAIL, claim_all(lit=True))))
+        self.assertPressed(daily.CLAIM_ALL)
+
+    def test_the_orange_claim_all_is_not_greyed_and_neither_is_a_frame_with_no_capture(self):
+        self.assertTrue(daily.claim_all_greyed(self.task.show(MAIL_EMPTY, claim_all(lit=False))))
+        self.assertFalse(daily.claim_all_greyed(self.task.show(MAIL, claim_all(lit=True))))
+        self.assertFalse(daily.claim_all_greyed(self.task.show(MAIL)))
+
+    def test_the_game_saying_every_mail_was_received_closes_the_popup_at_once(self):
+        """The toast a press on the greyed button shows, read on the frame after a press made without a capture."""
+        self.assertTrue(run_pass(self.task.show(MAIL)))
+        self.tick()
+        self.assertTrue(run_pass(self.task.show(MAIL_TOAST)))
+        self.assertPressed(daily.CLAIM_ALL, daily.MAIL_CLOSE)
+        self.assertEqual("nothing to claim", self.state()["mail"])
+
+    def test_the_toast_read_off_its_place_is_not_taken_for_it(self):
+        screen = MAIL_AFTER + (("All items in the mail have been received.", 0.500, 0.700),)
+        self.assertTrue(run_pass(self.task.show(screen)))
+        self.assertPressed(daily.CLAIM_ALL)
 
     def test_a_mail_count_or_title_missing_is_not_the_mail_screen(self):
         for missing in ("Mail", "003 / 100"):
@@ -495,6 +569,82 @@ class TestFadedLobby(Daily):
         self.assertPressed(daily.MENU, daily.MENU)
 
 
+class TestFadedStart(Daily):
+    """A start on an idle Lobby: no Lobby read yet, so only the faded Lobby's own scene earns the wake tap."""
+
+    def test_a_start_on_a_faded_lobby_is_woken_once_then_runs_on(self):
+        for _ in range(daily.WAKE_WAIT):
+            self.assertTrue(run_pass(self.task.show(FADED, faded_lobby())))
+            self.tick()
+        self.assertPressed(daily.WAKE)
+        self.assertTrue(run_pass(self.task.show(LOBBY)))
+        self.assertPressed(daily.WAKE, daily.MENU)
+        self.assertEqual(0, self.task.disabled)
+
+    def test_the_faded_lobby_with_its_character_standing_is_woken_too(self):
+        """352: the UI gone, the character still there."""
+        self.assertTrue(run_pass(self.task.show(FADED, faded_lobby("daily_faded_lobby_character"))))
+        self.assertPressed(daily.WAKE)
+
+    def test_a_wake_the_game_ignored_is_retried_once_then_stops(self):
+        self.task.show(FADED, faded_lobby())
+        for _ in range(2 * daily.WAKE_WAIT):
+            run_pass(self.task)
+            self.tick()
+        self.assertPressed(daily.WAKE, daily.WAKE)
+        self.assertTrue(run_pass(self.task))
+        self.assertPressed(daily.WAKE, daily.WAKE)
+        self.assertStopped("the faded Lobby's sky was pressed 2 times")
+
+    def test_a_frame_that_reads_nothing_but_is_not_the_faded_lobby_gets_no_tap(self):
+        """Black, a Rescue flash, a cut-scene and the carnival's intro read nothing too, as OCR saw them."""
+        frames = {"black": np.zeros((HEIGHT, WIDTH, 3), dtype=np.uint8), "no capture": None}
+        frames.update({name: placed(name, SCENE_REGION) for name in ("daily_blank_cutscene", "daily_blank_rescue_flash", "daily_blank_carnival")})
+        for name, frame in frames.items():
+            with self.subTest(frame=name):
+                self.task = Task()
+                for _ in range(daily.UNKNOWN_SECONDS):
+                    self.assertTrue(run_pass(self.task.show(FADED, frame)))
+                    self.tick()
+                self.assertTrue(run_pass(self.task))
+                self.assertEqual([], self.task.clicks)
+                self.assertStopped("Daily does not know this screen")
+
+    def test_the_scene_half_covered_by_a_dialogue_is_not_the_faded_lobby(self):
+        """326: the Lobby's scene under the tutorial's dialogue box came closest of every other capture, at 0.455."""
+        frame = placed("daily_scene_under_dialogue", SCENE_REGION)
+        self.assertIsNone(daily.find_icon(frame, daily.FADED_SCENE_IMAGE, daily.FADED_SCENE_MATCH, daily.FADED_SCENE_REGION, daily.grey))
+        self.assertTrue(run_pass(self.task.show(FADED, frame)))
+        self.assertEqual([], self.task.clicks)
+
+    def test_the_faded_scene_under_confident_text_gets_no_wake(self):
+        """A popup over the faded scene reads its own text, and only a screen reading nothing can be the faded Lobby."""
+        self.assertFalse(daily.handle_daily_faded_lobby(self.task.show(SETTINGS, faded_lobby())))
+        self.assertEqual([], self.task.clicks)
+
+    def test_a_lobby_faded_again_after_the_mail_is_woken_and_finishes(self):
+        self.state()["steps"]["mail"], self.state()["mail"] = daily.DONE, "claimed"
+        self.assertTrue(run_pass(self.task.show(FADED, faded_lobby())))
+        self.tick()
+        self.assertTrue(run_pass(self.task.show(LOBBY)))
+        self.assertPressed(daily.WAKE)
+        self.assertStopped("Daily finished: mail claimed")
+
+    def test_the_menu_tap_moments_after_a_lobby_read_still_comes_first(self):
+        run_pass(self.task.show(LOBBY))
+        self.tick()
+        self.assertTrue(run_pass(self.task.show(FADED, faded_lobby())))
+        self.assertPressed(daily.MENU, daily.MENU)
+
+    def test_the_wake_point_is_open_sky_away_from_every_target(self):
+        """Measured on 264, 272, 352 and a live run's woken Lobby: no button within 0.08 of it on any of them."""
+        for target, point in POINTS.items():
+            if target != daily.WAKE:
+                self.assertGreater(max(abs(point[0] - 0.300), abs(point[1] - 0.420)), 0.08, target)
+        for screen in (LOBBY, MENU, TUTORIAL_LOBBY):
+            self.assertEqual([], daily.boxes_at(self.task.show(screen), POINTS[daily.WAKE]))
+
+
 class TestTutorial(Daily):
     """The tutorial's Skip Tutorial pill covers the Menu point, the banner's X and the menu's X, and a tap on it skips the tutorial."""
 
@@ -548,10 +698,23 @@ class TestTutorial(Daily):
         self.assertStopped("Skip Tutorial shows")
 
     def test_the_targets_it_covers_are_the_ones_measured(self):
-        """The Menu, the banner's X and the menu's X lie on the pill; Daily's other fixed points do not."""
+        """The Menu, the banner's X and the menu's X lie on the pill; Daily's other fixed points do not.
+
+        The Mail popup's X lies 0.002 below the outline but inside the box the guard in `skip_tutorial` refuses.
+        """
         left, top, right, bottom = SKIP_TUTORIAL_PILL
         covered = {name for name, point in POINTS.items() if left <= point[0] <= right and top <= point[1] <= bottom}
         self.assertEqual({daily.MENU, daily.BANNER_CLOSE, daily.MENU_CLOSE}, covered)
+        self.assertEqual(SKIP_TUTORIAL_PILL, skip_tutorial.OUTLINE)
+        left, top, right, bottom = skip_tutorial.GUARDED
+        guarded = {name for name, point in POINTS.items() if left <= point[0] <= right and top <= point[1] <= bottom}
+        self.assertEqual(covered | {daily.MAIL_CLOSE}, guarded)
+
+    def test_the_pill_on_the_mail_popup_stops_daily_before_its_x(self):
+        self.state()["steps"]["mail"] = daily.DONE
+        self.assertTrue(run_pass(self.task.show(MAIL_AFTER + (SKIP_TUTORIAL,))))
+        self.assertEqual([], self.task.clicks)
+        self.assertStopped("Skip Tutorial shows")
 
 
 class TestStops(Daily):
@@ -601,7 +764,7 @@ class TestStops(Daily):
                 self.assertStopped(f"{target} was pressed {limit} times")
 
     def test_the_limits_are_as_designed(self):
-        self.assertEqual({target: 2 if target == daily.CLAIM_ALL else 3 for target in POINTS}, daily.TAP_LIMITS)
+        self.assertEqual({target: 2 if target in (daily.CLAIM_ALL, daily.WAKE) else 3 for target in POINTS}, daily.TAP_LIMITS)
         self.assertEqual(set(POINTS), set(daily.TARGETS))
 
     def test_menu_and_mail_presses_count_only_until_the_mail_screen_shows(self):
@@ -674,23 +837,33 @@ class TestWholeRun(Daily):
             run_pass(self.task.show(texts, frame))
             self.tick()
 
-    def test_banner_notice_menu_mail_claim_and_back_to_a_finished_lobby(self):
-        """The order the live client showed, with the back arrow landing on the open menu."""
-        self.run_screens([(BANNER, corner("daily_corner_banner")), NOTICE, LOBBY, MENU, MAIL, ITEMS, MAIL_AFTER, MENU, LOBBY])
+    def test_banner_notice_menu_mail_claim_and_the_x_back_to_a_finished_lobby(self):
+        """The order the live client showed, the Mail popup's X landing on the Lobby with the menu closed."""
+        self.run_screens([(BANNER, corner("daily_corner_banner")), NOTICE, LOBBY, MENU, (MAIL, claim_all(lit=True)), ITEMS,
+                          (MAIL_AFTER, claim_all(lit=False)), LOBBY])
         self.assertPressed(daily.BANNER_CLOSE, daily.NOTICE_CLOSE, daily.MENU, daily.ENVELOPE, daily.CLAIM_ALL, daily.ITEMS_CLOSE,
-                           daily.MAIL_BACK, daily.MENU_CLOSE)
+                           daily.MAIL_CLOSE)
         self.assertNothingForbidden()
         self.assertStopped("Daily finished: mail claimed")
 
-    def test_a_back_arrow_landing_on_the_lobby_finishes_there(self):
-        self.run_screens([LOBBY, MENU, MAIL, ITEMS, MAIL_AFTER, LOBBY])
-        self.assertPressed(daily.MENU, daily.ENVELOPE, daily.CLAIM_ALL, daily.ITEMS_CLOSE, daily.MAIL_BACK)
+    def test_an_x_landing_on_the_open_menu_closes_it_and_finishes(self):
+        self.run_screens([LOBBY, MENU, MAIL, ITEMS, MAIL_AFTER, MENU, LOBBY])
+        self.assertPressed(daily.MENU, daily.ENVELOPE, daily.CLAIM_ALL, daily.ITEMS_CLOSE, daily.MAIL_CLOSE, daily.MENU_CLOSE)
         self.assertStopped("Daily finished: mail claimed")
 
-    def test_an_empty_mailbox_ends_on_the_lobby(self):
-        self.run_screens([LOBBY, MENU] + [MAIL] * (2 * daily.CLAIM_WAIT + 1) + [MENU, LOBBY])
-        self.assertPressed(daily.MENU, daily.ENVELOPE, daily.CLAIM_ALL, daily.CLAIM_ALL, daily.MAIL_BACK, daily.MENU_CLOSE)
+    def test_an_empty_mailbox_presses_no_claim_all_and_ends_on_the_lobby(self):
+        """The live run's order: the popup with Claim All greyed, then the Lobby the X lands on."""
+        empty = (MAIL_EMPTY, claim_all(lit=False))
+        self.run_screens([LOBBY, MENU] + [empty] * (daily.CLAIM_WAIT + 1) + [LOBBY])
+        self.assertPressed(daily.MENU, daily.ENVELOPE, daily.MAIL_CLOSE)
+        self.assertNothingForbidden()
         self.assertStopped("Daily finished: no mail to claim")
+
+    def test_a_start_on_a_faded_lobby_wakes_it_claims_and_ends_on_the_lobby(self):
+        self.run_screens([(FADED, faded_lobby()), LOBBY, MENU, (MAIL, claim_all(lit=True)), ITEMS, (MAIL_AFTER, claim_all(lit=False)), LOBBY])
+        self.assertPressed(daily.WAKE, daily.MENU, daily.ENVELOPE, daily.CLAIM_ALL, daily.ITEMS_CLOSE, daily.MAIL_CLOSE)
+        self.assertNothingForbidden()
+        self.assertStopped("Daily finished: mail claimed")
 
 
 def stand_in(module):
