@@ -1,9 +1,10 @@
-"""Check that Daily closes the Lobby's popups, claims all mail and stops on the Lobby, pressing nothing else.
+"""Check that Daily closes the Lobby's popups, claims all mail, opens Dream Park and stops on the Lobby, pressing nothing else.
 
 The screens are the boxes OCR read off the Global client's Lobby, its entry banner and Notice board, the open menu, the
 Mail screen before and after Claim All, and Items Obtained, as the bot sees them once the catalog has mapped them, with
 the player's name left out. What Daily must never do: press a delete, the Shop, a purchase, Crystals, a price, Rescue or
-the game's quit button; press anything on a screen it does not know; run beside another mode.
+the game's quit button; press anything on a screen it does not know; run beside another mode. The park visit itself is
+checked in `TestDreamPark`.
 """
 
 import ast
@@ -103,6 +104,17 @@ PAID_RESCUE = (
     ("营救", 0.115, 0.047), ("235", 0.709, 0.048), ("10 Signal Amplification Anchor required.", 0.502, 0.423),
     ("Spend 1600 Crystals to make the purchase?", 0.500, 0.463), ("取消", 0.347, 0.631), ("确认", 0.667, 0.631), ("Rescue 10 time(s)", 0.848, 0.913),
 )
+# The Event list as the menu's Event opens it, on its first event rather than Dream Park; and the same list without Dream Park.
+EVENT_LIST = (
+    ("√", 0.041, 0.046), ("Event", 0.109, 0.048), ("N", 0.973, 0.030), ("↓ Recommended Events", 0.091, 0.138), ("N", 0.215, 0.111),
+    ("Invitation to a New Journey", 0.774, 0.136), ("Event Description", 0.784, 0.201), ("Permanent", 0.918, 0.201),
+    ("tation to a New Journey", 0.114, 0.270), ("02", 0.626, 0.335), ("03", 0.738, 0.336), ("kie Captain Mission", 0.101, 0.395),
+    ("07", 0.861, 0.353), ("le Path of a Captain", 0.102, 0.519), ("N", 0.179, 0.576), ("htmare Dream Park", 0.100, 0.644), ("04", 0.512, 0.636),
+    ("05", 0.625, 0.636), ("06", 0.737, 0.636), ("nise Upon the Snow", 0.101, 0.771), ("Awaiting Attendance", 0.543, 0.854),
+    ("Awaiting Attendance", 0.656, 0.854), ("Awaiting Attendance", 0.768, 0.855), ("Awaiting Attendance", 0.901, 0.854),
+    ("Poised Against the(", 0.103, 0.894),
+)
+EVENT_LIST_WITHOUT_PARK = tuple(box for box in EVENT_LIST if "Dream Park" not in box[0])
 # 266, the Graphic Settings page, a screen Daily has no business on.
 SETTINGS = (
     ("Graphic Settings", 0.184, 0.091), (":X", 0.932, 0.091), ("Graphics", 0.138, 0.172), ("Image Quality", 0.161, 0.233), ("High", 0.797, 0.234),
@@ -132,6 +144,26 @@ POINTS = {
     daily.WAKE: (0.300, 0.420),
     daily.CLAIM_ALL: (0.194, 0.904),
     daily.ITEMS_CLOSE: (0.501, 0.935),
+    daily.EVENT: (0.783, 0.088),
+    daily.DREAM_PARK: (0.100, 0.644),
+    daily.EVENT_LEAVE: (0.041, 0.046),
+    daily.ENTER_PARK: (0.775, 0.901),
+    daily.PARK_ACHIEVEMENTS: (0.551, 0.900),
+    daily.PAGE_LEAVE: (0.041, 0.046),
+    daily.PARK_MANAGE: (0.087, 0.294),
+    daily.PARK_OPERATE: (0.087, 0.473),
+    daily.PANEL_CLOSE: (0.041, 0.046),
+    daily.PARK_LEAVE: (0.041, 0.046),
+    daily.PARK_RANK: (0.804, 0.906),
+    daily.RANK_UP: (0.502, 0.900),
+    daily.RANK_CLOSE: (0.977, 0.137),
+    daily.RANK_RESULT_CLOSE: (0.500, 0.938),
+    daily.UPGRADE: (0.772, 0.634),
+    daily.BUILD: (0.761, 0.845),
+    daily.CLAIM: (0.722, 0.166),
+    daily.MANAGEMENT_TAB: (0.100, 0.270),
+    daily.ACHIEVEMENTS_LEAVE: (0.041, 0.046),
+    daily.RULES_CANCEL: (0.347, 0.631),
 }
 # What Daily must never press, by where it sits. Power is the icon's centre in 265 (rows 972-1022 of 1080) and the
 # `End` key label under it in 273. Skip Tutorial is a box over three targets, not a point: `TestTutorial` covers it.
@@ -146,7 +178,6 @@ NEVER = {
     "the Notice board's dots": (0.889, 0.119),
     "the film icon": (0.843, 0.12),
     "the menu's Shop": (0.781, 0.666),
-    "the menu's Event": (0.783, 0.087),
     "the menu's Arkhianon Supply": (0.825, 0.160),
     "the menu's settings": (0.962, 0.813),
     "the menu's power": (0.962, 0.923),
@@ -166,6 +197,15 @@ OWN = (
     daily.handle_daily_overtime,
     daily.handle_daily_items_obtained,
     daily.handle_daily_mail,
+    daily.handle_daily_rules_dialog,
+    daily.handle_daily_rank_result,
+    daily.handle_daily_rank_screen,
+    daily.handle_daily_manage_panel,
+    daily.handle_daily_facilities,
+    daily.handle_daily_park_view,
+    daily.handle_daily_park_achievements,
+    daily.handle_daily_event_page,
+    daily.handle_daily_event_list,
     daily.handle_daily_notice,
     daily.handle_daily_banner,
     daily.handle_daily_lobby_menu,
@@ -322,6 +362,11 @@ class Daily(unittest.TestCase):
     def state(self):
         return daily.run_state(self.task)
 
+    def finish_chores(self, mail="claimed"):
+        """Count every chore as done, the mail with what it found."""
+        steps = self.state()["steps"]
+        steps["mail"], steps["dream_park"], self.state()["mail"] = daily.DONE, daily.DONE, mail
+
     def assertPressed(self, *targets):
         """Check the taps were exactly these targets, in order."""
         self.assertEqual(len(targets), len(self.task.clicks), self.task.clicks)
@@ -469,10 +514,14 @@ class TestLobbyAndMenu(Daily):
         self.task.clicks.clear()
         self.state()["steps"]["mail"], self.state()["mail"] = daily.DONE, "claimed"
         self.assertTrue(run_pass(self.task.show(LOBBY)))
+        self.assertPressed(daily.MENU)
+        self.task.clicks.clear()
+        self.finish_chores()
+        self.assertTrue(run_pass(self.task.show(LOBBY)))
         self.assertEqual([], self.task.clicks)
         self.assertStopped("Daily finished: mail claimed")
 
-    def test_the_menu_opens_mail_while_pending_and_closes_once_done_never_shop_or_power(self):
+    def test_the_menu_opens_mail_then_event_while_pending_and_closes_once_done_never_shop_or_power(self):
         """5: on the plain menu and on the one with its key labels on."""
         for screen in (MENU, MENU_KEYS):
             with self.subTest(keys=screen is MENU_KEYS):
@@ -480,7 +529,9 @@ class TestLobbyAndMenu(Daily):
                 self.assertTrue(run_pass(self.task.show(screen)))
                 self.state()["steps"]["mail"] = daily.DONE
                 self.assertTrue(run_pass(self.task))
-                self.assertPressed(daily.ENVELOPE, daily.MENU_CLOSE)
+                self.finish_chores()
+                self.assertTrue(run_pass(self.task))
+                self.assertPressed(daily.ENVELOPE, daily.EVENT, daily.MENU_CLOSE)
                 self.assertNothingForbidden()
 
     def test_the_lobby_is_not_read_under_the_open_menu(self):
@@ -561,7 +612,7 @@ class TestFadedLobby(Daily):
         self.tick(20)
         self.assertFalse(daily.handle_daily_faded_lobby(self.task.show(FADED)))
         self.tick(-20)
-        self.state()["steps"]["mail"] = daily.DONE
+        self.finish_chores()
         self.assertFalse(daily.handle_daily_faded_lobby(self.task.show(FADED)))
         self.assertPressed(daily.MENU)
 
@@ -636,8 +687,8 @@ class TestFadedStart(Daily):
         self.assertFalse(daily.handle_daily_faded_lobby(self.task.show(SETTINGS, faded_lobby())))
         self.assertEqual([], self.task.clicks)
 
-    def test_a_lobby_faded_again_after_the_mail_is_woken_and_finishes(self):
-        self.state()["steps"]["mail"], self.state()["mail"] = daily.DONE, "claimed"
+    def test_a_lobby_faded_again_after_the_chores_is_woken_and_finishes(self):
+        self.finish_chores()
         self.assertTrue(run_pass(self.task.show(FADED, faded_lobby())))
         self.tick()
         self.assertTrue(run_pass(self.task.show(LOBBY)))
@@ -778,7 +829,8 @@ class TestStops(Daily):
                 self.assertStopped(f"{target} was pressed {limit} times")
 
     def test_the_limits_are_as_designed(self):
-        self.assertEqual({target: 2 if target in (daily.CLAIM_ALL, daily.WAKE) else 3 for target in POINTS}, daily.TAP_LIMITS)
+        special = {daily.CLAIM_ALL: 2, daily.WAKE: 2, daily.RANK_UP: 2, daily.UPGRADE: 200, daily.CLAIM: 30}
+        self.assertEqual({target: special.get(target, 3) for target in POINTS}, daily.TAP_LIMITS)
         self.assertEqual(set(POINTS), set(daily.TARGETS))
 
     def test_menu_and_mail_presses_count_only_until_the_mail_screen_shows(self):
@@ -845,6 +897,10 @@ class TestRefusals(Daily):
 
 class TestWholeRun(Daily):
 
+    # The park step after the mail, on a client whose Event list no longer has Dream Park.
+    NO_PARK = [MENU] + [EVENT_LIST_WITHOUT_PARK] * (daily.SETTLE + 1)
+    NO_PARK_PRESSES = (daily.MENU, daily.EVENT, daily.EVENT_LEAVE)
+
     def run_screens(self, screens):
         for screen in screens:
             texts, frame = screen if isinstance(screen, tuple) and len(screen) == 2 and isinstance(screen[1], np.ndarray) else (screen, None)
@@ -854,28 +910,29 @@ class TestWholeRun(Daily):
     def test_banner_notice_menu_mail_claim_and_the_x_back_to_a_finished_lobby(self):
         """The order the live client showed, the Mail popup's X landing on the Lobby with the menu closed."""
         self.run_screens([(BANNER, corner("daily_corner_banner")), NOTICE, LOBBY, MENU, (MAIL, claim_all(lit=True)), ITEMS,
-                          (MAIL_AFTER, claim_all(lit=False)), LOBBY])
+                          (MAIL_AFTER, claim_all(lit=False)), LOBBY] + self.NO_PARK + [LOBBY])
         self.assertPressed(daily.BANNER_CLOSE, daily.NOTICE_CLOSE, daily.MENU, daily.ENVELOPE, daily.CLAIM_ALL, daily.ITEMS_CLOSE,
-                           daily.MAIL_CLOSE)
+                           daily.MAIL_CLOSE, *self.NO_PARK_PRESSES)
         self.assertNothingForbidden()
-        self.assertStopped("Daily finished: mail claimed")
+        self.assertStopped("Daily finished: mail claimed; Dream Park is not running")
 
-    def test_an_x_landing_on_the_open_menu_closes_it_and_finishes(self):
-        self.run_screens([LOBBY, MENU, MAIL, ITEMS, MAIL_AFTER, MENU, LOBBY])
-        self.assertPressed(daily.MENU, daily.ENVELOPE, daily.CLAIM_ALL, daily.ITEMS_CLOSE, daily.MAIL_CLOSE, daily.MENU_CLOSE)
+    def test_an_x_landing_on_the_open_menu_goes_on_to_the_event_list_and_finishes(self):
+        self.run_screens([LOBBY, MENU, MAIL, ITEMS, MAIL_AFTER] + self.NO_PARK + [LOBBY])
+        self.assertPressed(daily.MENU, daily.ENVELOPE, daily.CLAIM_ALL, daily.ITEMS_CLOSE, daily.MAIL_CLOSE, daily.EVENT, daily.EVENT_LEAVE)
         self.assertStopped("Daily finished: mail claimed")
 
     def test_an_empty_mailbox_presses_no_claim_all_and_ends_on_the_lobby(self):
         """The live run's order: the popup with Claim All greyed, then the Lobby the X lands on."""
         empty = (MAIL_EMPTY, claim_all(lit=False))
-        self.run_screens([LOBBY, MENU] + [empty] * (daily.CLAIM_WAIT + 1) + [LOBBY])
-        self.assertPressed(daily.MENU, daily.ENVELOPE, daily.MAIL_CLOSE)
+        self.run_screens([LOBBY, MENU] + [empty] * (daily.CLAIM_WAIT + 1) + [LOBBY] + self.NO_PARK + [LOBBY])
+        self.assertPressed(daily.MENU, daily.ENVELOPE, daily.MAIL_CLOSE, *self.NO_PARK_PRESSES)
         self.assertNothingForbidden()
         self.assertStopped("Daily finished: no mail to claim")
 
     def test_a_start_on_a_faded_lobby_wakes_it_claims_and_ends_on_the_lobby(self):
-        self.run_screens([(FADED, faded_lobby()), LOBBY, MENU, (MAIL, claim_all(lit=True)), ITEMS, (MAIL_AFTER, claim_all(lit=False)), LOBBY])
-        self.assertPressed(daily.WAKE, daily.MENU, daily.ENVELOPE, daily.CLAIM_ALL, daily.ITEMS_CLOSE, daily.MAIL_CLOSE)
+        self.run_screens([(FADED, faded_lobby()), LOBBY, MENU, (MAIL, claim_all(lit=True)), ITEMS, (MAIL_AFTER, claim_all(lit=False)), LOBBY]
+                         + self.NO_PARK + [LOBBY])
+        self.assertPressed(daily.WAKE, daily.MENU, daily.ENVELOPE, daily.CLAIM_ALL, daily.ITEMS_CLOSE, daily.MAIL_CLOSE, *self.NO_PARK_PRESSES)
         self.assertNothingForbidden()
         self.assertStopped("Daily finished: mail claimed")
 
