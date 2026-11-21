@@ -210,23 +210,34 @@ def serve_remote(test):
     return server.server_port
 
 
-def raw_post(port, headers, host=True):
-    """POST `{}` to the status command with exactly `headers`, as a browser or another local program might.
+def raw_post(port, headers, host=True, command="status", body=b"{}", length=None, late=False):
+    """POST `body` to a command with exactly `headers`, as a browser or another local program might.
 
     Args:
         port: The remote control's port.
         headers: Every header to send besides Content-Length, and Host unless `headers` names one.
         host: False to send no Host header at all.
+        command: The command the path names.
+        body: The bytes sent after the headers.
+        length: The Content-Length to send instead of the body's own size.
+        late: True to send the body only after the port has read the headers, and to read the reply a moment after
+            that, as a slow caller's packets can trail.
 
     Returns:
         The reply's status, Content-Type and body text.
     """
     connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
     try:
-        connection.putrequest("POST", "/status", skip_host=not host or "Host" in headers)
-        for name, value in {**headers, "Content-Length": "2"}.items():
+        connection.putrequest("POST", f"/{command}", skip_host=not host or "Host" in headers)
+        for name, value in {**headers, "Content-Length": str(len(body) if length is None else length)}.items():
             connection.putheader(name, value)
-        connection.endheaders(b"{}")
+        if late:
+            connection.endheaders()
+            time.sleep(0.05)
+            connection.send(body)
+            time.sleep(0.3)
+        else:
+            connection.endheaders(body)
         response = connection.getresponse()
         return response.status, response.getheader("Content-Type"), response.read().decode("utf-8")
     finally:
@@ -547,6 +558,41 @@ class TestRemote(unittest.TestCase):
                     code, content_type, text = raw_post(port, headers)
                     self.assertEqual((200, {"ok": True, "result": "status ran"}), (code, json.loads(text)))
                     self.assertEqual([{}], ran)
+
+    def test_a_reply_reaches_a_caller_whose_body_trails_the_headers(self):
+        """Body bytes that land after the port closes make Windows reset the connection and wipe the unread reply."""
+        port = serve_remote(self)
+        refused = {
+            "text/plain": ({"Content-Type": "text/plain"}, 415),
+            "an Origin": ({"Content-Type": "application/json", "Origin": "https://example.com"}, 403),
+            "a foreign Host": ({"Content-Type": "application/json", "Host": f"rebound.example:{port}"}, 403),
+        }
+        ran = []
+        with standing_in(remote, status=lambda **kwargs: ran.append(kwargs) or "status ran", _last_contact=None):
+            for case, (headers, status) in refused.items():
+                with self.subTest(case):
+                    code, _, text = raw_post(port, headers, late=True)
+                    self.assertEqual(status, code)
+                    self.assertTrue(text.startswith("refused: "), text)
+                    self.assertIsNone(remote._last_contact)
+            with self.subTest("an unknown command"):
+                code, _, text = raw_post(port, {"Content-Type": "application/json"}, command="exit", late=True)
+                self.assertEqual(200, code)
+                self.assertIn("unknown command", json.loads(text)["error"])
+        self.assertEqual([], ran)
+
+    def test_a_refused_body_that_never_comes_holds_the_refusal_back_only_briefly(self):
+        """A page could send a Content-Length it never fills, and the port must not wait on it for good."""
+        port = serve_remote(self)
+        with standing_in(remote, DRAIN_TIMEOUT=1):
+            for case, length, body, seconds in (("never filled", 10 ** 9, b"{}", 3), ("negative", -1, b"", 0.5),
+                                                ("not a number", "two", b"", 0.5)):
+                with self.subTest(case):
+                    started = time.monotonic()
+                    code, _, text = raw_post(port, {"Content-Type": "text/plain"}, body=body, length=length)
+                    self.assertEqual(415, code)
+                    self.assertTrue(text.startswith("refused: "), text)
+                    self.assertLess(time.monotonic() - started, seconds)
 
     def test_the_mcp_quit_tool_sends_quit(self):
         """A tool forwarding to any other command would leave the app running while the caller waits for it to go."""

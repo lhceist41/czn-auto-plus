@@ -56,6 +56,10 @@ TITLE_CHECK = 2000
 QUIT_DELAY = 0.25
 # Seconds the app gets to shut down after a quit before ok-script's watchdog ends the process anyway.
 QUIT_GRACE = 5
+# Most bytes of a refused request's body read and dropped before the refusal, and the seconds that read waits for them,
+# so a huge or untrue Content-Length cannot hold the handler.
+DRAIN_LIMIT = 1 << 20
+DRAIN_TIMEOUT = 2
 
 # Actions waiting for the bot's thread, as `(action, future)` pairs.
 _actions = queue.Queue()
@@ -78,15 +82,17 @@ class Remote(http.server.BaseHTTPRequestHandler):
         global _last_contact
         refusal = self.refusal()
         if refusal is not None:
+            self.drain()
             status, message = refusal
             self.reply(status, message.encode("utf-8"), "text/plain; charset=utf-8")
             return
         _last_contact = time.monotonic()
         name = self.path.strip("/")
         try:
+            # Read before any reply, so no body bytes are still on their way when the connection closes.
+            body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
             if name not in COMMANDS:
                 raise KeyError(f"unknown command {name!r}, expected one of {', '.join(COMMANDS)}")
-            body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
             reply = {"ok": True, "result": globals()[name](**json.loads(body or b"{}"))}
         except Exception as error:
             reply = {"ok": False, "error": f"{type(error).__name__}: {error}"}
@@ -108,6 +114,25 @@ class Remote(http.server.BaseHTTPRequestHandler):
         if (self.headers.get("Content-Type") or "").split(";")[0].strip().lower() != "application/json":
             return 415, "refused: send the body as Content-Type application/json"
         return None
+
+    def drain(self):
+        """Read and drop a refused request's body, up to `DRAIN_LIMIT` bytes and `DRAIN_TIMEOUT` seconds.
+
+        Body bytes that reach the socket after it closes make Windows reset the connection, and the reset wipes the
+        reply the caller has not read yet.
+        """
+        try:
+            length = min(max(int(self.headers.get("Content-Length") or 0), 0), DRAIN_LIMIT)
+        except ValueError:
+            return
+        timeout = self.connection.gettimeout()
+        self.connection.settimeout(DRAIN_TIMEOUT)
+        try:
+            self.rfile.read(length)
+        except OSError:
+            pass
+        finally:
+            self.connection.settimeout(timeout)
 
     def reply(self, status, data, content_type):
         """Send one complete response.
