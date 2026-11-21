@@ -1,5 +1,6 @@
 """Check what the bot decides is worth buying and keeping."""
 
+import contextlib
 import sys
 import types
 import unittest
@@ -16,7 +17,7 @@ import utils_sortie  # noqa: E402
 # Held here rather than looked up by name, since other modules in the same run stand stubs in for it.
 import utils  # noqa: E402
 
-from src.en import cards, dashboard, loot_cards, navigation, piles, reason, rewards  # noqa: E402
+from src.en import cards, dashboard, handlers, loot_cards, navigation, piles, reason, rewards, spend_guard  # noqa: E402
 from src.en.battle import PARTY  # noqa: E402
 from src.en.dashboard import COMBATANTS as COMBATANTS_ROW  # noqa: E402
 from src.en.game_data import COMBATANTS  # noqa: E402
@@ -806,3 +807,333 @@ class TestLootCardsRunOut(unittest.TestCase):
                 with standing_in(utils_chaos, _finish_only_first_layer=lambda task_: True):
                     loot_cards.with_cards_only(utils_chaos.handle_chaos_reward_settlement, utils_chaos)(task)
                 self.assertEqual([] if out_of_cards else ["获得"], pressed)
+
+
+def captured(*rows):
+    """Place OCR boxes exactly where a capture had them.
+
+    Args:
+        *rows: `(text, left, right, top, bottom)` in screen fractions, as the capture read them.
+
+    Returns:
+        The boxes.
+    """
+    return [FakeBox(name, (left + right) / 2, (top + bottom) / 2, width=(right - left) * WIDTH, height=(bottom - top) * HEIGHT, units="fraction")
+            for name, left, right, top, bottom in rows]
+
+
+# Four captures from one live Chaos run, read with the app's OCR and its `ocr.po`: a waypoint Settlement, the final one with
+# Leave where the waypoint has Continue, the dialog Leave raised there, and the claim dialog Obtain opens. `COUNTER` marks the
+# card counter, set per test.
+COUNTER = "2/4"
+WAYPOINT_SETTLEMENT = [
+    ("378/378", 0.1708, 0.2531, 0.0222, 0.0537), (COUNTER, 0.8609, 0.8964, 0.0306, 0.0704), ("结算", 0.5240, 0.6562, 0.0398, 0.0907),
+    ("Loot", 0.5188, 0.5625, 0.1231, 0.1546), ("Additional Loot", 0.5188, 0.6385, 0.3546, 0.3843), ("F2", 0.8031, 0.8302, 0.3324, 0.3602),
+    ("获得", 0.8292, 0.8854, 0.3694, 0.4009), ("me 1 Loot Voucher Card to exchange for Ai", 0.5208, 0.7927, 0.3898, 0.4194),
+    ("1.200", 0.5552, 0.5854, 0.5167, 0.5370), ("Exploration Score", 0.5552, 0.6958, 0.8000, 0.8306), ("188", 0.8969, 0.9333, 0.7944, 0.8343),
+    ("进入", 0.8146, 0.8542, 0.8639, 0.8898), ("Temporary Return", 0.5615, 0.6865, 0.8954, 0.9370), ("继续", 0.8885, 0.9667, 0.8981, 0.9343),
+]
+FINAL_SETTLEMENT = [
+    ("242/456", 0.1708, 0.2521, 0.0204, 0.0537), ("结算", 0.5229, 0.6573, 0.0380, 0.0926), (COUNTER, 0.8625, 0.8958, 0.0333, 0.0657),
+    ("Loot", 0.5198, 0.5625, 0.1231, 0.1546), ("Additional Loot", 0.5208, 0.6385, 0.3546, 0.3843), ("F2", 0.8052, 0.8281, 0.3361, 0.3583),
+    ("获得", 0.8286, 0.8859, 0.3657, 0.4028), ("nsume 1 Loot Voucher Card to exchange fo", 0.5208, 0.7937, 0.3898, 0.4194),
+    ("1.200", 0.5552, 0.5854, 0.5167, 0.5370), ("Exploration Score", 0.5542, 0.6958, 0.8000, 0.8306), ("698", 0.8927, 0.9333, 0.7944, 0.8343),
+    ("进入", 0.8146, 0.8542, 0.8639, 0.8898), ("离开", 0.9135, 0.9677, 0.9028, 0.9343),
+]
+WITHOUT_CARD_DIALOG = [
+    ("242/456", 0.1719, 0.2521, 0.0222, 0.0537), ("结算", 0.5219, 0.6573, 0.0380, 0.0926), (COUNTER, 0.8625, 0.8948, 0.0333, 0.0657),
+    ("Loot", 0.5156, 0.5625, 0.1231, 0.1546),
+    ("There is additional loot available. Continue without using Loot Certification Card?", 0.1719, 0.8313, 0.3935, 0.4306),
+    ("Ctrl", 0.3792, 0.4062, 0.4778, 0.5037), ("Do not show until next login", 0.4167, 0.6250, 0.5130, 0.5500),
+    ("ESC", 0.2010, 0.2302, 0.5824, 0.6028), ("进入", 0.5146, 0.5563, 0.5806, 0.6065), ("取消", 0.3141, 0.3797, 0.6102, 0.6546),
+    ("确认", 0.6276, 0.7057, 0.6046, 0.6546), ("Exploration Score", 0.5542, 0.6979, 0.7935, 0.8352), ("698", 0.8927, 0.9333, 0.7944, 0.8343),
+    ("进入", 0.8146, 0.8542, 0.8639, 0.8898), ("离开", 0.9135, 0.9677, 0.9009, 0.9343),
+]
+CLAIM_DIALOG = [
+    (COUNTER, 0.9406, 0.9771, 0.2593, 0.3000), ("卡厄思战利品", 0.4437, 0.5573, 0.3111, 0.3546), ("→Available rewards +", 0.4198, 0.5792, 0.3731, 0.4120),
+    ("1,200", 0.3875, 0.4229, 0.5241, 0.5500), ("4,000", 0.4562, 0.4958, 0.5241, 0.5500), ("10", 0.5458, 0.5677, 0.5222, 0.5500),
+    ("8", 0.6260, 0.6406, 0.5259, 0.5500), ("Consume 1 Loot Certification Card to exchange for a reward", 0.2875, 0.7135, 0.5787, 0.6176),
+    ("取消", 0.3156, 0.3823, 0.6907, 0.7296), ("获得", 0.5437, 0.6083, 0.6870, 0.7315),
+]
+# The same dialog raised by a waypoint's Continue, which stays where the waypoint draws it.
+WAYPOINT_WITHOUT_CARD_DIALOG = [row for row in WITHOUT_CARD_DIALOG if row[0] != "离开"] + [("继续", 0.8885, 0.9667, 0.8981, 0.9343)]
+
+
+class SettlementTask:
+    """A Chaos task on one capture, with the card counter and the Additional Loot setting as given."""
+
+    name = "ChaosMode"
+
+    def __init__(self, rows, counter=COUNTER, claiming=True, out_of_cards=False):
+        self.width, self.height = WIDTH, HEIGHT
+        self.config = {loot_cards.CLAIMING: claiming}
+        self.node_status = {loot_cards.OUT_OF_CARDS: True} if out_of_cards else {}
+        self.clicked = []
+        self.notified = []
+        self.disabled = False
+        self.show(rows, counter)
+
+    def show(self, rows, counter=COUNTER, unread=()):
+        """Put a capture on screen.
+
+        Args:
+            rows: The capture's boxes.
+            counter: The card counter's text, or None for a counter OCR did not read.
+            unread: Texts OCR did not read on this frame.
+        """
+        self.all_texts = captured(*((counter if name == COUNTER else name, *rest) for name, *rest in rows
+                                    if (counter or name != COUNTER) and name not in unread))
+
+    def click_box(self, box):
+        self.clicked.append(box.name)
+
+    def log_info(self, message, notify=False):
+        pass
+
+    def notification(self, message, title=None, error=False, tray=False, **kwargs):
+        self.notified.append(message)
+
+    def sleep(self, seconds):
+        pass
+
+    def disable(self):
+        self.disabled = True
+
+    def find_one(self, feature_name, box=None):
+        return None
+
+    def box_of_screen(self, *region):
+        return None
+
+
+def upstream_stub(name):
+    """Stand in for an upstream handler this check does not exercise, under its name, since position and name are the priority scheme.
+
+    Args:
+        name: The upstream handler's name.
+
+    Returns:
+        A handler that declines every frame.
+    """
+    def handler(task):
+        return False
+    handler.__name__ = name
+    return handler
+
+
+class SettlementHandlers:
+    """Runs frames through Chaos's handlers around the Settlement, for the test classes below."""
+
+    @contextlib.contextmanager
+    def chaos_handlers(self, continue_handler=None):
+        """Install into Chaos's handlers around the Settlement, in upstream's order.
+
+        Upstream's own Leave, Settlement, claim and centred Confirm handlers run, the Confirm behind the real spend guard. Every
+        loaded list is stood in for, so the install edits none another test reads.
+
+        Args:
+            continue_handler: What stands at upstream's `handle_continue`; a handler that declines every frame when None.
+
+        Returns:
+            A context manager giving the Chaos and Sortie lists.
+        """
+        chaos = [spend_guard.guarding_confirm(utils.handle_center_confirm), upstream_stub("handle_precision_memory_process"), utils.handle_leave,
+                 utils_chaos.handle_chaos_reward_settlement, utils_chaos.handle_chaos_reward_claim,
+                 continue_handler or upstream_stub("handle_continue")]
+        sortie = [upstream_stub("handle_center_confirm"), upstream_stub("handle_leave")]
+        modes = {name: types.ModuleType(name) for name, _ in handlers.each_list()}
+        for name, handler_list in (("utils_chaos", chaos), ("utils_sortie", sortie)):
+            modes[name] = types.ModuleType(name)
+            modes[name].PAGE_HANDLERS = handler_list
+        held = {name: sys.modules.get(name) for name in modes}
+        sys.modules.update(modes)
+        try:
+            with standing_in(utils_chaos, handle_chaos_reward_settlement=utils_chaos.handle_chaos_reward_settlement,
+                             _finish_only_first_layer=lambda task_: False, _move_and_click=lambda task_, x, y: task_.clicked.append((x, y))), \
+                    standing_in(utils, is_button_active=lambda task_, box: True):
+                # Twice, as every task load runs it again.
+                loot_cards.install(utils_chaos)
+                loot_cards.install(utils_chaos)
+                yield chaos, sortie
+        finally:
+            for name, original in held.items():
+                if original is None:
+                    sys.modules.pop(name, None)
+                else:
+                    sys.modules[name] = original
+
+    def run_chaos(self, task):
+        """Run one frame through Chaos's handlers around the Settlement, and say which claimed it.
+
+        Args:
+            task: The task on the capture.
+
+        Returns:
+            A `(claimed, chaos, sortie)` triple: the name of the handler that claimed the frame, or None, and both lists' names.
+        """
+        with self.chaos_handlers() as (chaos, sortie):
+            claimed = next((handler.__name__ for handler in chaos if handler(task)), None)
+        return claimed, [handler.__name__ for handler in chaos], [handler.__name__ for handler in sortie]
+
+    def play(self, task, frames, continue_handler=None):
+        """Show one task a run of frames, as the loop would, until it is stopped.
+
+        Args:
+            task: The task, which keeps its state from frame to frame.
+            frames: `(rows, show_arguments)` pairs.
+            continue_handler: Passed to `chaos_handlers`.
+
+        Returns:
+            The name of the handler that claimed each frame shown.
+        """
+        claimed = []
+        with self.chaos_handlers(continue_handler) as (chaos, _):
+            for rows, arguments in frames:
+                if task.disabled:
+                    break
+                task.show(rows, **arguments)
+                claimed.append(next((handler.__name__ for handler in chaos if handler(task)), None))
+        return claimed
+
+
+class TestFinalSettlementLoot(SettlementHandlers, unittest.TestCase):
+    """The final Settlement, where Leave ranks above the Settlement's own claim and its dialog went to the centred Confirm."""
+
+    def test_the_final_settlement_claims_with_a_card_before_leave(self):
+        task = SettlementTask(FINAL_SETTLEMENT)
+        self.assertEqual("handle_obtain_before_leave", self.run_chaos(task)[0])
+        self.assertEqual(["获得"], task.clicked)
+
+    def test_the_final_settlement_leaves_with_no_card_or_the_setting_off(self):
+        for case in ({"counter": "0/4"}, {"claiming": False}, {"out_of_cards": True}, {"counter": None}):
+            with self.subTest(**case):
+                task = SettlementTask(FINAL_SETTLEMENT, **case)
+                self.assertEqual("handle_leave", self.run_chaos(task)[0])
+                self.assertEqual(["离开"], task.clicked)
+
+    def test_continue_without_card_is_cancelled_while_cards_are_left(self):
+        task = SettlementTask(WITHOUT_CARD_DIALOG)
+        self.assertEqual("handle_continue_without_card", self.run_chaos(task)[0])
+        self.assertEqual(["取消"], task.clicked)
+        self.assertFalse(task.disabled)
+
+    def test_continue_without_card_is_confirmed_with_no_card_or_the_setting_off(self):
+        for case in ({"counter": "0/4"}, {"claiming": False}, {"out_of_cards": True}, {"counter": None}):
+            with self.subTest(**case):
+                task = SettlementTask(WITHOUT_CARD_DIALOG, **case)
+                self.assertEqual("handle_center_confirm", self.run_chaos(task)[0])
+                self.assertEqual(["确认"], task.clicked)
+                self.assertFalse(task.disabled)
+
+    def test_the_dialog_handler_only_ever_cancels(self):
+        # Never Confirm and never the "Do not show" box: with no Cancel read it taps where the capture had Cancel.
+        handler = loot_cards.without_card_handler(utils_chaos)
+        without_cancel = [row for row in WITHOUT_CARD_DIALOG if row[0] != "取消"]
+        for counter in ("0/4", "1/4", "4/4", None):
+            for claiming in (True, False):
+                for rows, cancel in ((WITHOUT_CARD_DIALOG, "取消"), (without_cancel, loot_cards.WITHOUT_CARD_CANCEL_POINT)):
+                    with self.subTest(counter=counter, claiming=claiming, cancel=cancel):
+                        task = SettlementTask(rows, counter=counter, claiming=claiming)
+                        with standing_in(utils_chaos, _move_and_click=lambda task_, x, y: task_.clicked.append((x, y))):
+                            handled = handler(task)
+                        self.assertIs(claiming and counter not in ("0/4", None), handled)
+                        self.assertEqual([cancel] if handled else [], task.clicked)
+
+    def test_the_waypoint_settlement_is_left_to_upstream(self):
+        # Upstream presses Obtain on the setting alone and lets the claim dialog read the cards.
+        for case, claimed, clicked in (({"counter": "3/4"}, "handle_chaos_reward_settlement", ["获得"]),
+                                       ({"counter": "0/4"}, "handle_chaos_reward_settlement", ["获得"]),
+                                       ({"counter": "3/4", "claiming": False}, None, []),
+                                       ({"counter": "3/4", "out_of_cards": True}, None, [])):
+            with self.subTest(**case):
+                self.assertFalse(loot_cards.obtain_before_leave_handler(utils_chaos)(SettlementTask(WAYPOINT_SETTLEMENT, **case)))
+                task = SettlementTask(WAYPOINT_SETTLEMENT, **case)
+                self.assertEqual(claimed, self.run_chaos(task)[0])
+                self.assertEqual(clicked, task.clicked)
+
+    def test_only_chaos_gains_the_handlers_each_once_and_next_to_their_anchor(self):
+        _, chaos, sortie = self.run_chaos(SettlementTask(FINAL_SETTLEMENT))
+        self.assertEqual(["handle_center_confirm", "handle_leave"], sortie)
+        self.assertEqual(chaos.index("handle_leave") - 1, chaos.index("handle_obtain_before_leave"))
+        self.assertEqual(chaos.index("handle_center_confirm") - 1, chaos.index("handle_continue_without_card"))
+        for name in ("handle_obtain_before_leave", "handle_continue_without_card", "handle_claim_without_cards"):
+            self.assertEqual(1, chaos.count(name))
+
+    def test_obtain_waits_for_the_settlement_title(self):
+        task = SettlementTask(FINAL_SETTLEMENT)
+        task.show(FINAL_SETTLEMENT, unread=("结算",))
+        self.assertFalse(loot_cards.obtain_before_leave_handler(utils_chaos)(task))
+        self.assertEqual([], task.clicked)
+
+    def test_the_dialog_is_read_only_where_it_draws_its_question(self):
+        # The same words higher up the screen are not this dialog.
+        moved = [(name, left, right, top - 0.25, bottom - 0.25) if name.startswith("There is") else (name, left, right, top, bottom)
+                 for name, left, right, top, bottom in WITHOUT_CARD_DIALOG]
+        task = SettlementTask(moved)
+        self.assertFalse(loot_cards.without_card_handler(utils_chaos)(task))
+        self.assertEqual([], task.clicked)
+
+
+class TestSettlementCancelLoop(SettlementHandlers, unittest.TestCase):
+    """A Settlement read that fails on a still screen, which cycles a Cancel the stuck stop cannot see."""
+
+    def assertStoppedAfterTwoCancels(self, task, claimed, clicked):
+        self.assertEqual(clicked, task.clicked)
+        self.assertEqual(len(clicked), len(claimed), "no frame is handled after the stop")
+        self.assertTrue(task.disabled)
+        self.assertEqual([loot_cards.STOP_MESSAGE], task.notified)
+        self.assertNotIn("确认", task.clicked)
+
+    def test_leave_and_cancel_stop_on_the_second_cancel(self):
+        # Obtain or the counter misread on the final Settlement while the dialog reads the cards.
+        for settlement in ({"unread": ("获得",)}, {"counter": None}):
+            with self.subTest(**settlement):
+                task = SettlementTask(FINAL_SETTLEMENT)
+                claimed = self.play(task, [(FINAL_SETTLEMENT, settlement), (WITHOUT_CARD_DIALOG, {})] * 3)
+                self.assertEqual(["handle_leave", "handle_continue_without_card"] * 2, claimed)
+                self.assertStoppedAfterTwoCancels(task, claimed, ["离开", "取消", "离开", "取消"])
+
+    def test_continue_and_cancel_stop_on_the_second_cancel(self):
+        task = SettlementTask(WAYPOINT_SETTLEMENT, counter="3/4")
+        claimed = self.play(task, [(WAYPOINT_SETTLEMENT, {"counter": "3/4", "unread": ("获得",)}),
+                                   (WAYPOINT_WITHOUT_CARD_DIALOG, {"counter": "3/4"})] * 3, continue_handler=utils.handle_continue)
+        self.assertEqual(["handle_continue", "handle_continue_without_card"] * 2, claimed)
+        self.assertStoppedAfterTwoCancels(task, claimed, ["继续", "取消", "继续", "取消"])
+
+    def test_obtain_and_an_unreadable_claim_counter_stop_on_the_second_cancel(self):
+        for settlement, opened_by in ((FINAL_SETTLEMENT, "handle_obtain_before_leave"), (WAYPOINT_SETTLEMENT, "handle_chaos_reward_settlement")):
+            with self.subTest(opened_by=opened_by):
+                task = SettlementTask(settlement)
+                claimed = self.play(task, [(settlement, {}), (CLAIM_DIALOG, {"counter": None})] * 3)
+                self.assertEqual([opened_by, "handle_claim_without_cards"] * 2, claimed)
+                self.assertStoppedAfterTwoCancels(task, claimed, ["获得", loot_cards.CANCEL_POINT, "获得", loot_cards.CANCEL_POINT])
+
+    def test_a_claim_in_between_starts_the_count_again(self):
+        task = SettlementTask(FINAL_SETTLEMENT)
+        claimed = self.play(task, [(FINAL_SETTLEMENT, {}), (CLAIM_DIALOG, {"counter": None}), (FINAL_SETTLEMENT, {}),
+                                   (CLAIM_DIALOG, {}), (WITHOUT_CARD_DIALOG, {})])
+        self.assertEqual(["handle_obtain_before_leave", "handle_claim_without_cards", "handle_obtain_before_leave",
+                          "handle_chaos_reward_claim", "handle_continue_without_card"], claimed)
+        self.assertEqual(["获得", loot_cards.CANCEL_POINT, "获得", "获得", "取消"], task.clicked)
+        self.assertFalse(task.disabled)
+        self.assertEqual(1, task.node_status[loot_cards.CANCELS])
+
+    def test_one_cancel_alone_carries_on(self):
+        for frames in ([(WITHOUT_CARD_DIALOG, {})], [(FINAL_SETTLEMENT, {}), (CLAIM_DIALOG, {"counter": None})]):
+            with self.subTest(frames=len(frames)):
+                task = SettlementTask(FINAL_SETTLEMENT)
+                self.play(task, frames)
+                self.assertFalse(task.disabled)
+                self.assertEqual([], task.notified)
+                self.assertEqual(1, task.node_status[loot_cards.CANCELS])
+
+    def test_the_count_starts_again_with_each_run(self):
+        # Upstream rebuilds the run state between runs and when the mode starts, keeping only its own totals.
+        for reset in (utils.reset_mission_status, utils.reset_all_status):
+            with self.subTest(reset=reset.__name__):
+                task = SettlementTask(WITHOUT_CARD_DIALOG)
+                self.play(task, [(WITHOUT_CARD_DIALOG, {})])
+                reset(task)
+                self.assertNotIn(loot_cards.CANCELS, task.node_status)
+                self.play(task, [(WITHOUT_CARD_DIALOG, {})])
+                self.assertFalse(task.disabled)
