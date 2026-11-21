@@ -18,7 +18,7 @@ class Globals(QObject):
         # Everything English-only lives under src/en/ so upstream's files stay untouched.
         from src.ui.SponsorDialog import install_sponsor_dialog
         from src.en import (  # noqa: E501
-            battle, boss, claims, cursor, dashboard, deck, desire, devices, dialogue, dice, draft, enter, epiphany, equipment, etched_memory, events, forms, frame_log, game_language, heal, humanize,
+            battle, battle_missions, boss, claims, cursor, dashboard, deck, desire, devices, dialogue, dice, draft, enter, epiphany, equipment, etched_memory, events, forms, frame_log, game_language, heal, humanize,
             kept_forms, log_text, loot_cards, meditation, memory_limit, monitors, navigation, obtain, observe, ocr_text, overrides, persona, picker, piles, pins, reobserve, remote, rest, rewards, sections,
             reason, route, shell, shop, shutdown, spend_guard, story, story_relay, summary, task_list, templates, notify, stuck, stuck_stop, upload, zero_system,
         )
@@ -79,6 +79,8 @@ class Globals(QObject):
         stuck_stop.apply()
         # After story, so a short team stops Story before the hand-over sees it, and after stuck_stop, so the stop stays first in Chaos's list.
         story_relay.apply()
+        # Before claims, which wraps the handler lists as it finds them.
+        battle_missions.apply()
         rest.apply()
         meditation.apply()
         obtain.apply()

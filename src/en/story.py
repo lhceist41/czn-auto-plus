@@ -24,6 +24,9 @@ logger = Logger.get_logger(__name__)
 SKIP_IMAGE = Path(__file__).with_name("images") / "story_skip.png"
 AUTO_IMAGE = Path(__file__).with_name("images") / "story_auto.png"
 FAST_FORWARD_IMAGE = Path(__file__).with_name("images") / "story_fast_forward.png"
+# A Battle Mission's fight draws Auto as crossed swords in the same ring, cut above the key label from a capture with it off.
+# It scored 0.92-1.00 off and 0.72-0.85 lit on the Battle Mission captures, and 0.62 at most on the dialogue bar crops.
+BATTLE_AUTO_IMAGE = Path(__file__).with_name("images") / "battle_auto.png"
 # Where the bar sits, as `(left, top, right, bottom)` screen fractions. It spans x 1405-1920 and y 24-90 at 1080p.
 BAR = (0.70, 0.0, 1.0, 0.10)
 # How closely each icon has to match. Both scored 0.99 or more on the bar they were cut from, and Skip 0.80-0.85 on tinted
@@ -119,6 +122,18 @@ def auto_off(frame):
     return button_off(frame, AUTO_IMAGE, AUTO_REGION)
 
 
+def battle_auto_off(frame):
+    """Find a battle's Auto on the bar while it is off, drawn as the dialogue's play icon or as crossed swords.
+
+    Args:
+        frame: The current capture, or None when there is none.
+
+    Returns:
+        The button's centre as `(x, y)` screen fractions, or None when it is lit, locked or not drawn.
+    """
+    return auto_off(frame) or button_off(frame, BATTLE_AUTO_IMAGE, AUTO_REGION)
+
+
 def tap(task, point):
     """Hover a bar button and then tap it, as upstream taps every button.
 
@@ -197,7 +212,7 @@ def turning_auto_on(auto_check):
     """
     def handle_battle_auto_check(task):
         on_battle = auto_check(task)
-        point = auto_off(frame_of(task)) if on_battle else None
+        point = battle_auto_off(frame_of(task)) if on_battle else None
         if point is not None:
             task.log_info("battle Auto is off, turning it on")
             tap(task, point)
