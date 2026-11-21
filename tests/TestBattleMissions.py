@@ -101,6 +101,12 @@ RESULT_B1 = (
     ("Win the battle within 15 turns", 0.71, 0.43), ("Win the battle within 12 turns", 0.711, 0.502), ("Reward", 0.606, 0.626),
     ("45", 0.615, 0.746), ("36,000", 0.779, 0.746), ("Next Mission", 0.693, 0.918), ("确认", 0.917, 0.917),
 )
+# A story chapter's node panel: its Enter where a mission's detail has one, and the same play arrow on its node.
+CHAPTER_NODE = (
+    ("故事", 0.106, 0.047), ("Chapter 1", 0.418, 0.040), ("#08", 0.697, 0.176), ("I hear Rei has come back to us.", 0.739, 0.333),
+    ("The Reason We Fight", 0.365, 0.436), ("#07", 0.032, 0.504), ("#08", 0.419, 0.504), ("Reward", 0.665, 0.731),
+    ("28,000", 0.907, 0.854), ("进入", 0.817, 0.931),
+)
 NEXT_MISSION = (0.693, 0.918)
 CONFIRM = (0.917, 0.917)
 
@@ -503,6 +509,95 @@ class TestTabs(Clocked):
         self.assertTappedAt(B2_ARROW)
 
 
+class TestOffNormal(Clocked):
+    """A list or detail on another tab is held and stopped even on a pass where OCR misses the list's title or caption."""
+
+    def off_normal(self, crop, tab):
+        frame = frame_with(crop)
+        return without_tabs(frame) if tab is None else pills_moved(frame, "NORMAL", tab)
+
+    def assertStoppedOn(self, tab, answers):
+        self.assertTrue(all(answers))
+        self.assertEqual([], self.story.taps)
+        self.assertFalse(self.story.enabled)
+        if tab is None:
+            self.assertIn("could not tell which difficulty tab is selected", self.story.notifications[0])
+        else:
+            self.assertEqual([f"Battle Missions: the {tab} tab is selected and Story plays NORMAL only, so it stopped. "
+                              "Select NORMAL, then start Story again."], self.story.notifications)
+
+    def test_a_list_pass_ocr_did_not_fully_read_is_held_and_stopped_off_normal(self):
+        for tab in ("HARD", "ABYSS", None):
+            for name, texts in (("title missed", replaced(LIST_B2, "Battle Missions", None)),
+                                ("NORMAL caption missed", replaced(LIST_B2, "NORMAL", None)),
+                                ("only HARD read", (("HARD", 0.703, 0.932),)), ("only ABYSS read", (("ABYSS", 0.883, 0.932),))):
+                with self.subTest(tab=tab, texts=name):
+                    self.setUp()
+                    answers = self.passes(battle_missions.handle_list_off_normal, texts, self.off_normal("mission_list_b2", tab), 5)
+                    self.assertStoppedOn(tab, answers)
+
+    def test_a_list_on_hard_or_abyss_with_no_line_read_is_known_by_its_arrow(self):
+        for tab in ("HARD", "ABYSS"):
+            with self.subTest(tab=tab):
+                self.setUp()
+                answers = self.passes(battle_missions.handle_list_off_normal, (), self.off_normal("mission_list_b2", tab), 5)
+                self.assertStoppedOn(tab, answers)
+
+    def test_a_detail_off_normal_is_held_and_stopped_before_enter(self):
+        for tab in ("HARD", "ABYSS", None):
+            for name, texts in (("read", DETAIL_B2), ("title missed", replaced(DETAIL_B2, "Battle Missions", None)),
+                                ("NORMAL caption missed", replaced(DETAIL_B2, "NORMAL", None))):
+                with self.subTest(tab=tab, texts=name):
+                    self.setUp()
+                    answers = self.passes(battle_missions.handle_detail_off_normal, texts,
+                                          self.off_normal("mission_detail_b2", tab), 5)
+                    self.assertStoppedOn(tab, answers)
+
+    def test_a_detail_on_hard_with_only_enter_read_is_known_by_its_arrow(self):
+        answers = self.passes(battle_missions.handle_detail_off_normal, (("进入", 0.817, 0.931),),
+                              self.off_normal("mission_detail_b2", "HARD"), 5)
+        self.assertStoppedOn("HARD", answers)
+
+    def test_normal_is_left_as_it_was(self):
+        for name, handler, texts, crop in (
+                ("list, title missed", battle_missions.handle_list_off_normal, replaced(LIST_B2, "Battle Missions", None),
+                 "mission_list_b2"),
+                ("list, caption missed", battle_missions.handle_list_off_normal, replaced(LIST_B2, "NORMAL", None), "mission_list_b2"),
+                ("list, dimmed", battle_missions.handle_list_off_normal, replaced(LIST_TUTORIAL, "NORMAL", None),
+                 "mission_list_tutorial"),
+                ("detail", battle_missions.handle_detail_off_normal, DETAIL_B2, "mission_detail_b2")):
+            with self.subTest(screen=name):
+                self.assertEqual([False] * 3, self.passes(handler, texts, frame_with(crop), 3))
+        self.assertEqual([], self.story.taps)
+        self.assertTrue(self.story.enabled)
+
+    def test_screens_that_are_not_battle_missions_are_declined(self):
+        """A chapter node shows the same arrow and Enter, and lobby, Chaos and rescue screens read as HARD or ABYSS."""
+        unreadable = without_tabs(frame_with("mission_list_b2"))
+        hard_row = pills_moved(frame_with("mission_tabs_normal"), "NORMAL", "HARD")
+        for name, texts, frame in (("chapter node", CHAPTER_NODE, unreadable), ("HARD read, no arrow", HUB, hard_row),
+                                   ("formation", FORMATION_B2, hard_row), ("result", RESULT_B1, hard_row)):
+            for handler in (battle_missions.handle_list_off_normal, battle_missions.handle_detail_off_normal):
+                with self.subTest(screen=name, handler=handler.__name__):
+                    self.assertEqual([False] * 3, self.passes(handler, texts, frame, 3))
+        self.assertEqual([], self.story.taps)
+        self.assertTrue(self.story.enabled)
+
+    def test_a_detail_without_enter_is_left_to_the_list(self):
+        texts = replaced(DETAIL_B2, "进入", None)
+        frame = self.off_normal("mission_detail_b2", "HARD")
+        self.assertEqual([False] * 3, self.passes(battle_missions.handle_detail_off_normal, texts, frame, 3))
+
+    def test_a_reading_that_gives_way_to_normal_counts_afresh(self):
+        """A detail still fading in reads no tab for a moment; once NORMAL reads, a later moment like it starts over."""
+        normal = frame_with("mission_detail_b2")
+        self.passes(battle_missions.handle_detail_off_normal, DETAIL_B2, without_tabs(normal), 2)
+        self.passes(battle_missions.handle_detail_off_normal, DETAIL_B2, normal, 1)
+        self.assertEqual([True], self.passes(battle_missions.handle_detail_off_normal, DETAIL_B2, without_tabs(normal), 1))
+        self.assertTrue(self.story.enabled)
+        self.assertEqual([], self.story.taps)
+
+
 class TestStops(Clocked):
 
     def test_a_lock_popup_stops_story_with_its_unlock_text(self):
@@ -606,6 +701,16 @@ class StoryList(Clocked):
     def names(self):
         return [handler.__name__ for handler in self.module.PAGE_HANDLERS]
 
+    def with_arrow_feature(self, point):
+        """Have upstream's `enterbattle` template find a play arrow, as it does on the list at 0.99.
+
+        Args:
+            point: The arrow's centre as screen fractions.
+        """
+        arrow = FakeBox("enterbattle", *point, width=30, height=37)
+        arrow.confidence = 0.99
+        self.story.find_feature = lambda feature_name=None, **kwargs: [arrow] if feature_name == "enterbattle" else []
+
     def one_pass(self, texts, frame=None):
         """Run Story's list once over a screen, as its run loop does.
 
@@ -635,6 +740,11 @@ class TestStoryList(StoryList):
         self.assertLess(names.index("handle_mission_list"), names.index("handle_enter_story_or_battle"))
         self.assertLess(names.index("handle_story_hub"), names.index("handle_enter_story_or_battle"))
         self.assertLess(names.index("handle_enter"), names.index("handle_mission_list"))
+        self.assertEqual(1, names.count("handle_list_off_normal"))
+        self.assertEqual(1, names.count("handle_detail_off_normal"))
+        self.assertEqual(names.index("handle_mission_list") + 1, names.index("handle_list_off_normal"))
+        self.assertEqual(names.index("handle_list_off_normal") + 1, names.index("handle_enter_story_or_battle"))
+        self.assertEqual(names.index("handle_detail_off_normal") + 1, names.index("handle_enter"))
 
     def test_no_other_mode_gets_them(self):
         """Even a mode holding every handler they go in front of."""
@@ -669,6 +779,39 @@ class TestStoryList(StoryList):
         self.assertEqual({"handle_mission_list"}, claimed)
         self.assertEqual([], self.story.taps)
         self.assertFalse(self.story.enabled)
+
+    def test_a_list_off_normal_that_ocr_did_not_fully_read_never_reaches_storys_own_arrow_tap(self):
+        self.with_arrow_feature(B2_ARROW)
+        for tab in ("HARD", "ABYSS"):
+            for name, texts in (("title missed", replaced(LIST_B2, "Battle Missions", None)),
+                                ("NORMAL caption missed", replaced(LIST_B2, "NORMAL", None))):
+                with self.subTest(tab=tab, texts=name):
+                    self.story.enabled, self.story.taps = True, []
+                    frame = pills_moved(frame_with("mission_list_b2"), "NORMAL", tab)
+                    claimed = {self.one_pass(texts, frame) for _ in range(5)}
+                    self.assertEqual({"handle_list_off_normal"}, claimed)
+                    self.assertEqual([], self.story.taps)
+                    self.assertFalse(self.story.enabled)
+
+    def test_a_normal_list_ocr_did_not_fully_read_still_reaches_storys_own_arrow_tap(self):
+        self.with_arrow_feature(B2_ARROW)
+        texts = replaced(LIST_B2, "Battle Missions", None)
+        self.assertEqual("handle_enter_story_or_battle", self.one_pass(texts, frame_with("mission_list_b2")))
+        self.assertTappedAt(B2_ARROW)
+
+    def test_a_detail_off_normal_never_reaches_enter(self):
+        for tab in ("HARD", "ABYSS"):
+            with self.subTest(tab=tab):
+                self.story.enabled, self.story.taps = True, []
+                frame = pills_moved(frame_with("mission_detail_b2"), "NORMAL", tab)
+                claimed = {self.one_pass(DETAIL_B2, frame) for _ in range(5)}
+                self.assertEqual({"handle_detail_off_normal"}, claimed)
+                self.assertEqual([], self.story.taps)
+                self.assertFalse(self.story.enabled)
+
+    def test_a_chapter_node_still_goes_through_enter(self):
+        self.assertEqual("handle_enter", self.one_pass(CHAPTER_NODE, without_tabs(frame_with("mission_list_b2"))))
+        self.assertEqual(1, len(self.story.taps))
 
     def test_the_list_never_reaches_storys_own_arrow_tap(self):
         """Story's entrance tap would take whatever play arrow it saw, the Promotion card's included."""

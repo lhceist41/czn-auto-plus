@@ -4,8 +4,8 @@ Story already presses Enter on a mission's detail and formation and Confirm on i
 the Story hub to the list, and on the list it tapped whatever play arrow it saw first, the Promotion Mission's included.
 The game moves the arrow to the next open card after a clear and scrolls it into view, so the arrow alone says which
 mission is next. Each mission is started at most twice a run, so a lost fight is tried once more and never forever. A
-list on any tab but NORMAL, a card Story cannot name, a lock, the growth tutorial and a list with nothing open stop the
-run with nothing pressed.
+list or a mission's detail on any tab but NORMAL, a card Story cannot name, a lock, the growth tutorial and a list with
+nothing open stop the run with nothing pressed.
 """
 
 import re
@@ -43,6 +43,10 @@ TAB_LIT = 20
 TAB_UNLIT = -10
 DETAIL_ENTER = "进入"
 DETAIL_ENTER_REGION = (0.60, 0.85, 1.0, 1.0)
+# Where `handle_enter` presses any "进入" on Story's screens.
+ENTER_REGION = (0.017, 0.771, 0.996, 0.992)
+# Each tab's caption, read in its pill's span of the tab row.
+TAB_CAPTIONS = tuple((name, (left, LIST_TAB_REGION[1], right, LIST_TAB_REGION[3])) for name, left, right in TAB_PILLS)
 # The gold play arrow on the next open card, cut from a capture of the list, and the row of cards it sits on. It scored
 # 0.999-1.000 on the open card of the two lists captured with one, and 0.84 at most on lists with no card open.
 ARROW_IMAGE = Path(__file__).with_name("images") / "mission_arrow.png"
@@ -136,6 +140,28 @@ def selected_tab(frame):
     return lit[0] if len(lit) == 1 and len(unlit) == len(TAB_PILLS) - 1 else None
 
 
+def mission_screen(task, frame, tab):
+    """Say whether the screen is the Battle Missions list or a mission's detail, on any tab and with a line OCR missed.
+
+    The tab reading alone is no test, since lobby, Chaos and rescue screens read as HARD or ABYSS, and neither is the
+    arrow, since Story's chapter map shows the same one. So it takes the list's title or a tab's caption read by OCR, or
+    the arrow on the row of cards with HARD or ABYSS read off the pills, which no other capture shows.
+
+    Args:
+        task: The running task, whose `all_texts` holds the current OCR pass.
+        frame: The current capture, or None when there is none.
+        tab: What `selected_tab` read off the same frame.
+
+    Returns:
+        True on the list or a mission's detail.
+    """
+    if text_in_region(task, LIST_TITLE, LIST_TITLE_REGION) is not None:
+        return True
+    if any(text_in_region(task, name, region) is not None for name, region in TAB_CAPTIONS):
+        return True
+    return tab in ("HARD", "ABYSS") and find_icon(frame, ARROW_IMAGE, ARROW_MATCH, CARD_ROW, grey) is not None
+
+
 def worded(box):
     """Say whether a box holds more than the one or two characters OCR makes of an icon, such as `▲` or `D`."""
     return len(box.name.strip()) > 2
@@ -213,6 +239,23 @@ def stop(task, message):
     announce(task, message)
     task.disable()
     return True
+
+
+def stop_off_normal(task, tab):
+    """Stop Story on a list or detail whose tab does not read NORMAL, with nothing pressed.
+
+    Args:
+        task: Story mode.
+        tab: The tab read, or None when none could be.
+
+    Returns:
+        True, which claims the frame.
+    """
+    if tab is None:
+        return stop(task, "Battle Missions: Story could not tell which difficulty tab is selected, so it stopped. "
+                          "Select NORMAL, then start Story again.")
+    return stop(task, f"Battle Missions: the {tab} tab is selected and Story plays NORMAL only, so it stopped. "
+                      "Select NORMAL, then start Story again.")
 
 
 def settled(task, reading):
@@ -310,11 +353,7 @@ def handle_mission_list(task):
     if not settled(task, reading):
         return True
     if reading[0] == "tab":
-        if tab is None:
-            return stop(task, "Battle Missions: Story could not tell which difficulty tab is selected, so it stopped. "
-                              "Select NORMAL, then start Story again.")
-        return stop(task, f"Battle Missions: the {tab} tab is selected and Story plays NORMAL only, so it stopped. "
-                          "Select NORMAL, then start Story again.")
+        return stop_off_normal(task, tab)
     if reading[0] == "none":
         cards = ", ".join(missions_read(task))
         popup = popup_over(task) if not cards else ""
@@ -334,6 +373,59 @@ def handle_mission_list(task):
     task.log_info(f"Battle Missions: starting {mission} (attempt {starts + 1} of {MAX_STARTS})")
     tap(task, point)
     return True
+
+
+def held_off_normal(task):
+    """Hold Story on the list or a mission's detail whose tab does not read NORMAL, and stop it once that reading holds.
+
+    Args:
+        task: Story mode, whose `all_texts` and `frame` hold the current screen.
+
+    Returns:
+        True when Story was held or stopped, which claims the frame, or False on NORMAL and on any other screen.
+    """
+    frame = frame_of(task)
+    tab = selected_tab(frame)
+    if tab == LIST_TAB:
+        # A reading of another tab that did not hold, as on a screen still fading in, must not count towards a later stop.
+        pending = vars(task).get(PENDING)
+        if pending is not None and pending[0][0] == "tab":
+            vars(task).pop(PENDING)
+        return False
+    if not mission_screen(task, frame, tab):
+        return False
+    if not settled(task, ("tab", tab)):
+        return True
+    return stop_off_normal(task, tab)
+
+
+def handle_list_off_normal(task):
+    """Keep Story's own arrow tap off the list unless its NORMAL tab is selected.
+
+    `handle_mission_list` takes only a pass where OCR reads the list's title and NORMAL caption. Any other pass reaches
+    `handle_enter_story_or_battle`, whose template matches the arrow even on a list still fading in, and it taps at once.
+
+    Args:
+        task: Story mode, whose `all_texts` and `frame` hold the current screen.
+
+    Returns:
+        True when Story was held or stopped, which claims the frame.
+    """
+    return held_off_normal(task)
+
+
+def handle_detail_off_normal(task):
+    """Keep Story's Enter off a mission's detail unless its NORMAL tab is selected, since Enter starts the mission.
+
+    Args:
+        task: Story mode, whose `all_texts` and `frame` hold the current screen.
+
+    Returns:
+        True when Story was held or stopped, which claims the frame.
+    """
+    if text_in_region(task, DETAIL_ENTER, ENTER_REGION) is None:
+        return False
+    return held_off_normal(task)
 
 
 def forgetting_missions(disable):
@@ -360,6 +452,9 @@ def install():
     # Ahead of `handle_enter_story_or_battle`, which taps the leftmost play arrow on any screen, the Promotion card's too.
     insert_before("handle_enter_story_or_battle", handle_story_hub, only=("utils_story",))
     insert_before("handle_enter_story_or_battle", handle_mission_list, only=("utils_story",))
+    # A list or detail on another tab is kept from Story's entrance tap and its Enter, either of which starts the mission.
+    insert_before("handle_enter_story_or_battle", handle_list_off_normal, only=("utils_story",))
+    insert_before("handle_enter", handle_detail_off_normal, only=("utils_story",))
 
 
 def apply():
