@@ -11,6 +11,7 @@ which only a `main_debug.py` run serves.
 
 import base64
 import contextlib
+import http.client
 import json
 import threading
 import time
@@ -47,8 +48,9 @@ def call(command, **kwargs):
         The command's result, decoded from JSON.
 
     Raises:
-        ToolError: The debug run is not answering, refused the request, or the command failed there. Any other
-            exception reaches Claude as a bare "Error executing tool", without its message.
+        ToolError: The debug run is not answering, refused the request, broke off or garbled its reply, or the
+            command failed there. Any other exception reaches Claude as a bare "Error executing tool", without its
+            message.
     """
     request = urllib.request.Request(f"{URL}/{command}", data=json.dumps(kwargs).encode("utf-8"), method="POST",
                                      headers={"Content-Type": "application/json"})
@@ -57,9 +59,26 @@ def call(command, **kwargs):
             reply = json.load(response)
     except urllib.error.HTTPError as error:
         text = refusal(error)
-        raise ToolError(f"the debug run answered {command} with HTTP {error.code} {error.reason}{text}") from error
+        status = f"HTTP {error.code} {error.reason}".rstrip()
+        raise ToolError(f"the debug run answered {command} with {status}{text}") from error
     except urllib.error.URLError as error:
         raise ToolError(f"nothing answering on {URL} - start `python main_debug.py` first ({error.reason})") from error
+    # `urlopen` wraps only a failure to connect or send in `URLError`; these come after the request went out.
+    except TimeoutError as error:
+        raise ToolError(f"the debug run accepted {command} but then sent nothing for {TIMEOUT} s") from error
+    except (ConnectionError, http.client.IncompleteRead) as error:
+        raise ToolError(f"the debug run hung up on {command} before its reply was complete ({error})") from error
+    except http.client.HTTPException as error:
+        raise ToolError(f"the debug run answered {command} with something that is not HTTP "
+                        f"({type(error).__name__}: {error})") from error
+    # Besides `JSONDecodeError`, `json.load` raises a plain `ValueError` for an integer past Python's digit limit and
+    # `RecursionError` for nesting past the recursion limit.
+    except (ValueError, RecursionError) as error:
+        raise ToolError(f"the debug run answered {command} with a reply that is not valid JSON ({error})") from error
+    except OSError as error:
+        raise ToolError(f"the debug run's reply to {command} could not be read ({error})") from error
+    if not isinstance(reply, dict) or "ok" not in reply or ("result" if reply["ok"] else "error") not in reply:
+        raise ToolError(f"the debug run answered {command} with JSON that is not a reply: {json.dumps(reply)[:200]}")
     if not reply["ok"]:
         raise ToolError(reply["error"])
     return reply["result"]
@@ -68,7 +87,8 @@ def call(command, **kwargs):
 def refusal(error):
     """Return the text an HTTP error came with, as `": <text>"`, or nothing when it has none worth showing.
 
-    A single read, so a body that trickles or never comes costs one `TIMEOUT`, not one per byte.
+    One socket read for a body sent with a Content-Length or none, so a body that trickles or never comes costs one
+    `TIMEOUT`, not one per byte. A chunked body has its size line read whole first, which a peer can stretch.
 
     Args:
         error: The `urllib.error.HTTPError` raised for the reply.

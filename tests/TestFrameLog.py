@@ -1,5 +1,6 @@
 """Check the debug-run tools: one saved frame per log line a second, and the remote control's seat in the real mode lists."""
 
+import errno
 import http.client
 import http.server
 import importlib.util
@@ -7,6 +8,7 @@ import json
 import logging
 import os
 import socket
+import struct
 import sys
 import tempfile
 import threading
@@ -211,7 +213,7 @@ def serve_remote(test):
     return server.server_port
 
 
-def serve_error(test, status, body=b"", content_type="text/plain; charset=utf-8", length=None):
+def serve_error(test, status, body=b"", content_type="text/plain; charset=utf-8", length=None, reason=None):
     """Answer every POST with one HTTP error, standing in for a port that refuses, and return its port.
 
     Args:
@@ -221,6 +223,7 @@ def serve_error(test, status, body=b"", content_type="text/plain; charset=utf-8"
         content_type: The Content-Type to send.
         length: The Content-Length to send instead of the body's own size. A longer one keeps the reply open, as a
             stalled port would.
+        reason: The reason phrase to send instead of the status's own, such as an empty one.
     """
     release = threading.Event()
 
@@ -229,7 +232,7 @@ def serve_error(test, status, body=b"", content_type="text/plain; charset=utf-8"
         def do_POST(self):
             # Read first, so no request bytes are left to make Windows reset the connection under the reply.
             self.rfile.read(int(self.headers.get("Content-Length") or 0))
-            self.send_response(status)
+            self.send_response(status, reason)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body) if length is None else length))
             self.end_headers()
@@ -247,6 +250,53 @@ def serve_error(test, status, body=b"", content_type="text/plain; charset=utf-8"
     test.addCleanup(server.shutdown)
     test.addCleanup(release.set)
     return server.server_port
+
+
+def serve_raw(test, answer):
+    """Read each request on a free loopback port whole, then let `answer` reply on the bare socket, and return the port.
+
+    Args:
+        test: The test the server lives for.
+        answer: Called with the connected socket and an event set at cleanup; whatever it sends is the reply, and the
+            socket closes when it returns.
+    """
+    listener = socket.create_server(("127.0.0.1", 0))
+    listener.settimeout(0.1)
+    done = threading.Event()
+
+    def serve():
+        while not done.is_set():
+            try:
+                connection, _ = listener.accept()
+            except TimeoutError:
+                continue
+            except OSError:
+                return
+            with connection:
+                connection.settimeout(5)
+                data = b""
+                # An empty read means the caller closed early: stop instead of spinning on it.
+                while b"\r\n\r\n" not in data and (chunk := connection.recv(65536)):
+                    data += chunk
+                head, ended, body = data.partition(b"\r\n\r\n")
+                length = next((int(line.split(b":")[1]) for line in head.split(b"\r\n")
+                               if line.lower().startswith(b"content-length:")), 0)
+                while len(body) < length and (chunk := connection.recv(65536)):
+                    body += chunk
+                if ended and len(body) >= length:
+                    answer(connection, done)
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    test.addCleanup(listener.close)
+    test.addCleanup(thread.join, 5)
+    test.addCleanup(done.set)
+    return listener.getsockname()[1]
+
+
+def reply_head(length):
+    """Return the head of a 200 JSON reply promising `length` body bytes."""
+    return f"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {length}\r\n\r\n".encode("ascii")
 
 
 def raw_post(port, headers, host=True, command="status", body=b"{}", length=None, late=False):
@@ -661,6 +711,117 @@ class TestRemote(unittest.TestCase):
                 czn_mcp.call("status")
         self.assertTrue(str(raised.exception).startswith(f"nothing answering on http://127.0.0.1:{port} - start"),
                         str(raised.exception))
+
+    def test_the_mcp_bridge_still_says_nothing_answers_when_the_connect_times_out(self):
+        """A connect timeout is still no debug run to talk to, unlike a run that accepted the request and went quiet."""
+        def time_out(*args, **kwargs):
+            raise TimeoutError("timed out")
+
+        with standing_in(socket, create_connection=time_out), standing_in(czn_mcp, URL="http://127.0.0.1:47999"):
+            with self.assertRaises(czn_mcp.ToolError) as raised:
+                czn_mcp.call("status")
+        self.assertEqual("nothing answering on http://127.0.0.1:47999 - start `python main_debug.py` first (timed out)",
+                         str(raised.exception))
+
+    def test_the_mcp_bridge_names_the_command_when_the_reply_breaks_off_or_is_garbled(self):
+        """Anything but a `ToolError` reaches Claude as a bare "Error executing tool", with no reason at all."""
+        def hold(connection, done):
+            done.wait(5)
+
+        def hang_up(connection, done):
+            pass
+
+        def cut_off(connection, done):
+            connection.sendall(reply_head(100) + b'{"ok": tr')
+
+        def reset(connection, done):
+            connection.sendall(reply_head(100) + b'{"ok": tr')
+            time.sleep(0.2)
+            # A zero linger makes the close a reset instead of an orderly end.
+            connection.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+
+        def send(data):
+            return lambda connection, done: connection.sendall(data)
+
+        # A shown text ending in "..." is only the start: the rest is the OS's or the decoder's own wording.
+        hung_up = "the debug run hung up on status before its reply was complete ("
+        not_json = "the debug run answered status with a reply that is not valid JSON ("
+        huge = b'{"ok": true, "result": ' + b"1" * 5000 + b"}"
+        deep = b"[" * 200000 + b"]" * 200000
+        cases = {
+            "no head in time": (hold, "the debug run accepted status but then sent nothing for 0.5 s"),
+            "closed without answering": (hang_up, hung_up + "Remote end closed connection without response)"),
+            "reset mid-body": (reset, hung_up + "..."),
+            "body cut off": (cut_off, hung_up + "IncompleteRead(9 bytes read, 91 more expected))"),
+            "not HTTP": (send(b"hello\r\n\r\n"), "the debug run answered status with something that is not HTTP "
+                                                 "(BadStatusLine: hello\r\n)"),
+            "not JSON": (send(reply_head(5) + b"notjs"), not_json + "Expecting value: line 1 column 1 (char 0))"),
+            "not UTF-8": (send(reply_head(3) + b'"\xff"'), not_json + "..."),
+            "an integer past the digit limit": (send(reply_head(len(huge)) + huge),
+                                                not_json + "Exceeds the limit (4300 digits)..."),
+            "nesting past the recursion limit": (send(reply_head(len(deep)) + deep),
+                                                 not_json + "maximum recursion depth exceeded..."),
+        }
+        for case, (answer, shown) in cases.items():
+            with self.subTest(case):
+                port = serve_raw(self, answer)
+                with standing_in(czn_mcp, URL=f"http://127.0.0.1:{port}", TIMEOUT=0.5):
+                    started = time.monotonic()
+                    with self.assertRaises(czn_mcp.ToolError) as raised:
+                        czn_mcp.call("status")
+                    seconds = time.monotonic() - started
+                message = str(raised.exception)
+                if shown.endswith("..."):
+                    self.assertTrue(message.startswith(shown[:-3]), message)
+                else:
+                    self.assertEqual(shown, message)
+                self.assertLess(seconds, 3)
+
+    def test_the_mcp_bridge_names_the_command_for_json_that_is_not_a_reply(self):
+        """Without `ok`, or what `ok` promises, a reply would end in a bare `KeyError` or `TypeError`."""
+        cases = {
+            "no ok": (b'{"result": 1}', 'JSON that is not a reply: {"result": 1}'),
+            "a list": (b"[1]", "JSON that is not a reply: [1]"),
+            "ok without a result": (b'{"ok": true}', 'JSON that is not a reply: {"ok": true}'),
+            "a failure without an error": (b'{"ok": false}', 'JSON that is not a reply: {"ok": false}'),
+        }
+        for case, (body, shown) in cases.items():
+            with self.subTest(case):
+                answer = lambda connection, done, body=body: connection.sendall(reply_head(len(body)) + body)
+                port = serve_raw(self, answer)
+                with standing_in(czn_mcp, URL=f"http://127.0.0.1:{port}", TIMEOUT=2):
+                    with self.assertRaises(czn_mcp.ToolError) as raised:
+                        czn_mcp.call("status")
+                self.assertEqual(f"the debug run answered status with {shown}", str(raised.exception))
+        failed = b'{"ok": false, "error": "KeyError: \'x\'"}'
+        port = serve_raw(self, lambda connection, done: connection.sendall(reply_head(len(failed)) + failed))
+        with standing_in(czn_mcp, URL=f"http://127.0.0.1:{port}", TIMEOUT=2):
+            with self.assertRaises(czn_mcp.ToolError) as raised:
+                czn_mcp.call("status")
+        self.assertEqual("KeyError: 'x'", str(raised.exception))
+
+    def test_the_mcp_bridge_names_the_command_when_its_reply_cannot_be_read(self):
+        """Any other `OSError` while reading, such as a network reset code, would otherwise reach Claude bare."""
+        dropped = OSError(errno.ENETRESET, "the network dropped the connection")
+
+        def drop(*args, **kwargs):
+            raise dropped
+
+        body = b'{"ok": true, "result": 1}'
+        port = serve_raw(self, lambda connection, done: connection.sendall(reply_head(len(body)) + body))
+        with standing_in(http.client.HTTPResponse, read=drop), standing_in(czn_mcp, URL=f"http://127.0.0.1:{port}"):
+            with self.assertRaises(czn_mcp.ToolError) as raised:
+                czn_mcp.call("status")
+        self.assertIs(OSError, type(dropped))
+        self.assertEqual(f"the debug run's reply to status could not be read ({dropped})", str(raised.exception))
+
+    def test_the_mcp_bridge_adds_no_stray_space_for_an_empty_reason_phrase(self):
+        """The port always sends a phrase, but another server on the port need not."""
+        port = serve_error(self, 403, b"refused: nope", reason="")
+        with standing_in(czn_mcp, URL=f"http://127.0.0.1:{port}"):
+            with self.assertRaises(czn_mcp.ToolError) as raised:
+                czn_mcp.call("status")
+        self.assertEqual("the debug run answered status with HTTP 403: refused: nope", str(raised.exception))
 
     def test_a_request_a_web_page_could_send_runs_nothing(self):
         """Loopback alone lets any page open in a browser here click, start a mode or end the app through the port."""
