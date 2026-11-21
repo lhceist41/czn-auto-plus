@@ -214,6 +214,33 @@ class TestEnglishClient(Checked):
                 self.assertEqual([], task.notifications)
                 self.assertEqual(language_check.ENGLISH, vars(task)[language_check.TALLY].verdict())
 
+    def test_two_screens_that_alternate_for_many_passes_still_let_a_third_settle_the_language(self):
+        """A run can bounce between two screens its handlers miss, or read one still screen two ways by turns."""
+        for first, second in ((TITLE, LOBBY), (LOBBY, LOBBY[:-1] + ["APromise"])):
+            rest = [frame for frame in ENGLISH_RUN if frame not in (first, second)]
+            frames = [first, second] * language_check.READS + rest
+            with self.subTest(first=first[:2], setting=TRADITIONAL):
+                self.setting = TRADITIONAL
+                task = FakeTask(frames)
+                claimed = self.run_frames(task, len(frames))
+                self.assertIsNotNone(claimed)
+                self.assertGreater(claimed, 2 * language_check.READS)
+                self.assertEqual([TRADITIONAL_ON_ENGLISH], task.notifications)
+                self.assertLessEqual(len(task.reads), 2 + len(rest))
+            with self.subTest(first=first[:2], setting=ENGLISH):
+                self.setting = ENGLISH
+                task = FakeTask(frames)
+                self.assertIsNone(self.run_frames(task, len(frames)))
+                self.assertEqual([], task.notifications)
+                self.assertEqual(language_check.ENGLISH, vars(task)[language_check.TALLY].verdict())
+
+    def test_two_screens_that_alternate_spend_one_raw_read_each(self):
+        self.setting = TRADITIONAL
+        task = FakeTask([TITLE, LOBBY] * language_check.READS * 2)
+        self.assertIsNone(self.run_frames(task, language_check.READS * 4))
+        self.assertEqual(2, len(task.reads))
+        self.assertFalse(vars(task)[language_check.TALLY].done)
+
     def test_frames_that_each_fall_short_never_stop_together(self):
         self.setting = TRADITIONAL
         task = FakeTask(SPARSE + [[]])

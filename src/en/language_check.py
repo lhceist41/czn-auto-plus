@@ -36,7 +36,8 @@ FRAMES = 3
 WORDS = 20
 LEAD = 4
 # Raw reads before a run the check cannot place is left alone, so it costs a few extra reads rather than one per frame.
-# A pass that reads the same as the last one is not read raw, so a screen that holds still spends none of them.
+# A pass that reads the same as one already read raw this run is not read raw again, so a screen that holds still, or
+# a run that bounces between two screens, spends a read only on what it has not read before.
 READS = 30
 
 ENGLISH = "English"
@@ -69,8 +70,8 @@ class Tally:
         self.cjk = 0
         self.other = 0
         self.seen = set()
-        # What the run's own reading showed at the last raw read.
-        self.shown = None
+        # What the run's own reading showed at each raw read so far.
+        self.shown = set()
         # Set once the check has nothing more to do this run, with or without a verdict.
         self.done = False
         self.stopped = False
@@ -165,9 +166,9 @@ def check_game_language(task):
     if tally.done:
         return False
     shown = tuple(box.name for box in getattr(task, "all_texts", None) or ())
-    if shown == tally.shown:
+    if shown in tally.shown:
         return False
-    tally.shown = shown
+    tally.shown.add(shown)
     tally.reads += 1
     try:
         tally.add(raw_texts(task))
