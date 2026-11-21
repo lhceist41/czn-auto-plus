@@ -414,15 +414,32 @@ def press_key(key):
 def hold(on=True):
     """Stop the bot acting on frames, or let it carry on. A held bot still reads every frame, so `texts` stays current.
 
+    A hold replies only once the page loop has come round to `handle_remote`, so no handler is mid-call and no input one
+    decided on before the hold can land after the reply. A click a handler decided on is left to land rather than
+    dropped, since the handler has already counted it.
+
     Args:
         on: True to hold the bot, False to release it.
+
+    Returns:
+        The status. A hold adds `taken`, and with False a `reason`: the loop did not come round in time, the bot stays
+        held, and a handler still busy may yet send what it decided on.
     """
-    if on:
-        _held.set()
-    else:
+    if not on:
         _held.clear()
-    logger.info(f"remote {'hold' if on else 'release'}")
-    return status()
+        logger.info("remote release")
+        return status()
+    _held.set()
+    logger.info("remote hold")
+    try:
+        on_bot_thread(lambda task: None)
+    except TimeoutError:
+        reason = (f"the page loop did not come round in {ACTION_TIMEOUT}s: no mode is running, or a battle or another "
+                  "handler still has the loop and may yet send an input it decided on. The bot stays held: take a "
+                  "screenshot before acting")
+        logger.warning(f"remote hold not taken yet: {reason}")
+        return {**status(), "taken": False, "reason": reason}
+    return {**status(), "taken": True}
 
 
 def settings(task=DEFAULT_TASK):

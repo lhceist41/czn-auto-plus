@@ -167,6 +167,36 @@ def run_when_queued(task, sender):
     sender.join(5)
 
 
+class PageLoop:
+    """Run `handle_remote` and then `handlers` on a thread of their own, frame after frame, as ok-script's page loop does:
+    the first handler to return True ends the frame."""
+
+    def __init__(self, test, *handlers, start=True):
+        """Start the loop, or with `start=False` leave it waiting until `go` is set."""
+        self.handlers = (remote.handle_remote,) + handlers
+        self.go = threading.Event()
+        self.done = threading.Event()
+        self.task = types.SimpleNamespace()
+        if start:
+            self.go.set()
+        self.thread = threading.Thread(target=self.run, daemon=True)
+        self.thread.start()
+        test.addCleanup(self.close)
+
+    def run(self):
+        self.go.wait()
+        while not self.done.is_set():
+            for handler in self.handlers:
+                if handler(self.task):
+                    break
+            time.sleep(0.001)
+
+    def close(self):
+        self.go.set()
+        self.done.set()
+        self.thread.join(5)
+
+
 def attempt(call, *args):
     """Call something and return its result, or the error it raised."""
     try:
@@ -417,6 +447,101 @@ class TestRemote(unittest.TestCase):
         remote._held.set()
         self.assertTrue(remote.handle_remote(task))
         self.assertIs(True, getattr(task, remote.HELD))
+
+    def test_a_hold_replies_only_after_the_page_loop_comes_round(self):
+        """Told the hold took while the loop has not come round, a caller clicks while the bot can still act."""
+        executor = idle_executor()
+        loop = PageLoop(self, start=False)
+        outcome = []
+        with standing_in(remote, _executor=lambda: executor):
+            caller = threading.Thread(target=lambda: outcome.append(attempt(remote.hold, True)))
+            caller.start()
+            caller.join(0.3)
+            self.assertTrue(caller.is_alive())
+            self.assertTrue(remote._held.is_set())
+            loop.go.set()
+            caller.join(5)
+        self.assertEqual(1, len(outcome))
+        self.assertIs(True, outcome[0]["taken"])
+        self.assertNotIn("reason", outcome[0])
+        self.assertIs(True, outcome[0]["held"])
+        self.assertTrue(remote._actions.empty())
+
+    def test_a_click_decided_before_the_hold_lands_before_the_reply(self):
+        """A click landing after the reply goes onto the screen the caller is already stepping through by hand."""
+        executor = idle_executor()
+        started = threading.Event()
+        clicks = []
+        calls = []
+
+        def deciding(task):
+            calls.append(1)
+            if clicks or started.is_set():
+                return False
+            started.set()
+            # The humanized pace delay a real handler waits before its click.
+            time.sleep(0.3)
+            clicks.append("decided")
+            return True
+
+        PageLoop(self, deciding)
+        self.assertTrue(started.wait(5))
+        with standing_in(remote, _executor=lambda: executor):
+            reply = remote.hold(True)
+        self.assertEqual(["decided"], clicks)
+        self.assertIs(True, reply["taken"])
+        frozen = len(calls)
+        time.sleep(0.1)
+        # Held, every frame ends at the remote handler, so nothing after it runs again.
+        self.assertEqual(frozen, len(calls))
+
+    def test_a_hold_the_loop_never_takes_says_so_and_stays_held(self):
+        """A caller told the hold took would act while a battle may still play the card it had picked."""
+        executor = idle_executor()
+        with standing_in(remote, _executor=lambda: executor, ACTION_TIMEOUT=0.05):
+            started = time.monotonic()
+            reply = remote.hold(True)
+        self.assertLess(time.monotonic() - started, 2)
+        self.assertIs(False, reply["taken"])
+        self.assertIn("did not come round", reply["reason"])
+        self.assertIn("screenshot", reply["reason"])
+        self.assertIs(True, reply["held"])
+        self.assertTrue(remote._held.is_set())
+        # The given-up wait never runs when the loop comes round late, and the bot is still held then.
+        self.assertTrue(remote.handle_remote(types.SimpleNamespace()))
+        self.assertTrue(remote._actions.empty())
+
+    def test_a_release_replies_at_once_with_nothing_to_wait_for(self):
+        """A release that waited on the loop would leave a bot whose loop is busy held for another 15 s."""
+        executor = idle_executor()
+        remote._held.set()
+        with standing_in(remote, _executor=lambda: executor):
+            started = time.monotonic()
+            reply = remote.hold(False)
+        self.assertLess(time.monotonic() - started, 1)
+        self.assertFalse(remote._held.is_set())
+        self.assertIs(False, reply["held"])
+        self.assertNotIn("taken", reply)
+        self.assertTrue(remote._actions.empty())
+
+    def test_the_remote_still_acts_on_a_held_bot(self):
+        """A hold that also stopped the remote's own actions would leave the caller nothing to step through the screen with."""
+        executor = idle_executor()
+        PageLoop(self)
+        with standing_in(remote, _executor=lambda: executor):
+            self.assertIs(True, remote.hold(True)["taken"])
+            self.assertEqual("sent", remote.on_bot_thread(lambda task: "sent"))
+
+    def test_the_mcp_hold_tool_passes_taken_and_its_reason_through(self):
+        """Dropped on the way, a hold the loop never took would read as one that did."""
+        port = serve_remote(self)
+        executor = idle_executor()
+        with standing_in(remote, _executor=lambda: executor, ACTION_TIMEOUT=0.05), \
+                standing_in(czn_mcp, URL=f"http://127.0.0.1:{port}"):
+            reply = czn_mcp.hold(True)
+        self.assertIs(False, reply["taken"])
+        self.assertIn("did not come round", reply["reason"])
+        self.assertIs(True, reply["held"])
 
     def test_a_late_action_that_starts_in_time_reports_what_it_did(self):
         """Told it timed out, a caller sends the same input again after the first one already landed."""
