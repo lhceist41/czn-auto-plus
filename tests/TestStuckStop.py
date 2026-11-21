@@ -1,4 +1,4 @@
-"""Check that a Chaos or Sortie run frozen for five minutes stops itself, once, and that a pause never causes it.
+"""Check that a Chaos, Sortie or Story run frozen for five minutes stops itself, once, and that a pause never causes it.
 
 On a screen that can spend or discard the spend guard withholds upstream's blind taps, so nothing else ends that
 freeze: the stop has to fire there too.
@@ -203,29 +203,48 @@ class TestStuckStop(unittest.TestCase):
             self.assertIs(elapsed >= stuck_stop.STOP_SECONDS, self.handler(task), f"{elapsed}s after the gap")
         self.assertEqual(1, task.disabled)
 
-    def test_it_runs_first_in_chaos_and_sortie_only(self):
-        """Story has no stuck handling to bound, and any other mode carrying the anchor is left alone."""
+    def test_it_runs_first_in_chaos_sortie_and_story_only(self):
+        """Story has no stop handler to sit in front of, so it goes ahead of whatever Story's list starts with. Any other mode is left alone."""
         modes = Modes(
             utils_chaos=[named("handle_remote"), named("handle_auto_stop"), named("handle_save_target_member")],
             utils_sortie=[named("handle_auto_stop"), named("handle_route_selection")],
-            utils_story=[named("handle_center_confirm"), named("handle_auto_stop")],
+            utils_story=[named("handle_fast_forward"), named("handle_center_confirm"), named("handle_story_complete")],
             fake_other_mode_for_stuck_stop_test=[named("handle_auto_stop")],
         )
         with modes as loaded:
             stuck_stop.install(fake_utils(self.clock))
         self.assertEqual(["handle_remote", "stop_when_stuck", "handle_auto_stop", "handle_save_target_member"], names(loaded["utils_chaos"]))
         self.assertEqual(["stop_when_stuck", "handle_auto_stop", "handle_route_selection"], names(loaded["utils_sortie"]))
-        self.assertEqual(["handle_center_confirm", "handle_auto_stop"], names(loaded["utils_story"]))
+        self.assertEqual(["stop_when_stuck", "handle_fast_forward", "handle_center_confirm", "handle_story_complete"], names(loaded["utils_story"]))
         self.assertEqual(["handle_auto_stop"], names(loaded["fake_other_mode_for_stuck_stop_test"]))
 
     def test_installing_twice_inserts_once(self):
         """The install runs on every task load."""
-        with Modes(utils_chaos=[named("handle_auto_stop")], utils_sortie=[named("handle_auto_stop")]) as loaded:
+        modes = Modes(utils_chaos=[named("handle_auto_stop")], utils_sortie=[named("handle_auto_stop")], utils_story=[named("handle_center_confirm")])
+        with modes as loaded:
             for _ in range(INSTALLS):
                 stuck_stop.install(fake_utils(self.clock))
-        for name in ("utils_chaos", "utils_sortie"):
+        for name, anchor in (("utils_chaos", "handle_auto_stop"), ("utils_sortie", "handle_auto_stop"), ("utils_story", "handle_center_confirm")):
             with self.subTest(mode=name):
-                self.assertEqual(["stop_when_stuck", "handle_auto_stop"], names(loaded[name]))
+                self.assertEqual(["stop_when_stuck", anchor], names(loaded[name]))
+
+    def test_a_frozen_story_screen_stops_story_once(self):
+        """Story used to sit on a screen none of its handlers knew for as long as nobody looked."""
+        stand_in = fake_utils(self.clock)
+        with Modes(utils_story=[named("handle_center_confirm"), named("handle_enter_story_or_battle")]) as loaded:
+            stuck_stop.install(stand_in)
+        page_handlers = loaded["utils_story"].PAGE_HANDLERS
+        task = FakeTask([("Chapter 1", 0.47, 0.04)])
+        task.name = "半自动剧情模式"
+        stopped_after = None
+        for elapsed in range(1, stuck_stop.STOP_SECONDS * 2):
+            self.tick()
+            any(handler(task) for handler in page_handlers)
+            if task.disabled and stopped_after is None:
+                stopped_after = elapsed
+        self.assertIsNotNone(stopped_after)
+        self.assertLessEqual(stopped_after, stuck_stop.STOP_SECONDS + 1)
+        self.assertEqual([stuck_stop.MESSAGE], task.notifications)
 
     def test_a_frozen_spend_screen_still_stops(self):
         """The spend guard withholds upstream's taps there, so the stop is the only thing that ends the freeze."""

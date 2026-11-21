@@ -19,7 +19,8 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from src.en.dialogue import (BETWEEN_TAPS, BUBBLE_AFTER_STUCK, MAX_TAPS, MAX_TEXT_BOXES, MEMORY_REGION, TAP_AREA,  # noqa: E402
                             TOGGLE_RETRY, TOGGLED, advance_arrow_showing, handle_dialogue, narration_line, speech_line)
-from src.en.story import AFTER_HOVER, AFTER_TAP, FAST_FORWARD_RETRY, FAST_FORWARD_TAPPED, handle_auto_chat, handle_fast_forward, handle_skip_story, handle_team_formation, turning_auto_on  # noqa: E402
+from src.en.story import (AFTER_HOVER, AFTER_TAP, FAST_FORWARD_RETRY, FAST_FORWARD_TAPPED, filled_slots, handle_auto_chat, handle_fast_forward, handle_skip_story,  # noqa: E402
+                          handle_team_formation, turning_auto_on)
 from src.en.stuck import CLOCK  # noqa: E402
 
 WIDTH, HEIGHT = 1920, 1080
@@ -31,6 +32,12 @@ STORY_BAR_CORNER = (1344, 0)
 SKIP_CENTRE = (0.767, 0.053)
 AUTO_CENTRE = (0.830, 0.053)
 FAST_FORWARD_CENTRE = (0.895, 0.053)
+
+# Where the Team Formation slot bands were cut from, as the pixel row at their top: the Chaos stage's taller cards, and a
+# battle's with Save Data under them. Both span x 0-1114 and were dimmed by a tutorial hint.
+TEAM_BANDS = {"team_chaos_dimmed": 798, "team_battle_dimmed": 625}
+# Each slot's column in those bands, as pixel x ranges.
+TEAM_COLUMNS = ((0, 307), (326, 710), (730, 1114))
 
 # The line the run stalled on, and the two-line screen the mushroom event showed.
 SOLDIER = "The Soldier's eyes are fixed on the group. The Weapon in their hand is trembling."
@@ -107,6 +114,26 @@ def with_bar(name):
     patch = cv2.imread(str(REPO_ROOT / "tests" / "images" / f"{name}.png"))
     left, top = STORY_BAR_CORNER
     frame[top:top + patch.shape[0], left:left + patch.shape[1]] = patch
+    return frame
+
+
+def with_team(name, empty=()):
+    """Put a Team Formation band of level plates back into an otherwise black frame.
+
+    Args:
+        name: The base name of the crop in `tests/images/`, a key of `TEAM_BANDS`.
+        empty: Indexes of slots to paint over with the formation's grey, as a card with no level plate.
+
+    Returns:
+        A `(height, width, 3)` BGR array.
+    """
+    frame = np.zeros((HEIGHT, WIDTH, 3), dtype=np.uint8)
+    patch = cv2.imread(str(REPO_ROOT / "tests" / "images" / f"{name}.png"))
+    top = TEAM_BANDS[name]
+    frame[top:top + patch.shape[0], :patch.shape[1]] = patch
+    for slot in empty:
+        left, right = TEAM_COLUMNS[slot]
+        frame[top:top + patch.shape[0], left:right] = (52, 52, 52)
     return frame
 
 
@@ -453,6 +480,34 @@ class TestStoryBar(unittest.TestCase):
                 self.assertEqual(stops, task.disabled)
                 self.assertEqual(stops, task.notified is not None)
         self.assertFalse(handle_team_formation(FakeTask(levels[:1])))
+
+    def test_a_full_team_counts_as_full_on_both_formation_layouts(self):
+        """OCR read the level label under two of three filled cards on the Chaos stage and one of three on Battle Missions.
+
+        Both stopped Story with a full team. The Chaos stage's labels sit at y 0.766, below where a battle's do.
+        """
+        title = FakeBox("主战员配置", 0.155, 0.047, 0.08)
+        read = {"team_chaos_dimmed": [FakeBox("等级", x, 0.766, 0.02) for x in (0.056, 0.271)],
+                "team_battle_dimmed": [FakeBox("等级", 0.271, 0.606, 0.02)]}
+        for band, labels in read.items():
+            with self.subTest(band=band):
+                task = FakeTask([title, *labels], with_team(band))
+                self.assertFalse(handle_team_formation(task))
+                self.assertFalse(task.disabled)
+                self.assertEqual(3, filled_slots(task))
+
+    def test_an_empty_slot_still_stops_story_on_both_formation_layouts(self):
+        title = FakeBox("主战员配置", 0.155, 0.047, 0.08)
+        for band in TEAM_BANDS:
+            for empty in range(3):
+                with self.subTest(band=band, empty=empty):
+                    task = FakeTask([title], with_team(band, empty=(empty,)))
+                    self.assertTrue(handle_team_formation(task))
+                    self.assertTrue(task.disabled)
+                    self.assertIn("2 of 3", task.notified)
+        task = FakeTask([title], np.zeros((HEIGHT, WIDTH, 3), dtype=np.uint8))
+        self.assertTrue(handle_team_formation(task))
+        self.assertIn("0 of 3", task.notified)
 
     def test_fast_forward_is_turned_on_once_and_then_left_alone_for_the_retry_wait(self):
         # The dark crop has it lit already, and a second tap on a lit button would switch it back off.

@@ -50,10 +50,16 @@ FAST_FORWARD_TAPPED = "_en_fast_forward_tapped"
 # The Team Formation title, and the level label every filled slot shows under its combatant.
 TEAM_TITLE = "主战员配置"
 LEVEL_LABEL = "等级"
-# Where they sit, as `(left, top, right, bottom)` screen fractions. The title read at (0.154, 0.044) and slot 1's label at
-# (0.056, 0.605), with the other two slots ~0.215 further right each.
+# Where they sit, as `(left, top, right, bottom)` screen fractions. The title read at (0.154, 0.044). Slot 1's label read at
+# (0.056, 0.605) on a battle's formation and at (0.056, 0.766) on a Chaos stage's, whose cards are taller, with the other
+# two slots ~0.215 further right each, so each slot spans both.
 TEAM_TITLE_REGION = (0.0, 0.0, 0.35, 0.09)
-TEAM_SLOTS = ((0.0, 0.56, 0.16, 0.65), (0.17, 0.56, 0.37, 0.65), (0.38, 0.56, 0.58, 0.65))
+TEAM_SLOTS = ((0.0, 0.55, 0.16, 0.82), (0.17, 0.55, 0.37, 0.82), (0.38, 0.55, 0.58, 0.82))
+# The `LV` plate over that label, cut from a lit card. OCR missed the label on one to two of three filled cards under the
+# tutorial's dimming, where the plate still scored 0.947-1.000 (dimmed and lit), and at most 0.706 in those regions on the
+# 295 other captures of the tutorial run.
+LEVEL_PLATE_IMAGE = Path(__file__).with_name("images") / "team_level.png"
+LEVEL_PLATE_MATCH = 0.85
 
 _patched = False
 
@@ -200,18 +206,58 @@ def turning_auto_on(auto_check):
     return handle_battle_auto_check
 
 
-def handle_team_formation(task):
-    """Stop Story on a Team Formation screen with an empty slot, which upstream would press Enter on forever.
+def grey(patch):
+    """Reduce a patch to its brightness, so the level plate matches lit and dimmed alike.
+
+    Args:
+        patch: The pixels to reduce, in BGR.
+
+    Returns:
+        A single-channel image.
+    """
+    return cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY)
+
+
+def team_formation(task):
+    """Say whether the screen is Team Formation.
 
     Args:
         task: The running task, whose `all_texts` holds the current OCR pass.
 
     Returns:
+        True when the title is on screen.
+    """
+    return text_in_region(task, TEAM_TITLE, TEAM_TITLE_REGION) is not None
+
+
+def filled_slots(task):
+    """Count the Team Formation slots holding a combatant, by the level label OCR read or the plate drawn over it.
+
+    Args:
+        task: The running task, whose `all_texts` and `frame` hold the current screen.
+
+    Returns:
+        How many of the three slots are filled.
+    """
+    frame = frame_of(task)
+    return sum(
+        text_in_region(task, LEVEL_LABEL, slot) is not None or find_icon(frame, LEVEL_PLATE_IMAGE, LEVEL_PLATE_MATCH, slot, grey) is not None
+        for slot in TEAM_SLOTS
+    )
+
+
+def handle_team_formation(task):
+    """Stop Story on a Team Formation screen with an empty slot, which upstream would press Enter on forever.
+
+    Args:
+        task: The running task, whose `all_texts` and `frame` hold the current screen.
+
+    Returns:
         True when the team is short and the task has been stopped, which claims the frame.
     """
-    if text_in_region(task, TEAM_TITLE, TEAM_TITLE_REGION) is None:
+    if not team_formation(task):
         return False
-    filled = sum(text_in_region(task, LEVEL_LABEL, slot) is not None for slot in TEAM_SLOTS)
+    filled = filled_slots(task)
     if filled == len(TEAM_SLOTS):
         return False
     announce(task, f"Team Formation has {filled} of {len(TEAM_SLOTS)} combatants. Fill the team, then start Story again.")
@@ -220,12 +266,16 @@ def handle_team_formation(task):
 
 
 def install():
-    """Put the new bar's Skip and Auto in place of upstream's, turn Fast-Forward on, and stop Story on a short team."""
+    """Put the new bar's Skip and Auto in place of upstream's, turn Fast-Forward on, and stop Story on a short team or off the story."""
     # Ahead of the battle handlers, which claim every frame of a fight while the bar shows through all of it.
     insert_before("handle_center_confirm", handle_fast_forward)
     replace("handle_skip_story", handle_skip_story)
     replace("handle_auto_chat", handle_auto_chat)
     insert_before("handle_enter", handle_team_formation, only=("utils_story",))
+    utils = loaded("utils")
+    if utils is not None:
+        # The lobby, Rescue and Ark City stop that ends Chaos and Sortie, ahead of the handlers that enter a story or a battle.
+        insert_before("handle_story_complete", utils.handle_non_battle_page, only=("utils_story",))
     utils_chaos = loaded("utils_chaos")
     if utils_chaos is not None:
         wrap(utils_chaos, "handle_battle_auto_check", turning_auto_on, "new bar Auto")
