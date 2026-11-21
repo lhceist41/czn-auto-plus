@@ -3,7 +3,7 @@
 While the tutorial runs, a button reading Skip Tutorial covers the top right corner, over the Lobby's Menu, the
 banner's X, the bar's Auto and Fast-Forward and most pages' close X, and a tap on it skips the tutorial for good. No
 handler aims at it, but several tap fixed points under it on other cues. Every tap, press and drag end in that corner
-is now checked against the button first: while it shows, the input is refused, announced and the run stopped. Without
+is checked against the button first: while it shows, the input is refused, announced and the run stopped. Without
 the button, and anywhere else on the screen, input goes exactly as before.
 """
 
@@ -25,8 +25,10 @@ logger = Logger.get_logger(__name__)
 CAPTION = ("Skip Tutorial", (0.0, 0.0, 1.0, 1.0))
 # The button's outline, measured on every capture that shows it.
 OUTLINE = (0.818, 0.020, 0.992, 0.091)
-# The outline widened by 0.01 on each side, for the spread a click is given and the outline's own edge.
-GUARDED = (0.808, 0.010, 1.0, 0.101)
+# The outline widened for the spread a click is given and the outline's own edge: by 0.01 on the left, to the frame's
+# edge on the right, and by 0.012 above and below. That is 13 px at 1080p, past the 12 px a fixed tap may drift at
+# Input Variance's largest Fixed-Point Spread.
+GUARDED = (0.808, 0.008, 1.0, 0.103)
 # The outline is drawn bright enough to stand apart from every screen it sits on. The detector was measured on 1080p
 # captures, so a frame of another size is scaled to that first.
 REFERENCE = (1920, 1080)

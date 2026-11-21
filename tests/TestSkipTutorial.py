@@ -23,7 +23,7 @@ from ok.feature.Box import Box  # noqa: E402
 from ok.task.exceptions import TaskDisabledException  # noqa: E402
 from ok.task.task import ExecutorOperation  # noqa: E402
 
-from src.en import remote, skip_tutorial  # noqa: E402
+from src.en import humanize, remote, skip_tutorial  # noqa: E402
 from src.en.daily import DailyMode  # noqa: E402
 from src.en.handlers import WRAPS  # noqa: E402
 from tests.fakes import HEIGHT, WIDTH, FakeBox  # noqa: E402
@@ -218,14 +218,17 @@ class TestRefused(GuardTest):
         task = mode(SortieMode, pill_read())
         self.assertRefused(task, lambda: task.mouse_down(*pixels(BATTLE_AUTO)))
 
-    def test_the_widened_edge_is_guarded_and_the_next_pixel_out_is_not(self):
-        left, top, right, bottom = skip_tutorial.GUARDED
+    def test_the_rim_around_the_outline_is_guarded_and_the_next_pixel_out_is_not(self):
+        # Written out rather than taken from the box, so an edit that shrinks or moves the box fails here.
+        for point in ((0.812, 0.096), (0.995, 0.015), (0.900, 0.102), (0.900, 0.009)):
+            with self.subTest(point=point):
+                task = mode(StoryMode, pill_read())
+                self.assertRefused(task, lambda: task.click(*point))
+        outside = ((0.806, 0.050), (0.900, 0.104), (0.900, 0.007))
         task = mode(StoryMode, pill_read())
-        self.assertRefused(task, lambda: task.click(int(left * WIDTH) + 1, int(bottom * HEIGHT)))
-        task = mode(StoryMode, pill_read())
-        task.click(int(left * WIDTH) - 1, int(bottom * HEIGHT))
-        task.click(int(left * WIDTH) + 1, int(bottom * HEIGHT) + 2)
-        self.assertEqual(len(task.executor.interaction.sent), 2)
+        for point in outside:
+            task.click(*point)
+        self.assertSent(task, *(("tap", *pixels(point)) for point in outside))
 
     def test_no_frame_to_check_refuses_a_tap_in_the_corner(self):
         task = mode(DailyMode)
@@ -339,6 +342,24 @@ class TestInstall(unittest.TestCase):
             for name in skip_tutorial.GUARDS:
                 with self.subTest(mode=cls.__name__, name=name):
                     self.assertIn(skip_tutorial.TAG, getattr(getattr(cls, name), WRAPS, ()))
+
+
+class TestDrift(unittest.TestCase):
+
+    def test_a_fixed_tap_just_outside_the_box_stays_off_the_outline_at_the_largest_spread(self):
+        # The guard checks the aimed point, and humanize drifts a fixed tap afterwards, so the box must reach further
+        # out from the outline than the largest drift Input Variance allows.
+        spread = humanize.human_input_option.config_type[humanize.SPREAD_PX]["max"]
+        reach = spread * HEIGHT / humanize.REFERENCE_HEIGHT
+        task = SimpleNamespace(width=WIDTH, height=HEIGHT)
+        x, y = pixels((0.900, 0.050))
+        above = next(row for row in range(y, -1, -1) if not skip_tutorial.guarded(task, x, row))
+        below = next(row for row in range(y, HEIGHT) if not skip_tutorial.guarded(task, x, row))
+        left = next(column for column in range(x, -1, -1) if not skip_tutorial.guarded(task, column, y))
+        outline_left, outline_top, _, outline_bottom = skip_tutorial.OUTLINE
+        self.assertLess(round(above + reach) / HEIGHT, outline_top)
+        self.assertGreater(round(below - reach) / HEIGHT, outline_bottom)
+        self.assertLess(round(left + reach) / WIDTH, outline_left)
 
 
 class TestOutline(unittest.TestCase):
