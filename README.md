@@ -33,8 +33,9 @@
 
 1. **There is no installer yet.** Run the app from source, as [Running from source](#running-from-source) describes.
 2. **Run it as Administrator.** The game runs elevated, so without this Windows silently drops every click the app sends.
-3. **In the game's settings**, turn on shortcut key display. For Chaos Manifestation, also turn on the game's own
-   auto-battle and auto-story.
+3. **In the game's settings**, turn on shortcut key display, which the bot plays cards with. For Chaos Manifestation,
+   also turn on auto-story. Chaos auto-battle unlocks at Captain Lv 30: from then on the bot turns it on, and until then
+   it plays the cards itself.
 4. **Pick a mode** on the **Tasks** page and press **Run task**.
 
 ## The Tasks page
@@ -47,7 +48,9 @@ time elapsed, the last thing the bot did, floor, credits, runs finished, the tea
 ## Modes
 
 ### Chaos Manifestation
-- Plays whole runs: routes, events, card rewards, shops and rest stops. The game's own auto-battle fights.
+- Plays whole runs: routes, events, card rewards, shops and rest stops. The game's own auto-battle fights once it
+  unlocks at Captain Lv 30. Until then the bot plays the cards itself, as in Sortie, and stops the run if a fight
+  makes no progress for 3 minutes.
 - Farms save data for one combatant, keeping only saves above the size you set.
 - Re-observes a Chaos map whose modifiers you have blacklisted.
 - Handles season-specific mechanics such as Season 3 Persona cards, the Season 4 **Desire Faction** you pick, and Season 5

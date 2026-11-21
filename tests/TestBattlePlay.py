@@ -23,9 +23,9 @@ sys.path.insert(0, str(REPO_ROOT / "ok_tasks"))
 # The real module, for a prompt the fork runs unchanged over a different reading of the screen.
 import utils_sortie as real_sortie  # noqa: E402
 
-from src.en import battle, board, cards, ego, overrides  # noqa: E402
+from src.en import analysis, battle, board, cards, ego, observe, overrides, story  # noqa: E402
 from src.en.game_text import EPIPHANIES  # noqa: E402
-from src.en.handlers import standing_in  # noqa: E402
+from src.en.handlers import standing_in, wrap  # noqa: E402
 from tests.TestBoard import EGO_SLOTS_AT, FakeTask, flat, paint, paint_enemy, pasted  # noqa: E402
 from tests.fakes import WIDTH, FakeBox  # noqa: E402
 
@@ -558,6 +558,126 @@ class TestInstalling(unittest.TestCase):
                 with self.subTest(step=step, crop=crop):
                     task.frame = pasted(crop, int(left * 1920), int(top * 1080))
                     self.assertEqual(auto_plays, gate(task))
+
+    def test_chaos_leaves_battles_to_auto_unless_it_is_locked(self):
+        # Chaos's Auto handler only turns the game's Auto on, which stays locked below Captain Lv 30, so a locked fight would wait there for good.
+        def handle_battle_auto_check(task):
+            return True
+
+        crash = types.SimpleNamespace(__name__="handle_battle_crash")
+        confirm = types.SimpleNamespace(__name__="handle_center_confirm")
+        utils_chaos = types.SimpleNamespace(PAGE_HANDLERS=[crash, handle_battle_auto_check, confirm])
+        with upstream(hand(ATTACK)) as (utils_sortie, _):
+            utils_sortie.PAGE_HANDLERS.insert(0, types.SimpleNamespace(__name__="handle_battle_crash"))
+            battle.install()
+            with mock.patch.dict(sys.modules, utils_chaos=utils_chaos):
+                battle.install()
+                for _ in range(2):
+                    battle.fight_chaos_battles()
+            gate, picker, prompt, *_ = utils_chaos.PAGE_HANDLERS[1:]
+            # Chaos checked for a crash already, so Sortie's check is not run a second time behind the gate.
+            self.assertEqual([crash, gate, picker, prompt, battle.handle_cards_left, confirm], utils_chaos.PAGE_HANDLERS)
+            self.assertIsNot(picker, utils_sortie.handle_battle_page)
+            left, top, _, _ = battle.AUTO_SLOT
+            task = FakeTask(flat(0))
+            task.hand_cards = []
+            # Chaos's prompts shade the padlock less than Story's do, so a shaded frame can be bright enough to pass for a plain one.
+            for step, (crop, auto_plays) in enumerate((("chaos_auto_locked_shaded", False), ("chaos_auto_locked", False),
+                                                       ("chaos_auto_locked_shaded", False), ("story_auto_on", True),
+                                                       ("chaos_auto_locked_shaded", True), ("chaos_auto_locked", False))):
+                with self.subTest(step=step, crop=crop):
+                    task.frame = pasted(crop, int(left * 1920), int(top * 1080))
+                    self.assertEqual(auto_plays, gate(task))
+
+    def test_chaos_fights_are_installed_with_the_picker(self):
+        with mock.patch.object(battle, "_patched", False), mock.patch.object(battle, "register") as register:
+            battle.apply()
+        self.assertIn(mock.call(battle.fight_chaos_battles), register.call_args_list)
+
+    def test_chaos_auto_check_keeps_the_new_bar_and_the_recorder_for_fights_auto_can_play(self):
+        upstream_frames = []
+
+        def handle_battle_auto_check(task):
+            upstream_frames.append(task.frame)
+            return True
+
+        confirm = types.SimpleNamespace(__name__="handle_center_confirm")
+        utils_chaos = types.ModuleType("utils_chaos")
+        utils_chaos.handle_battle_auto_check = handle_battle_auto_check
+        utils_chaos.PAGE_HANDLERS = [handle_battle_auto_check, confirm]
+        recorded, bar_reads = [], []
+        with upstream(hand(ATTACK)) as (utils_sortie, _), mock.patch.dict(sys.modules, utils_chaos=utils_chaos), \
+                mock.patch.object(analysis, "enabled", return_value=True), mock.patch.object(observe.BURST, "battle_seen"), \
+                mock.patch.object(observe, "write", lambda task: recorded.append(task.frame)), \
+                mock.patch.object(story, "battle_auto_off", lambda frame: bar_reads.append(frame)):
+            # The order the installs run in on every task load: Story's new bar Auto, the picker, the fights, then the recorder.
+            for _ in range(2):
+                wrap(utils_chaos, "handle_battle_auto_check", story.turning_auto_on, "new bar Auto")
+                battle.install()
+                battle.fight_story_battles()
+                battle.fight_chaos_battles()
+                observe.install()
+            gate = utils_chaos.PAGE_HANDLERS[0]
+            self.assertEqual("handle_chaos_auto", gate.__name__)
+            left, top, _, _ = battle.AUTO_SLOT
+            task = FakeTask(pasted("story_auto_on", int(left * 1920), int(top * 1080)))
+            task.hand_cards, task.trigger_interval = [], 1
+            # A fight Auto can play reaches all three as before, and starts no clock for a fight that stops moving on.
+            self.assertTrue(gate(task))
+            unlocked = task.frame
+            self.assertEqual(([unlocked], [unlocked], [unlocked]), (upstream_frames, bar_reads, recorded))
+            self.assertFalse(hasattr(task, battle.STALL))
+            # A locked fight reaches neither the bar's Auto tap nor the recorder of what Auto plays.
+            task.frame = pasted("chaos_auto_locked", int(left * 1920), int(top * 1080))
+            self.assertFalse(gate(task))
+            self.assertEqual(([unlocked], [unlocked], [unlocked]), (upstream_frames, bar_reads, recorded))
+
+    def test_a_locked_chaos_fight_that_stops_moving_on_stops_the_run(self):
+        # With Auto locked nothing else plays the fight, and a battle screen keeps animating, so the stuck clock would never stop it.
+        def handle_battle_auto_check(task):
+            return True
+
+        utils_chaos = types.SimpleNamespace(PAGE_HANDLERS=[handle_battle_auto_check])
+        messages = []
+        with upstream(hand(ATTACK)) as (utils_sortie, _), mock.patch.dict(sys.modules, utils_chaos=utils_chaos), \
+                mock.patch.object(battle, "announce", lambda task, message: messages.append(message)):
+            utils_sortie._read_hand_count = lambda task: task.counter
+            battle.install()
+            battle.fight_chaos_battles()
+            gate = utils_chaos.PAGE_HANDLERS[0]
+            left, top, _, _ = battle.AUTO_SLOT
+            task = FakeTask(pasted("chaos_auto_locked", int(left * 1920), int(top * 1080)))
+            task.counter, task.disable = 5, mock.Mock()
+
+            def frames(*seconds):
+                answers = []
+                for second in seconds:
+                    with mock.patch("time.monotonic", return_value=second):
+                        answers.append(gate(task))
+                return answers
+
+            # Frames every 10s. Away from the hand counter nothing counts, however long it lasts.
+            self.assertEqual([False] * 10, frames(*range(0, 100, 10)))
+            setattr(task, battle.TURN, battle.Turn(5))
+            task.counter = None
+            self.assertEqual([False] * 20, frames(*range(100, 300, 10)))
+            task.counter = 5
+            self.assertEqual([False] * 18, frames(*range(300, 480, 10)))
+            # Away for longer than a hold or a pause would leave it, the clock starts again.
+            self.assertEqual([False] * 18, frames(*range(510, 690, 10)))
+            # So does a card played, end turn pressed, or the hand read differently.
+            turn = getattr(task, battle.TURN)
+            turn.played.append(ATTACK)
+            self.assertEqual([False] * 18, frames(*range(690, 870, 10)))
+            turn.ended = True
+            self.assertEqual([False] * 18, frames(*range(870, 1050, 10)))
+            turn.hand.append(ATTACK)
+            self.assertEqual([False] * 18, frames(*range(1050, 1230, 10)))
+            task.disable.assert_not_called()
+            self.assertEqual([True], frames(1230))
+            task.disable.assert_called_once_with()
+            self.assertEqual([battle.STALL_MESSAGE], messages)
+            self.assertIn("Auto locked", battle.STALL_MESSAGE)
 
     def test_the_chosen_card_gets_its_hotkey_pressed(self):
         with upstream(hand(ATTACK, BIG_ATTACK)) as (utils_sortie, task):

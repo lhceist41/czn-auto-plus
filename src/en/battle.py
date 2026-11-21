@@ -10,16 +10,18 @@ keeps the frame around it, and a card the Play Priority list names is still play
 import collections
 import math
 import re
+import time
 from pathlib import Path
 
 import cv2
 import numpy as np
 from ok import Logger
 
-from src.en import board, cards, ego, kits, story, tested
+from src.en import board, cards, ego, kits, observe, story, tested
 from src.en.game_battle import CARD_TARGET
 from src.en.handlers import StandIn, insert_before, loaded, register, replace, standing_in
 from src.en.kits.kit import base_name
+from src.en.notify import announce
 from src.en.overrides import SMART_CARD_PLAY
 from src.en.quality import fold, one_edit_apart
 from src.en.screen import centre_of, frame_of, hsv_of, in_region, patch_of, text_in_region
@@ -108,12 +110,12 @@ WIDEST_SPAN = (0.218, 0.730)
 MAX_KEY = 9
 # How many times a card has to stay in hand after its key is pressed before it is left for the rest of the turn.
 REFUSALS = 2
-# Sortie's battle screens in its own order: the prompts a card can raise mid-fight, then the fight itself. Story mode
-# borrows them for the fights where the game's Auto is locked, since its own handler only turns Auto on and waits.
+# Sortie's battle screens in its own order: the prompts a card can raise mid-fight, then the fight itself. Story and Chaos
+# borrow them for the fights where the game's Auto is locked, since their own handler only turns Auto on and waits.
 BATTLE_SCREENS = ("handle_battle_crash", "handle_discard_hand_card", "handle_battle_hand_select", "handle_curiosity_activate",
                   "handle_extra_card_use", "handle_card_function_select", "handle_return_to_draw_pile", "handle_weakness_info",
                   "handle_battle_page")
-# Story's Auto handler, which the borrowed screens sit behind. Matched as a prefix, because the recorder renames it.
+# Story's and Chaos's Auto handler, which the borrowed screens sit behind. Matched as a prefix, because the recorder renames it.
 AUTO_CHECK = "handle_battle_auto_check"
 # The padlock a fight that does not allow Auto shows in Auto's place, cut from a 1080p capture, and the slot around it as
 # `(left, top, right, bottom)` screen fractions.
@@ -125,12 +127,22 @@ LOCK_HIGH = np.array((180, 30, 215), dtype=np.uint8)
 # How closely the padlock has to match. It scored 1.00 on the fight it was cut from, at most 0.32 on any dialogue bar with Auto
 # off or lit, and at most 0.23 over the 847 pre-update captures.
 LOCK_MATCH = 0.6
-# A button this bright is drawn plainly: the padlock peaks at 170, and Auto lit gold or white at 255. A prompt's shade drops the
-# padlock to 74, too dim to tell from the gold, so a shaded button keeps the answer its last plain reading gave. With no plain
-# reading yet, the prompt screens get to look, since Auto's own check would only wait on a prompt.
-PLAIN_BUTTON = 120
+# A button this bright is drawn plainly: the padlock peaks at 170 to 181, and Auto lit gold or white at 255. A prompt's shade
+# drops the padlock to 74, or to 123 under Chaos's lighter one, too dim to match, so a shaded button keeps the answer its last
+# plain reading gave. With no plain reading yet, the prompt screens get to look, since Auto's own check would only wait on a prompt.
+PLAIN_BUTTON = 150
 # Parked on the task, so a prompt in a locked fight is still known to be one.
 AUTO_LOCKED = "_en_auto_locked"
+# How long a Chaos fight with Auto locked may show the same turn and hand before the run stops. An enemy turn or an Ego takes
+# seconds, and with Auto locked nothing else plays the fight, so it would sit there for good.
+STALL_SECONDS = 180
+# A longer gap between two locked battle frames means the loop was not looking (a hold, a pause, another screen), so the clock
+# starts again rather than count time nobody watched.
+STALL_GAP = 30
+STALL_MESSAGE = ("Stopped: a Chaos fight with the game's Auto locked (it unlocks at Captain Lv 30) made no progress for "
+                 "3 minutes. Check the game, then press Start again.")
+# Parked on the task: what the last locked battle frame showed, since when it has shown that, and when it was seen.
+STALL = "_en_locked_stall"
 # Frames a turn may sit waiting on a kit before playing on regardless, and the pause each one takes. Rossweisse's Shards read
 # alone for 1-2s before they fuse, so five half-second frames cover it however fast the loop runs.
 KIT_WAIT = 5
@@ -1567,21 +1579,51 @@ def auto_locked(task):
     return getattr(task, AUTO_LOCKED, True)
 
 
-def unless_locked(auto_check):
-    """Wrap Story's Auto handler so it lets a fight with Auto locked through to the borrowed screens.
+def unless_locked(auto_check, stalled=None, name="handle_story_auto"):
+    """Wrap a mode's Auto handler so it lets a fight with Auto locked through to the borrowed screens.
 
     Args:
-        auto_check: Story's `handle_battle_auto_check`, which turns Auto on and claims every battle frame.
+        auto_check: The mode's `handle_battle_auto_check`, which turns Auto on and claims every battle frame.
+        stalled: Answers a locked frame instead, True when it stopped the run, or None to always let it through.
+        name: The replacement's name. It does not start with the Auto handler's, so installing again leaves it alone.
 
     Returns:
         The replacement.
     """
     def handle_story_auto(task):
         if auto_locked(task):
-            return False
+            return stalled is not None and stalled(task)
         return auto_check(task)
 
+    handle_story_auto.__name__ = name
     return handle_story_auto
+
+
+def auto_check_at(handlers):
+    """Find a mode's Auto handler in its list.
+
+    Args:
+        handlers: The mode's page handlers.
+
+    Returns:
+        Its index, or None once it has been wrapped or when the list has none.
+    """
+    names = [getattr(handler, "__name__", "") for handler in handlers]
+    return next((at for at, name in enumerate(names) if name.startswith(AUTO_CHECK)), None)
+
+
+def borrowed_screens(utils_sortie, skipped=()):
+    """Take Sortie's battle screens from its list rather than the module, so they carry the card picker `install` put there.
+
+    Args:
+        utils_sortie: The loaded Sortie module.
+        skipped: Names to leave out.
+
+    Returns:
+        The handlers, in Sortie's order.
+    """
+    return [handler for handler in utils_sortie.PAGE_HANDLERS
+            if getattr(handler, "__name__", "") in BATTLE_SCREENS and handler.__name__ not in skipped]
 
 
 def fight_story_battles():
@@ -1590,21 +1632,70 @@ def fight_story_battles():
     utils_story = loaded("utils_story")
     if utils_sortie is None or utils_story is None:
         return
-    names = [getattr(handler, "__name__", "") for handler in utils_story.PAGE_HANDLERS]
-    index = next((at for at, name in enumerate(names) if name.startswith(AUTO_CHECK)), None)
+    index = auto_check_at(utils_story.PAGE_HANDLERS)
     if index is None:
         return
-    # Taken from Sortie's list rather than the module, so Story gets the card picker `install` put there.
-    screens = [handler for handler in utils_sortie.PAGE_HANDLERS if getattr(handler, "__name__", "") in BATTLE_SCREENS]
+    screens = borrowed_screens(utils_sortie)
     utils_story.PAGE_HANDLERS[index:index + 1] = [unless_locked(utils_story.PAGE_HANDLERS[index]), *screens]
     logger.info(f"story battles with Auto locked now play with Sortie's screens: {[handler.__name__ for handler in screens]}")
 
 
+def stalling(utils_sortie):
+    """Build the check that stops Chaos once a fight with Auto locked has stopped moving on.
+
+    Args:
+        utils_sortie: The loaded Sortie module, for the hand counter.
+
+    Returns:
+        The check, taking the task and answering True when it stopped the run.
+    """
+    def stalled(task):
+        count = utils_sortie._read_hand_count(task)
+        if count is None:
+            return False
+        turn = getattr(task, TURN, None)
+        # A card played, a hand read differently, end turn pressed or a fresh deal all change this.
+        seen = (count,) if turn is None else (count, turn, len(turn.played), tuple(turn.hand), turn.ended)
+        now = time.monotonic()
+        last_seen, since, last = getattr(task, STALL, (None, now, now))
+        if seen != last_seen or now - last > STALL_GAP:
+            since = now
+        setattr(task, STALL, (seen, since, now))
+        if now - since < STALL_SECONDS:
+            return False
+        announce(task, STALL_MESSAGE)
+        task.disable()
+        return True
+
+    return stalled
+
+
+def fight_chaos_battles():
+    """Have Chaos play the battles that lock the game's Auto with Sortie's screens, stopping on one that stops moving on."""
+    utils_sortie = loaded("utils_sortie")
+    utils_chaos = loaded("utils_chaos")
+    if utils_sortie is None or utils_chaos is None:
+        return
+    # The recorder finds the Auto handler by its exact name, which the gate takes away, so it goes in first and the gate
+    # keeps locked frames from it as well.
+    observe.install()
+    handlers = utils_chaos.PAGE_HANDLERS
+    index = auto_check_at(handlers)
+    if index is None:
+        return
+    # Chaos already checks for a crash and the weakness panel ahead of its Auto handler.
+    ahead = {getattr(handler, "__name__", "") for handler in handlers[:index]}
+    screens = borrowed_screens(utils_sortie, ahead)
+    handlers[index:index + 1] = [unless_locked(handlers[index], stalling(utils_sortie), "handle_chaos_auto"), *screens]
+    logger.info(f"chaos battles with Auto locked now play with Sortie's screens: {[handler.__name__ for handler in screens]}")
+
+
 def apply():
-    """Have the card picker stand in for upstream's fallback, and Story fight its own battles, once the modes have been imported."""
+    """Have the card picker stand in for upstream's fallback, and Story and Chaos fight their own battles, once the modes have been imported."""
     global _patched
     if _patched:
         return
     register(install)
     register(fight_story_battles)
+    register(fight_chaos_battles)
     _patched = True
