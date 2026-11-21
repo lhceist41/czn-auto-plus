@@ -116,10 +116,14 @@ CROPS = {
     "team_battle_clean": (625, 0), "team_battle_dimmed": (625, 0), "mission_result_buttons": (940, 1080),
     "battle_auto_off": (0, 1344), "battle_auto_on": (0, 1344), "battle_auto_off_dark": (0, 1344), "battle_auto_on_dark": (0, 1344),
     "story_bar_off": (0, 1344), "mission_tabs_normal": (960, 0), "mission_tabs_tutorial": (960, 0), "mission_tabs_popup": (960, 0),
+    "mission_detail_tabs": (960, 0), "mission_title_bar": (0, 0), "mission_title_tutorial": (0, 0),
+    "story_hub_title_bar": (0, 0), "chapter_node_title_bar": (0, 0),
 }
-# The difficulty tabs under each list crop, NORMAL selected: plain, under the tutorial's dimming, and under a window.
+# The difficulty tabs under each list crop, NORMAL selected: plain, under the tutorial's dimming, and under a window. A
+# detail's panel covers the HARD and ABYSS pills with its Enter, so only NORMAL's shows there.
 TAB_ROWS = {"mission_list_tutorial": "mission_tabs_tutorial", "mission_list_b2": "mission_tabs_normal",
-            "mission_list_cleared": "mission_tabs_normal", "mission_detail_b2": "mission_tabs_normal"}
+            "mission_list_cleared": "mission_tabs_normal", "mission_detail_b2": "mission_detail_tabs"}
+ONLY_ENTER = (("进入", 0.817, 0.931),)
 # Each tab's pill as pixel x ranges of equal width, centred on its caption.
 PILLS = {"NORMAL": (830, 1175), "HARD": (1178, 1523), "ABYSS": (1523, 1868)}
 TABS_TOP, TABS_BOTTOM = 960, 1060
@@ -175,6 +179,54 @@ def pills_moved(frame, source, target, swap=True):
         frame[TABS_TOP:TABS_BOTTOM, from_left:from_right] = frame[TABS_TOP:TABS_BOTTOM, to_left:to_right]
     frame[TABS_TOP:TABS_BOTTOM, to_left:to_right] = moved
     return frame
+
+
+def detail_on(tab):
+    """Draw B2's detail as the game would on HARD or ABYSS.
+
+    Synthetic like `pills_moved`: the panel keeps covering the HARD and ABYSS pills, and NORMAL's place gets the list's
+    unselected pill of `tab`, so no pill reads selected.
+
+    Args:
+        tab: "HARD" or "ABYSS".
+
+    Returns:
+        A `(height, width, 3)` BGR array.
+    """
+    frame = frame_with("mission_detail_b2")
+    row = frame_with("mission_tabs_normal")
+    (left, right), (from_left, from_right) = PILLS["NORMAL"], PILLS[tab]
+    frame[TABS_TOP:TABS_BOTTOM, left:right] = row[TABS_TOP:TABS_BOTTOM, from_left:from_right]
+    return frame
+
+
+def titled(frame, bar="mission_title_bar"):
+    """Paint a title bar into a frame's top left corner, which the other crops leave black.
+
+    Args:
+        frame: The frame to paint on.
+        bar: The bar's crop, such as "story_hub_title_bar".
+
+    Returns:
+        A copy with the bar drawn.
+    """
+    frame = frame.copy()
+    patch = cv2.imread(str(IMAGES / f"{bar}.png"))
+    frame[:patch.shape[0], :patch.shape[1]] = patch
+    return frame
+
+
+def dimmed(frame, factor):
+    """Darken a frame the way the tutorial's hint does, only further.
+
+    Args:
+        frame: The frame to darken.
+        factor: The share of its brightness left, such as 0.1.
+
+    Returns:
+        A darkened copy.
+    """
+    return (frame.astype(np.float32) * factor).astype(np.uint8)
 
 
 def without_tabs(frame, pill=None):
@@ -470,6 +522,9 @@ class TestTabs(Clocked):
                                  ("two selected", pills_moved(normal, "NORMAL", "HARD", swap=False), None),
                                  ("HARD pill blacked out", without_tabs(normal, "HARD"), None),
                                  ("tab row blacked out", without_tabs(normal), None), ("black", np.zeros_like(normal), None),
+                                 ("detail", frame_with("mission_detail_b2"), "NORMAL"), ("detail on HARD", detail_on("HARD"), None),
+                                 ("detail on ABYSS", detail_on("ABYSS"), None),
+                                 ("HARD dimmed to 10%", dimmed(pills_moved(normal, "NORMAL", "HARD"), 0.1), None),
                                  ("no frame", None, None)):
             with self.subTest(tabs=name):
                 self.assertEqual(tab, battle_missions.selected_tab(frame))
@@ -516,6 +571,9 @@ class TestOffNormal(Clocked):
         frame = frame_with(crop)
         return without_tabs(frame) if tab is None else pills_moved(frame, "NORMAL", tab)
 
+    def detail_off_normal(self, tab):
+        return without_tabs(frame_with("mission_detail_b2")) if tab is None else detail_on(tab)
+
     def assertStoppedOn(self, tab, answers):
         self.assertTrue(all(answers))
         self.assertEqual([], self.story.taps)
@@ -543,31 +601,61 @@ class TestOffNormal(Clocked):
                 answers = self.passes(battle_missions.handle_list_off_normal, (), self.off_normal("mission_list_b2", tab), 5)
                 self.assertStoppedOn(tab, answers)
 
+    def test_a_list_off_normal_with_no_line_and_no_tab_read_is_known_by_its_title(self):
+        normal = frame_with("mission_list_b2")
+        for name, frame in (("tab row unreadable", titled(without_tabs(normal))),
+                            ("HARD dimmed to 10%", dimmed(titled(pills_moved(normal, "NORMAL", "HARD")), 0.1)),
+                            ("tutorial", titled(without_tabs(frame_with("mission_list_tutorial")), "mission_title_tutorial"))):
+            with self.subTest(screen=name):
+                self.setUp()
+                self.assertIsNone(battle_missions.selected_tab(frame))
+                self.assertStoppedOn(None, self.passes(battle_missions.handle_list_off_normal, (), frame, 5))
+
     def test_a_detail_off_normal_is_held_and_stopped_before_enter(self):
+        """The panel covers the HARD and ABYSS pills, so a detail on either reads as no tab at all."""
         for tab in ("HARD", "ABYSS", None):
             for name, texts in (("read", DETAIL_B2), ("title missed", replaced(DETAIL_B2, "Battle Missions", None)),
                                 ("NORMAL caption missed", replaced(DETAIL_B2, "NORMAL", None))):
                 with self.subTest(tab=tab, texts=name):
                     self.setUp()
-                    answers = self.passes(battle_missions.handle_detail_off_normal, texts,
-                                          self.off_normal("mission_detail_b2", tab), 5)
-                    self.assertStoppedOn(tab, answers)
+                    answers = self.passes(battle_missions.handle_detail_off_normal, texts, self.detail_off_normal(tab), 5)
+                    self.assertStoppedOn(None, answers)
 
-    def test_a_detail_on_hard_with_only_enter_read_is_known_by_its_arrow(self):
-        answers = self.passes(battle_missions.handle_detail_off_normal, (("进入", 0.817, 0.931),),
-                              self.off_normal("mission_detail_b2", "HARD"), 5)
-        self.assertStoppedOn("HARD", answers)
+    def test_a_detail_off_normal_with_only_enter_read_is_known_by_its_title(self):
+        for name, frame in (("HARD", titled(detail_on("HARD"))), ("ABYSS", titled(detail_on("ABYSS"))),
+                            ("no tab read", titled(self.detail_off_normal(None))),
+                            ("HARD dimmed to 10%", dimmed(titled(detail_on("HARD")), 0.1)),
+                            ("HARD under the tutorial's title", titled(detail_on("HARD"), "mission_title_tutorial"))):
+            with self.subTest(screen=name):
+                self.setUp()
+                self.assertStoppedOn(None, self.passes(battle_missions.handle_detail_off_normal, ONLY_ENTER, frame, 5))
+
+    def test_the_title_image_marks_battle_missions_off_normal_only(self):
+        normal = frame_with("mission_list_b2")
+        for name, frame, tab, marked in (
+                ("list, no tab read", titled(without_tabs(normal)), None, True),
+                ("list on HARD", titled(pills_moved(normal, "NORMAL", "HARD")), "HARD", True),
+                ("tutorial list", titled(without_tabs(normal), "mission_title_tutorial"), None, True),
+                ("list on NORMAL", titled(normal), "NORMAL", False),
+                ("Story hub", titled(without_tabs(normal), "story_hub_title_bar"), None, False),
+                ("chapter node", titled(without_tabs(normal), "chapter_node_title_bar"), None, False),
+                ("no title", without_tabs(normal), None, False), ("no frame", None, None, False)):
+            with self.subTest(screen=name):
+                self.assertEqual(marked, battle_missions.mission_screen(self.story.show(()), frame, tab))
 
     def test_normal_is_left_as_it_was(self):
-        for name, handler, texts, crop in (
+        list_b2, detail = frame_with("mission_list_b2"), frame_with("mission_detail_b2")
+        for name, handler, texts, frame in (
                 ("list, title missed", battle_missions.handle_list_off_normal, replaced(LIST_B2, "Battle Missions", None),
-                 "mission_list_b2"),
-                ("list, caption missed", battle_missions.handle_list_off_normal, replaced(LIST_B2, "NORMAL", None), "mission_list_b2"),
+                 list_b2),
+                ("list, caption missed", battle_missions.handle_list_off_normal, replaced(LIST_B2, "NORMAL", None), list_b2),
                 ("list, dimmed", battle_missions.handle_list_off_normal, replaced(LIST_TUTORIAL, "NORMAL", None),
-                 "mission_list_tutorial"),
-                ("detail", battle_missions.handle_detail_off_normal, DETAIL_B2, "mission_detail_b2")):
+                 frame_with("mission_list_tutorial")),
+                ("list, no line read, title shown", battle_missions.handle_list_off_normal, (), titled(list_b2)),
+                ("detail", battle_missions.handle_detail_off_normal, DETAIL_B2, detail),
+                ("detail, only Enter read, title shown", battle_missions.handle_detail_off_normal, ONLY_ENTER, titled(detail))):
             with self.subTest(screen=name):
-                self.assertEqual([False] * 3, self.passes(handler, texts, frame_with(crop), 3))
+                self.assertEqual([False] * 3, self.passes(handler, texts, frame, 3))
         self.assertEqual([], self.story.taps)
         self.assertTrue(self.story.enabled)
 
@@ -576,7 +664,10 @@ class TestOffNormal(Clocked):
         unreadable = without_tabs(frame_with("mission_list_b2"))
         hard_row = pills_moved(frame_with("mission_tabs_normal"), "NORMAL", "HARD")
         for name, texts, frame in (("chapter node", CHAPTER_NODE, unreadable), ("HARD read, no arrow", HUB, hard_row),
-                                   ("formation", FORMATION_B2, hard_row), ("result", RESULT_B1, hard_row)):
+                                   ("formation", FORMATION_B2, hard_row), ("result", RESULT_B1, hard_row),
+                                   ("chapter node, its title shown", CHAPTER_NODE, titled(unreadable, "chapter_node_title_bar")),
+                                   ("chapter node, only Enter read", ONLY_ENTER, titled(unreadable, "chapter_node_title_bar")),
+                                   ("Story hub, no line read", (), titled(unreadable, "story_hub_title_bar"))):
             for handler in (battle_missions.handle_list_off_normal, battle_missions.handle_detail_off_normal):
                 with self.subTest(screen=name, handler=handler.__name__):
                     self.assertEqual([False] * 3, self.passes(handler, texts, frame, 3))
@@ -585,7 +676,7 @@ class TestOffNormal(Clocked):
 
     def test_a_detail_without_enter_is_left_to_the_list(self):
         texts = replaced(DETAIL_B2, "进入", None)
-        frame = self.off_normal("mission_detail_b2", "HARD")
+        frame = titled(detail_on("HARD"))
         self.assertEqual([False] * 3, self.passes(battle_missions.handle_detail_off_normal, texts, frame, 3))
 
     def test_a_reading_that_gives_way_to_normal_counts_afresh(self):
@@ -799,19 +890,42 @@ class TestStoryList(StoryList):
         self.assertEqual("handle_enter_story_or_battle", self.one_pass(texts, frame_with("mission_list_b2")))
         self.assertTappedAt(B2_ARROW)
 
-    def test_a_detail_off_normal_never_reaches_enter(self):
-        for tab in ("HARD", "ABYSS"):
-            with self.subTest(tab=tab):
+    def test_a_list_off_normal_with_no_line_and_no_tab_read_never_reaches_storys_own_arrow_tap(self):
+        self.with_arrow_feature(B2_ARROW)
+        normal = frame_with("mission_list_b2")
+        for name, frame in (("HARD dimmed to 10%", dimmed(titled(pills_moved(normal, "NORMAL", "HARD")), 0.1)),
+                            ("tab row unreadable", titled(without_tabs(normal)))):
+            with self.subTest(screen=name):
                 self.story.enabled, self.story.taps = True, []
-                frame = pills_moved(frame_with("mission_detail_b2"), "NORMAL", tab)
-                claimed = {self.one_pass(DETAIL_B2, frame) for _ in range(5)}
-                self.assertEqual({"handle_detail_off_normal"}, claimed)
+                claimed = {self.one_pass((), frame) for _ in range(5)}
+                self.assertEqual({"handle_list_off_normal"}, claimed)
                 self.assertEqual([], self.story.taps)
                 self.assertFalse(self.story.enabled)
 
-    def test_a_chapter_node_still_goes_through_enter(self):
-        self.assertEqual("handle_enter", self.one_pass(CHAPTER_NODE, without_tabs(frame_with("mission_list_b2"))))
+    def test_a_detail_off_normal_never_reaches_enter(self):
+        """A detail on HARD or ABYSS reads as no tab, since its panel covers those pills."""
+        self.with_arrow_feature(B2_ARROW)
+        for tab in ("HARD", "ABYSS"):
+            for name, texts, frame in (("all read", DETAIL_B2, detail_on(tab)),
+                                       ("only Enter read", ONLY_ENTER, titled(detail_on(tab)))):
+                with self.subTest(tab=tab, texts=name):
+                    self.story.enabled, self.story.taps = True, []
+                    claimed = {self.one_pass(texts, frame) for _ in range(5)}
+                    self.assertEqual({"handle_detail_off_normal"}, claimed)
+                    self.assertEqual([], self.story.taps)
+                    self.assertFalse(self.story.enabled)
+
+    def test_a_normal_detail_with_only_enter_read_still_goes_through_enter(self):
+        self.assertEqual("handle_enter", self.one_pass(ONLY_ENTER, titled(frame_with("mission_detail_b2"))))
         self.assertEqual(1, len(self.story.taps))
+
+    def test_a_chapter_node_still_goes_through_enter(self):
+        unreadable = without_tabs(frame_with("mission_list_b2"))
+        for name, frame in (("no title", unreadable), ("its title shown", titled(unreadable, "chapter_node_title_bar"))):
+            with self.subTest(screen=name):
+                self.story.taps = []
+                self.assertEqual("handle_enter", self.one_pass(CHAPTER_NODE, frame))
+                self.assertEqual(1, len(self.story.taps))
 
     def test_the_list_never_reaches_storys_own_arrow_tap(self):
         """Story's entrance tap would take whatever play arrow it saw, the Promotion card's included."""

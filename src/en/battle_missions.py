@@ -52,6 +52,11 @@ TAB_CAPTIONS = tuple((name, (left, LIST_TAB_REGION[1], right, LIST_TAB_REGION[3]
 ARROW_IMAGE = Path(__file__).with_name("images") / "mission_arrow.png"
 CARD_ROW = (0.0, 0.47, 1.0, 0.54)
 ARROW_MATCH = 0.95
+# The list's title, cut from a capture of the list. A detail's panel never covers it, and it is matched on brightness
+# alone, so it holds through the tutorial's dimming: 0.99-1.00 on every list and detail captured, 0.74 on one dimmed to
+# 3%, and 0.39 at most on any other capture, the Story hub's and chapter map's "故事" in the same corner included.
+TITLE_IMAGE = Path(__file__).with_name("images") / "mission_title.png"
+TITLE_MATCH = 0.7
 # The card's label sits just left of the arrow: `B2` read at x 0.566 with the arrow at 0.578. OCR reads the arrow as a
 # trailing `I` or `1` now and then, as in `B1I`.
 LABEL_LEFT = 0.08
@@ -144,8 +149,9 @@ def mission_screen(task, frame, tab):
     """Say whether the screen is the Battle Missions list or a mission's detail, on any tab and with a line OCR missed.
 
     The tab reading alone is no test, since lobby, Chaos and rescue screens read as HARD or ABYSS, and neither is the
-    arrow, since Story's chapter map shows the same one. So it takes the list's title or a tab's caption read by OCR, or
-    the arrow on the row of cards with HARD or ABYSS read off the pills, which no other capture shows.
+    arrow, since Story's chapter map shows the same one. So it takes the list's title or a tab's caption read by OCR, the
+    title's image, or the arrow on the row of cards with HARD or ABYSS read off the pills, which no other capture shows.
+    The image is what holds on a HARD or ABYSS detail, whose panel covers those pills, so the tab reads as None there.
 
     Args:
         task: The running task, whose `all_texts` holds the current OCR pass.
@@ -158,6 +164,8 @@ def mission_screen(task, frame, tab):
     if text_in_region(task, LIST_TITLE, LIST_TITLE_REGION) is not None:
         return True
     if any(text_in_region(task, name, region) is not None for name, region in TAB_CAPTIONS):
+        return True
+    if tab != LIST_TAB and find_icon(frame, TITLE_IMAGE, TITLE_MATCH, LIST_TITLE_REGION, grey) is not None:
         return True
     return tab in ("HARD", "ABYSS") and find_icon(frame, ARROW_IMAGE, ARROW_MATCH, CARD_ROW, grey) is not None
 
