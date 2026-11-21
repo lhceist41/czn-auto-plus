@@ -1,5 +1,6 @@
 """Check the debug-run tools: one saved frame per log line a second, and the remote control's seat in the real mode lists."""
 
+import http.client
 import http.server
 import importlib.util
 import json
@@ -171,9 +172,65 @@ def attempt(call, *args):
         return error
 
 
-def idle_executor(current_task=None):
-    """An executor with no tasks loaded, running `current_task`."""
-    return types.SimpleNamespace(current_task=current_task, get_all_tasks=lambda: [])
+def idle_executor(current_task=None, tasks=(), current_job=None, job_queue=()):
+    """An executor holding `tasks`, running `current_task` and `current_job`, with `job_queue` waiting."""
+    return types.SimpleNamespace(current_task=current_task, current_job=current_job, _job_queue=list(job_queue),
+                                 get_all_tasks=lambda: list(tasks))
+
+
+class ChaosMode:
+    """A mode switched on that the executor has not picked up yet."""
+
+    enabled = True
+
+
+class LateStart:
+    """A start controller that, like ok-script's, only marks itself starting and switches the mode on later."""
+
+    def __init__(self):
+        self.starting = False
+        self.pending = None
+
+    def start(self, task):
+        self.starting = True
+        self.pending = task
+
+    def finish(self):
+        """Switch the mode on, then stop starting, in the order ok-script's `do_start` does."""
+        self.pending.enabled = True
+        self.starting = False
+
+
+def serve_remote(test):
+    """Serve the remote control on a free loopback port for one test, and return the port."""
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), remote.Remote)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    test.addCleanup(server.server_close)
+    test.addCleanup(server.shutdown)
+    return server.server_port
+
+
+def raw_post(port, headers, host=True):
+    """POST `{}` to the status command with exactly `headers`, as a browser or another local program might.
+
+    Args:
+        port: The remote control's port.
+        headers: Every header to send besides Content-Length, and Host unless `headers` names one.
+        host: False to send no Host header at all.
+
+    Returns:
+        The reply's status, Content-Type and body text.
+    """
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    try:
+        connection.putrequest("POST", "/status", skip_host=not host or "Host" in headers)
+        for name, value in {**headers, "Content-Length": "2"}.items():
+            connection.putheader(name, value)
+        connection.endheaders(b"{}")
+        response = connection.getresponse()
+        return response.status, response.getheader("Content-Type"), response.read().decode("utf-8")
+    finally:
+        connection.close()
 
 
 def wait_for(condition, seconds=2):
@@ -357,7 +414,8 @@ class TestRemote(unittest.TestCase):
         self.addCleanup(server.shutdown)
 
         def post(command):
-            request = urllib.request.Request(f"http://127.0.0.1:{server.server_port}/{command}", data=b"{}", method="POST")
+            request = urllib.request.Request(f"http://127.0.0.1:{server.server_port}/{command}", data=b"{}", method="POST",
+                                             headers={"Content-Type": "application/json"})
             with urllib.request.urlopen(request, timeout=5) as response:
                 return json.load(response)
 
@@ -371,6 +429,124 @@ class TestRemote(unittest.TestCase):
                     self.assertFalse(reply["ok"])
                     self.assertIn("unknown command", reply["error"])
             self.assertTrue(wait_for(lambda: exits))
+
+    def test_a_quit_is_refused_while_a_mode_is_switched_on_but_not_yet_running(self):
+        """A mode switched on from the window, or queued behind another, can start inside the quit's delay and be cut mid-drag."""
+        exits = []
+        mode = ChaosMode()
+        executor = idle_executor(tasks=[mode])
+        with standing_in(remote, _executor=lambda: executor, _exit_app=lambda: exits.append(1), QUIT_DELAY=0):
+            with self.assertRaisesRegex(RuntimeError, "ChaosMode. Stop it with set_running first"):
+                remote.quit()
+            time.sleep(0.1)
+            self.assertEqual([], exits)
+            self.assertIsNone(remote._quit_reply)
+            mode.enabled = False
+            self.assertEqual("exiting", remote.quit()["state"])
+            self.assertTrue(wait_for(lambda: exits))
+
+    def test_a_quit_is_refused_while_set_running_is_still_starting_a_mode(self):
+        """`set_running` returns before the start controller switches the mode on, which can land inside the quit's delay."""
+        exits = []
+        mode = ChaosMode()
+        mode.enabled = False
+        controller = LateStart()
+        executor = idle_executor(tasks=[mode])
+        with standing_in(remote, _executor=lambda: executor, _exit_app=lambda: exits.append(1), QUIT_DELAY=0), \
+                standing_in(og, app=types.SimpleNamespace(start_controller=controller)):
+            remote.set_running("ChaosMode", True)
+            self.assertEqual((True, False), (controller.starting, mode.enabled))
+            with self.assertRaisesRegex(RuntimeError, "being started: stop it with set_running, or wait until status"):
+                remote.quit()
+            controller.finish()
+            with self.assertRaisesRegex(RuntimeError, "ChaosMode. Stop it with set_running first"):
+                remote.quit()
+            time.sleep(0.1)
+            self.assertEqual([], exits)
+            self.assertIsNone(remote._quit_reply)
+            mode.enabled = False
+            self.assertEqual("exiting", remote.quit()["state"])
+            self.assertTrue(wait_for(lambda: exits))
+
+    def test_a_quit_is_refused_while_an_executor_job_is_queued(self):
+        """A submitted job waits with no job running until the executor's thread takes it, then sends its input."""
+        exits = []
+        executor = idle_executor(job_queue=["ExecutorJob(2, run code, owner=None)"])
+        with standing_in(remote, _executor=lambda: executor, _exit_app=lambda: exits.append(1), QUIT_DELAY=0):
+            with self.assertRaisesRegex(RuntimeError, "an executor job is queued: wait for it to run and end"):
+                remote.quit()
+            time.sleep(0.1)
+            self.assertEqual([], exits)
+            self.assertIsNone(remote._quit_reply)
+            executor._job_queue.clear()
+            self.assertEqual("exiting", remote.quit()["state"])
+            self.assertTrue(wait_for(lambda: exits))
+
+    def test_a_quit_is_refused_while_an_executor_job_runs(self):
+        """ok-script's code runner sends input as a job with no task running, and a drag cut mid-way leaves the button down."""
+        exits = []
+        executor = idle_executor(current_job="ExecutorJob(1, run code, owner=None)")
+        with standing_in(remote, _executor=lambda: executor, _exit_app=lambda: exits.append(1), QUIT_DELAY=0):
+            with self.assertRaisesRegex(RuntimeError, r"ExecutorJob\(1, run code, owner=None\) is running on the executor: wait"):
+                remote.quit()
+            time.sleep(0.1)
+            self.assertEqual([], exits)
+            self.assertIsNone(remote._quit_reply)
+            executor.current_job = None
+            self.assertEqual("exiting", remote.quit()["state"])
+            self.assertTrue(wait_for(lambda: exits))
+
+    def test_the_mcp_bridge_reaches_the_port(self):
+        """The port's own guards must never shut out the one caller it is there for."""
+        port = serve_remote(self)
+        ran = []
+        with standing_in(remote, status=lambda **kwargs: ran.append(kwargs) or "status ran", _last_contact=None), \
+                standing_in(czn_mcp, URL=f"http://127.0.0.1:{port}"):
+            self.assertEqual("status ran", czn_mcp.call("status"))
+            self.assertIsNotNone(remote._last_contact)
+        self.assertEqual([{}], ran)
+
+    def test_a_request_a_web_page_could_send_runs_nothing(self):
+        """Loopback alone lets any page open in a browser here click, start a mode or end the app through the port."""
+        port = serve_remote(self)
+        own_host = f"127.0.0.1:{port}"
+        refused = {
+            "text/plain": ({"Content-Type": "text/plain"}, True, 415),
+            "no Content-Type": ({}, True, 415),
+            "a form": ({"Content-Type": "application/x-www-form-urlencoded"}, True, 415),
+            "a multipart form": ({"Content-Type": "multipart/form-data; boundary=x"}, True, 415),
+            "JSON in another type's parameter": ({"Content-Type": "text/plain; x=application/json"}, True, 415),
+            "an Origin": ({"Content-Type": "application/json", "Origin": "https://example.com"}, True, 403),
+            "an Origin of null": ({"Content-Type": "application/json", "Origin": "null"}, True, 403),
+            "a foreign Host": ({"Content-Type": "application/json", "Host": f"rebound.example:{port}"}, True, 403),
+            "our address as a prefix": ({"Content-Type": "application/json", "Host": f"127.0.0.1.evil.example:{port}"}, True, 403),
+            "another port in Host": ({"Content-Type": "application/json", "Host": f"127.0.0.1:{port + 1}"}, True, 403),
+            "a Host with no port": ({"Content-Type": "application/json", "Host": "localhost"}, True, 403),
+            "no Host": ({"Content-Type": "application/json"}, False, 403),
+        }
+        served = {
+            "plain JSON": {"Content-Type": "application/json", "Host": own_host},
+            "JSON with a charset": {"Content-Type": "application/json; charset=utf-8", "Host": own_host},
+            "JSON in capitals": {"Content-Type": "Application/JSON", "Host": own_host},
+            "localhost": {"Content-Type": "application/json", "Host": f"LocalHost:{port}"},
+        }
+        ran = []
+        with standing_in(remote, status=lambda **kwargs: ran.append(kwargs) or "status ran", _last_contact=None):
+            for case, (headers, host, status) in refused.items():
+                with self.subTest(case):
+                    ran.clear()
+                    remote._last_contact = None
+                    code, content_type, text = raw_post(port, headers, host)
+                    self.assertEqual((status, "text/plain; charset=utf-8"), (code, content_type))
+                    self.assertTrue(text.startswith("refused: "), text)
+                    self.assertEqual([], ran)
+                    self.assertIsNone(remote._last_contact)
+            for case, headers in served.items():
+                with self.subTest(case):
+                    ran.clear()
+                    code, content_type, text = raw_post(port, headers)
+                    self.assertEqual((200, {"ok": True, "result": "status ran"}), (code, json.loads(text)))
+                    self.assertEqual([{}], ran)
 
     def test_the_mcp_quit_tool_sends_quit(self):
         """A tool forwarding to any other command would leave the app running while the caller waits for it to go."""

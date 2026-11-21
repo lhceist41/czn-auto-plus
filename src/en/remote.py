@@ -73,8 +73,14 @@ class Remote(http.server.BaseHTTPRequestHandler):
     """Answer `POST /<command>` with a JSON body of keyword arguments, replying `{"ok", "result" | "error"}`."""
 
     def do_POST(self):
-        """Run one command and reply with its result, or with the error it raised."""
+        """Run one command and reply with its result, or with the error it raised. A request a web page could have sent
+        is refused before anything runs."""
         global _last_contact
+        refusal = self.refusal()
+        if refusal is not None:
+            status, message = refusal
+            self.reply(status, message.encode("utf-8"), "text/plain; charset=utf-8")
+            return
         _last_contact = time.monotonic()
         name = self.path.strip("/")
         try:
@@ -84,9 +90,35 @@ class Remote(http.server.BaseHTTPRequestHandler):
             reply = {"ok": True, "result": globals()[name](**json.loads(body or b"{}"))}
         except Exception as error:
             reply = {"ok": False, "error": f"{type(error).__name__}: {error}"}
-        data = json.dumps(reply, ensure_ascii=False, default=str).encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.reply(200, json.dumps(reply, ensure_ascii=False, default=str).encode("utf-8"), "application/json; charset=utf-8")
+
+    def refusal(self):
+        """Return `(status, message)` for a request that did not come from a tool on this machine, or None to serve it.
+
+        Loopback alone still lets any web page open here POST to the port. A browser sends an `Origin` with every
+        cross-site POST, can send JSON only after a CORS preflight this server never answers, and keeps the page's own
+        name in `Host` when DNS rebinding points that name at 127.0.0.1.
+        """
+        port = self.server.server_port
+        host = (self.headers.get("Host") or "").lower()
+        if host not in (f"{HOST}:{port}", f"localhost:{port}"):
+            return 403, f"refused: Host {host!r} is not {HOST}:{port} or localhost:{port}"
+        if "Origin" in self.headers:
+            return 403, "refused: the request came from a web page"
+        if (self.headers.get("Content-Type") or "").split(";")[0].strip().lower() != "application/json":
+            return 415, "refused: send the body as Content-Type application/json"
+        return None
+
+    def reply(self, status, data, content_type):
+        """Send one complete response.
+
+        Args:
+            status: The HTTP status code.
+            data: The body, already encoded.
+            content_type: The body's Content-Type header.
+        """
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
@@ -356,14 +388,33 @@ def quit():
         `{"state": "exiting", "pid": ...}`: the process is gone when that pid is.
 
     Raises:
-        RuntimeError: A task is running, so a quit would cut it mid-action. Stop it with `set_running` first.
+        RuntimeError: A task is running, being started or switched on, or an executor job is queued or running, so a
+            quit could cut input mid-action. Stop the task with `set_running` first, or wait for the job to end.
     """
+    from ok import og
+
     global _quit_reply
     with _quit_lock:
         if _quit_reply is None:
-            current = _executor().current_task
+            executor = _executor()
+            current = executor.current_task
             if current is not None:
                 raise RuntimeError(f"{type(current).__name__} is running: stop it with set_running first, so the quit never cuts it mid-action")
+            # `set_running` only asks the start controller, which finds the game window and switches the mode on later,
+            # on its own thread. It switches the mode on before it stops starting, so reading this first leaves no gap.
+            if getattr(getattr(getattr(og, "app", None), "start_controller", None), "starting", False):
+                raise RuntimeError("a mode is being started: stop it with set_running, or wait until status shows it running")
+            # Covers a mode switched on from the window or queued behind another, and a trigger task that is on.
+            enabled = [type(task).__name__ for task in executor.get_all_tasks() if task.enabled]
+            if enabled:
+                raise RuntimeError(f"switched on and may start any moment: {', '.join(enabled)}. Stop it with set_running first")
+            # ok-script's code runner sends input as a job, with no task running, and the exit could cut a drag mid-way.
+            # A submitted job waits in the queue until the executor's thread takes it.
+            if getattr(executor, "_job_queue", None):
+                raise RuntimeError("an executor job is queued: wait for it to run and end, then quit")
+            job = executor.current_job
+            if job is not None:
+                raise RuntimeError(f"{job} is running on the executor: wait for it to end, then quit")
             _quit_reply = {"state": "exiting", "pid": os.getpid()}
             logger.info("remote quit")
             timer = threading.Timer(QUIT_DELAY, _exit_app)
