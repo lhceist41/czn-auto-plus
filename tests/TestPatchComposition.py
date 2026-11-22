@@ -216,8 +216,9 @@ class TestAnchorSurvivesWrapping(unittest.TestCase):
 
     def test_the_narration_handler_still_finds_its_anchor(self):
         events.install(self.utils)
-        self.assertEqual(1, handlers.append(dialogue.handle_dialogue, dialogue.MODE_ANCHOR))
-        self.assertEqual("handle_dialogue", names(self.module)[-1])
+        # Judged on this test's own list: the append count also takes in any real mode an earlier test imported.
+        handlers.append(dialogue.handle_dialogue, dialogue.MODE_ANCHOR)
+        self.assertEqual(["handle_confirm", "handle_event_task", "handle_dialogue"], names(self.module))
 
     def test_the_change_is_carried_once_however_many_times_it_installs(self):
         for _ in range(MODES):
