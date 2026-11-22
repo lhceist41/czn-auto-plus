@@ -30,7 +30,7 @@ from src.en.events import (  # noqa: E402
     ATTACK, ATTACK_RANK, BESIDES_CREDITS, CREDIT_RANK, CURSE_RANK, DESIRE_RANK, DIALOGUE, DIALOGUE_RANK, ENCOUNTER, ENCOUNTER_RANK, HEALTH_COST,
     HEALTH_COST_RANK, MIN_LATIN_MARKER_LENGTH, MIN_MARKER_LENGTH, OFF_FACTION_RANK, QUIT, QUIT_RANK,
     REFINED, REWARD_RANK, RankingChoice, SPARK, SPARK_RANK, center_of, double_clicking, drop_unwanted, find_pins, fold,
-    handle_unavailable_reward, leave_after_refinement, open_a_chest, order, rank, ranking, real_options, take_substitute,
+    handle_unavailable_reward, leave_after_refinement, order, rank, ranking, real_options, take_substitute, tap_a_pin,
 )
 from src.en.enter import OPTION_TEMPLATES, on_the_button  # noqa: E402
 from src.en.etched_memory import (  # noqa: E402
@@ -380,8 +380,8 @@ class TestDesireOptions(unittest.TestCase):
         self.assertEqual(self.RANDOM, ordered[0]["description"])
 
 
-class TestTreasureChests(unittest.TestCase):
-    """The Treasure Trove marks each unopened chest with a pin, and the client redraws the pin's badge between layouts."""
+class TestScenePins(unittest.TestCase):
+    """The client pins a badge over anything in a scene that can be tapped, such as a chest or a Shattered Memory, and redraws its art by event."""
 
     @staticmethod
     def frame_with(name, left, top):
@@ -407,7 +407,9 @@ class TestTreasureChests(unittest.TestCase):
     def test_the_pins_are_found_whatever_the_badge_shows(self):
         # The arrow template this replaced matched only the old badge. Each point is the badge, as a tap on the square does nothing.
         layouts = (("mascot badge", self.new_layout(), [(0.523, 0.491), (0.682, 0.377), (0.801, 0.474)]),
-                   ("arrow badge", self.frame_with("treasure_band.png", 915, 362), [(0.524, 0.425), (0.801, 0.430)]))
+                   ("arrow badge", self.frame_with("treasure_band.png", 915, 362), [(0.524, 0.425), (0.801, 0.430)]),
+                   # Upstream's own shard template scored 0.68 on this one, under its 0.7 cutoff, so the event's option was taken instead.
+                   ("shard badge", self.frame_with("shard_pin.png", 840, 540), [(0.472, 0.558)]))
         for layout, frame, expected in layouts:
             with self.subTest(layout):
                 pins = find_pins(frame)
@@ -425,7 +427,7 @@ class TestTreasureChests(unittest.TestCase):
                 self.assertEqual([], find_pins(frame))
 
     def run_screen(self, options, frame=None, task=None):
-        """Offer the chest opener one frame, and report where it clicked.
+        """Offer the pin tapper one frame, and report where it clicked.
 
         Args:
             options: The options upstream reads on the frame, each a whole option or the description of one it reads well.
@@ -441,25 +443,16 @@ class TestTreasureChests(unittest.TestCase):
         read = [option if isinstance(option, dict) else read_option(option, "event3", 0.95, 0.5, 0.95) for option in options]
         utils_ = SimpleNamespace(recognize_event_options=lambda task_: read,
                                  _move_and_click=lambda _, x, y: clicks.append((x, y)))
-        open_a_chest(task, utils_)
+        tap_a_pin(task, utils_)
         return clicks
 
-    def test_a_pin_is_clicked_only_when_leaving_is_the_only_choice(self):
-        # Upstream's upper-half shortcut clicks "End the event" before it ever looks for chests.
-        cases = (("no options", [], 1), ("only Leave", ["LeaveEnd the event"], 1),
-                 ("a real choice", ["LeaveEnd the event", "Investigate the surroundingsIncrease Credits by 120"], 0))
-        for case, options, expected in cases:
+    def test_a_pin_is_clicked_before_any_option(self):
+        # Upstream only knows some badges by template, so a pin left to it beside a real choice is skipped for the option.
+        cases = (("no options", []), ("only Leave", ["LeaveEnd the event"]),
+                 ("a real choice", ["LeaveEnd the event", "Investigate the surroundingsIncrease Credits by 120"]))
+        for case, options in cases:
             with self.subTest(case):
-                self.assertEqual(expected, len(self.run_screen(options)))
-
-    def test_a_false_match_is_no_choice_that_keeps_the_pin_unclicked(self):
-        """The magnifier, the record card and the rest upstream reads as options are not a choice the event offers."""
-        false = [TestFalseOptions.PHANTOM_Q, TestFalseOptions.RECORD_CARD]
-        false += [read_option(text, feature, confidence, 0.5, 0.95) for text, feature, confidence in TestFalseOptions.FALSE]
-        for option in false:
-            with self.subTest(option["description"]):
-                self.assertEqual(1, len(self.run_screen(["LeaveEnd the event", option])))
-                self.assertEqual(0, len(self.run_screen(["Investigate the surroundingsIncrease Credits by 120", option])))
+                self.assertEqual(1, len(self.run_screen(options)))
 
     def test_a_pin_that_never_goes_away_stops_being_clicked(self):
         task = SimpleNamespace(sleep=lambda seconds: None)

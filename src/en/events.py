@@ -120,8 +120,6 @@ PIN_BADGE = 75
 PIN_TRIES = 2
 # Set on the task: how often each pin spot was clicked, cleared once a frame shows none.
 PIN_CLICKS = "_en_pin_clicks"
-# The option that leaves an event. A chest room may offer it beside its chests, and nothing else.
-LEAVE_MARKERS = ("离开", *QUIT)
 # Set in `task.node_status` by upstream once Memory Refinement is visited. Upstream then leaves on "就此离开", which the
 # Global client prints as "Leave / End the event".
 REFINED = "precision_memory_visited"
@@ -532,15 +530,15 @@ def find_pins(frame):
     return sorted((float(x), float(y)) for x, y in badges)
 
 
-def open_a_chest(task, utils):
-    """Click the next unopened chest on a Treasure Trove screen, or any other pin when leaving is all the event offers.
+def tap_a_pin(task, utils):
+    """Click the next pin in the scene, such as an unopened chest or a Shattered Memory, before any option is picked.
 
-    Upstream's upper-half shortcut clicks "End the event" before it ever looks for chests, so this has to run before
-    upstream does. An event with a real choice keeps it, so a pin that only inspects the scene is left to upstream.
+    Upstream knows only some badges by template, misses others when the backdrop changes, and has none for the dialogue
+    badge, so every pin is tapped here first. Upstream's upper-half shortcut would otherwise click "End the event" first.
 
     Args:
         task: The running task.
-        utils: Upstream's `utils` module, for `recognize_event_options` and `_move_and_click`.
+        utils: Upstream's `utils` module, for `_move_and_click`.
 
     Returns:
         True when a pin was clicked.
@@ -554,10 +552,6 @@ def open_a_chest(task, utils):
     spots = {(round(x, 2), round(y, 2)): (x, y) for x, y in pins}
     key = next((key for key in spots if clicks.get(key, 0) < PIN_TRIES), None)
     if key is None:
-        return False
-    # Upstream also reads the magnifier and the record card as options, which would pass for a real choice here.
-    options = real_options(utils.recognize_event_options(task) or [])
-    if any(not contains(fold(option.get("description", "")), LEAVE_MARKERS) for option in options or []):
         return False
     clicks[key] = clicks.get(key, 0) + 1
     x, y = spots[key]
@@ -685,7 +679,7 @@ def ranking(utils):
             title = utils.find_box_at_point(task, *EQUIPMENT_TITLE_POINT)
             if title and title.name == EQUIPMENT_TITLE:
                 return False
-            if open_a_chest(task, utils):
+            if tap_a_pin(task, utils):
                 return True
             original_find_feature = task.find_feature
             centers = {}
