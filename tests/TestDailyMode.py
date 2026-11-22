@@ -1,4 +1,4 @@
-"""Check that Daily closes the Lobby's popups, claims all mail, opens Dream Park and stops on the Lobby, pressing nothing else.
+"""Check that Daily closes the Lobby's popups, claims attendance and all mail, opens Dream Park and stops on the Lobby, pressing nothing else.
 
 The screens are the boxes OCR read off the Global client's Lobby, its entry banner and Notice board, the open menu, the
 Mail screen before and after Claim All, and Items Obtained, as the bot sees them once the catalog has mapped them, with
@@ -89,6 +89,19 @@ ITEMS = (
     ("Items Obtained", 0.502, 0.377), ("365,000", 0.287, 0.568), ("2,000", 0.384, 0.568), ("5", 0.487, 0.566), ("365", 0.566, 0.568),
     ("V", 0.499, 0.885), ("点击屏幕关闭窗口", 0.501, 0.935), ("进入", 0.500, 0.978),
 )
+# The daily attendance popup on day 4, opened as the Mail popup closed: days 1 to 3 stamped, today's Claim Reward, the
+# X drawn but not read. Then Items Obtained over it, and the popup again with day 4 stamped and its X read.
+ATTENDANCE = (
+    ("Invitation to a New Journey", 0.690, 0.169), ("Permanent", 0.833, 0.229), ("02", 0.541, 0.308), ("1", 0.629, 0.318), ("03", 0.653, 0.307),
+    ("07", 0.778, 0.325), ("04", 0.431, 0.611), ("05", 0.542, 0.612), ("06", 0.653, 0.611), ("Claim Reward", 0.459, 0.830),
+    ("Awaiting Attendance", 0.571, 0.831), ("Awaiting Attendance", 0.683, 0.831), ("Awaiting Attendance", 0.817, 0.828),
+)
+ATTENDANCE_ITEMS = (("Items Obtained", 0.502, 0.377), ("点击屏幕关闭窗口", 0.501, 0.935), ("进入", 0.500, 0.977))
+ATTENDANCE_STAMPED = (
+    ("Invitation to a New Journey", 0.690, 0.169), ("X", 0.933, 0.127), ("Permanent", 0.833, 0.229), ("02", 0.541, 0.309), ("03", 0.653, 0.307),
+    ("07", 0.778, 0.326), ("天", 0.568, 0.450), ("04", 0.428, 0.612), ("05", 0.542, 0.612), ("06", 0.653, 0.611),
+    ("Awaiting Attendance", 0.571, 0.831), ("Awaiting Attendance", 0.683, 0.831), ("Awaiting Attendance", 0.817, 0.828),
+)
 # 264, the Lobby a few idle seconds later, its UI faded out: OCR reads nothing.
 FADED = ()
 # Where the faded-scene crops sit: x 0-441 and y 21-302 of a 1080p capture.
@@ -168,6 +181,8 @@ POINTS = {
     daily.STORY_SKIP: (0.767, 0.053),
     daily.SKIP_TICK: (0.392, 0.532),
     daily.SKIP_CONFIRM: (0.667, 0.631),
+    daily.ATTENDANCE_CLAIM: (0.459, 0.830),
+    daily.ATTENDANCE_CLOSE: (0.933, 0.127),
 }
 # What Daily must never press, by where it sits. Power is the icon's centre in 265 (rows 972-1022 of 1080) and the
 # `End` key label under it in 273. Skip Tutorial is a box over three targets, not a point: `TestTutorial` covers it.
@@ -189,6 +204,8 @@ NEVER = {
     "Items Obtained's 进入": (0.500, 0.978),
     "the Mail popup's dots": (0.912, 0.093),
     "the Mail popup's envelope": (0.068, 0.089),
+    "a day still awaiting attendance": (0.571, 0.831),
+    "the attendance popup's dots": (0.932, 0.159),
 }
 # How close a tap may come to a point before it counts as pressing it: about 19 px across and 11 px down at 1080p. The
 # banner's dots sit 0.015 left of where the Lobby's Menu is tapped, but only on the banner, where Daily taps the X instead.
@@ -200,6 +217,7 @@ OWN = (
     daily.handle_daily_tutorial,
     daily.handle_daily_overtime,
     daily.handle_daily_items_obtained,
+    daily.handle_daily_attendance,
     daily.handle_daily_mail,
     daily.handle_daily_rules_dialog,
     daily.handle_daily_profit_report,
@@ -510,6 +528,102 @@ class TestMail(Daily):
         for missing in ("Mail", "003 / 100"):
             with self.subTest(missing=missing):
                 self.assertFalse(daily.on_mail(self.task.show([box for box in MAIL if box[0] != missing])))
+
+
+class TestAttendance(Daily):
+
+    def run_screens(self, screens):
+        for screen in screens:
+            run_pass(self.task.show(screen))
+            self.tick()
+
+    def test_todays_claim_reward_is_pressed_items_obtained_closed_then_the_popup_closed_on_its_x(self):
+        """The stamped popup is left alone while the claim may still be landing, then closed on its X, with no stop."""
+        self.run_screens([ATTENDANCE, ATTENDANCE_ITEMS] + [ATTENDANCE_STAMPED] * (daily.CLAIM_WAIT - 1))
+        self.assertPressed(daily.ATTENDANCE_CLAIM, daily.ITEMS_CLOSE, daily.ATTENDANCE_CLOSE)
+        self.assertNothingForbidden()
+        self.assertEqual(0, self.task.disabled)
+
+    def test_a_popup_already_claimed_is_given_time_to_draw_then_only_closed(self):
+        """No Claim Reward: nothing on the first frame, then the X, and again only once the popup has had time to close."""
+        self.task.show(ATTENDANCE_STAMPED)
+        self.assertTrue(run_pass(self.task))
+        self.assertEqual([], self.task.clicks)
+        self.tick(daily.SETTLE)
+        self.assertTrue(run_pass(self.task))
+        self.assertPressed(daily.ATTENDANCE_CLOSE)
+        for _ in range(daily.NAV_WAIT - 1):
+            self.tick()
+            self.assertTrue(run_pass(self.task))
+        self.assertPressed(daily.ATTENDANCE_CLOSE)
+        self.tick()
+        self.assertTrue(run_pass(self.task))
+        self.assertPressed(daily.ATTENDANCE_CLOSE, daily.ATTENDANCE_CLOSE)
+        self.assertEqual(0, self.task.disabled)
+
+    def test_a_claim_that_opens_nothing_is_retried_once_then_the_popup_is_closed(self):
+        self.task.show(ATTENDANCE)
+        for _ in range(2 * daily.CLAIM_WAIT + 1):
+            run_pass(self.task)
+            self.tick()
+        self.assertPressed(daily.ATTENDANCE_CLAIM, daily.ATTENDANCE_CLAIM, daily.ATTENDANCE_CLOSE)
+        self.assertEqual(0, self.task.disabled)
+
+    def test_the_popup_needs_its_title_and_its_tag_each_in_its_place(self):
+        """Each also read where the Event list's page for the same event draws it, which is no popup."""
+        moved = {"Invitation to a New Journey": (0.774, 0.136), "Permanent": (0.918, 0.201)}
+        for text, place in moved.items():
+            for case, screen in (("missing", tuple(box for box in ATTENDANCE if box[0] != text)),
+                                 ("off its place", tuple((name, *place) if name == text else (name, x, y) for name, x, y in ATTENDANCE))):
+                with self.subTest(text=text, case=case):
+                    self.task = Task()
+                    self.assertTrue(run_pass(self.task.show(screen)))
+                    self.assertEqual([], self.task.clicks)
+
+    def test_a_claim_reward_off_the_day_cards_is_not_pressed(self):
+        """Over the art on the popup's left, where no card is, a Claim Reward is no claim; the popup is only closed."""
+        off_cards = tuple(("Claim Reward", 0.200, 0.830) if box[0] == "Claim Reward" else box for box in ATTENDANCE)
+        self.run_screens([off_cards] * (daily.SETTLE + 1))
+        self.assertPressed(daily.ATTENDANCE_CLOSE)
+
+    def test_the_event_lists_page_for_the_same_event_is_not_the_popup(self):
+        """The list opened on the attendance event, today's card unclaimed: Dream Park is opened, no Claim Reward pressed."""
+        self.state()["steps"]["mail"] = daily.DONE
+        unclaimed = tuple(("Claim Reward", x, y) if (name, x) == ("Awaiting Attendance", 0.543) else (name, x, y) for name, x, y in EVENT_LIST)
+        self.assertTrue(run_pass(self.task.show(unclaimed)))
+        self.assertPressed(daily.DREAM_PARK)
+
+    def test_a_slow_items_obtained_on_the_mail_and_on_the_claim_each_get_their_own_presses(self):
+        """Each Items Obtained shows for two frames: four caption presses in the run, two per screen, and no stop."""
+        self.run_screens([LOBBY, MENU, MAIL, ITEMS, ITEMS, MAIL_AFTER, ATTENDANCE, ATTENDANCE_ITEMS, ATTENDANCE_ITEMS]
+                         + [ATTENDANCE_STAMPED] * (daily.CLAIM_WAIT - 2))
+        self.assertPressed(daily.MENU, daily.ENVELOPE, daily.CLAIM_ALL, daily.ITEMS_CLOSE, daily.ITEMS_CLOSE, daily.MAIL_CLOSE,
+                           daily.ATTENDANCE_CLAIM, daily.ITEMS_CLOSE, daily.ITEMS_CLOSE, daily.ATTENDANCE_CLOSE)
+        self.assertEqual(0, self.task.disabled)
+
+    def test_the_claims_items_obtained_still_stops_at_its_own_limit(self):
+        limit = daily.TAP_LIMITS[daily.ITEMS_CLOSE]
+        self.run_screens([ATTENDANCE] + [ATTENDANCE_ITEMS] * (limit + 1))
+        self.assertPressed(daily.ATTENDANCE_CLAIM, *[daily.ITEMS_CLOSE] * limit)
+        self.assertStopped(f"{daily.ITEMS_CLOSE} was pressed {limit} times")
+
+    def test_the_popup_restarts_the_unknown_screen_clock(self):
+        run_pass(self.task.show(SETTINGS))
+        self.tick(daily.UNKNOWN_SECONDS - 1)
+        run_pass(self.task.show(ATTENDANCE_STAMPED))
+        self.tick()
+        run_pass(self.task.show(SETTINGS))
+        self.assertEqual(0, self.task.disabled)
+
+    def test_the_popup_after_the_mail_is_claimed_and_the_run_goes_on_to_the_park(self):
+        """The live order: the Mail popup's X opens the attendance popup, and its X lands on the Lobby."""
+        no_park = [MENU] + [EVENT_LIST_WITHOUT_PARK] * (daily.SETTLE + 1)
+        self.run_screens([LOBBY, MENU, MAIL, ITEMS, MAIL_AFTER, ATTENDANCE, ATTENDANCE_ITEMS] + [ATTENDANCE_STAMPED] * (daily.CLAIM_WAIT - 1)
+                         + [LOBBY] + no_park + [LOBBY])
+        self.assertPressed(daily.MENU, daily.ENVELOPE, daily.CLAIM_ALL, daily.ITEMS_CLOSE, daily.MAIL_CLOSE, daily.ATTENDANCE_CLAIM,
+                           daily.ITEMS_CLOSE, daily.ATTENDANCE_CLOSE, daily.MENU, daily.EVENT, daily.EVENT_LEAVE)
+        self.assertNothingForbidden()
+        self.assertStopped("Daily finished: mail claimed; Dream Park is not running")
 
 
 class TestLobbyAndMenu(Daily):
@@ -843,7 +957,7 @@ class TestStops(Daily):
                 self.assertStopped(f"{target} was pressed {limit} times")
 
     def test_the_limits_are_as_designed(self):
-        special = {daily.CLAIM_ALL: 2, daily.WAKE: 2, daily.RANK_UP: 2, daily.UPGRADE: 200, daily.CLAIM: 30, daily.SKIP_TICK: 1}
+        special = {daily.CLAIM_ALL: 2, daily.ATTENDANCE_CLAIM: 2, daily.WAKE: 2, daily.RANK_UP: 2, daily.UPGRADE: 200, daily.CLAIM: 30, daily.SKIP_TICK: 1}
         self.assertEqual({target: special.get(target, 3) for target in POINTS}, daily.TAP_LIMITS)
         self.assertEqual(set(POINTS), set(daily.TARGETS))
 
@@ -886,12 +1000,12 @@ class TestRefusals(Daily):
 
     def test_the_backstop_passes_every_target_on_its_own_screen(self):
         """Nothing Daily presses reads as a refused word, the menu's Shop and Rescue lying well away from its targets."""
-        for screen in (LOBBY, MENU, MENU_KEYS, NOTICE, MAIL, MAIL_AFTER, ITEMS):
+        for screen in (LOBBY, MENU, MENU_KEYS, NOTICE, MAIL, MAIL_AFTER, ITEMS, ATTENDANCE, ATTENDANCE_STAMPED):
             for box in screen:
                 if box[0] in ("Shop", "营救", "Delete read mail", "Delete"):
                     self.assertIsNotNone(daily.refused(box[0]), box[0])
         for target, point in POINTS.items():
-            for screen in (LOBBY, MENU, NOTICE, MAIL, MAIL_AFTER, ITEMS):
+            for screen in (LOBBY, MENU, NOTICE, MAIL, MAIL_AFTER, ITEMS, ATTENDANCE, ATTENDANCE_STAMPED):
                 hits = daily.boxes_at(self.task.show(screen), point)
                 self.assertEqual([], [box.name for box in hits if daily.refused(box.name)], target)
 

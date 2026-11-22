@@ -413,6 +413,21 @@ STORY = (
     ('Captain! Over here, over here! Iheard the news about the opening and came running!', 0.470, 0.835), ('Space', 0.937, 0.912),
 )
 
+# Facilities at Rank 8, scrolled past both Happiness rides, Merry-Go-Round and Tagada, which stand at Lv.50/50: Thrill 61,
+# Comfort 52, Happiness 50 of 64. Drop Tower, built, upgrades for 25 out of a profit of 1.13M.
+FACILITIES_STALL = (
+    ('8', 0.097, 0.045), ("The SS Nightmare's Most Popular Spot", 0.298, 0.046), ('1.13M', 0.961, 0.046), ('Rules of Gooal', 0.165, 0.132),
+    ('N', 0.212, 0.122), ('61/64', 0.706, 0.106), ('52/64', 0.802, 0.105), ('😊', 0.874, 0.106), ('50 /64', 0.929, 0.106), ('0/54', 0.171, 0.204),
+    ('Order', 0.190, 0.169), ('へ', 0.714, 0.195), ('Manage', 0.087, 0.294), ('Facilities', 0.803, 0.274), ('Recruit', 0.085, 0.382),
+    ('o Roller Coaster', 0.772, 0.350), ('Lv.25/50', 0.934, 0.350), ('Thrill +25', 0.780, 0.402), ('+40/5s', 0.893, 0.400), ('六', 0.032, 0.479),
+    ('Operate', 0.087, 0.473), ('强化', 0.773, 0.456), ('3.07K', 0.947, 0.455), ('o Top Spin', 0.756, 0.530), ('Lv.18/50', 0.933, 0.529),
+    ('Thrill +36', 0.780, 0.579), ('+36/5s', 0.885, 0.580), ('强化', 0.772, 0.634), ('2.19K', 0.945, 0.632), ('o Drop Tower', 0.765, 0.707),
+    ('Lv.1/50', 0.929, 0.706), ('Comfort +2', 0.784, 0.756), ('+2/4s', 0.880, 0.758), ('强化', 0.773, 0.812), ('25', 0.957, 0.809),
+    ('o Special Guest', 0.771, 0.884), ('Press and hold the button to upgrade quickly.', 0.802, 0.930),
+)
+# Drop Tower's Upgrade on that list, where Roller Coaster's sits on others.
+DROP_TOWER_UPGRADE = (0.773, 0.812)
+
 
 def edited(screen, *changes):
     """Give a screen with some of its texts read differently, as the same screen shows them a press later.
@@ -683,6 +698,37 @@ class TestChoice(unittest.TestCase):
         self.assertEqual("the profit did not read", self.choose(edited(FACILITIES, ("99.21K", None))))
         task = Task().show(FACILITIES_RANK1)
         self.assertEqual((None, "the emotions did not read"), dream_park.choose(dream_park.facility_rows(task), None, 9_820))
+
+    def test_with_no_ride_of_the_most_lagging_emotion_in_view_the_next_lagging_one_is_upgraded(self):
+        """Happiness lags most, but neither of its rides is in view; Comfort lags next, and Drop Tower is its ride."""
+        self.assertEqual(((61, 52, 50), 64), dream_park.header_emotions(Task().show(FACILITIES_STALL)))
+        self.assertEqual(("Drop Tower", "upgrade"), self.choose(FACILITIES_STALL))
+
+    def test_the_fallback_follows_the_lag_never_the_cheapest_ride(self):
+        """Comfort, 12 short, comes before Thrill, 3 short, even with Drop Tower dearer than Top Spin at 2.19K."""
+        self.assertEqual(("Drop Tower", "upgrade"), self.choose(edited(FACILITIES_STALL, ("25", "9.99K"))))
+        self.assertEqual(("Top Spin", "upgrade"), self.choose(edited(FACILITIES_STALL, ("o Drop Tower", None))))
+
+    def test_an_unread_price_of_a_lagging_emotion_ends_the_fallback_there(self):
+        """Drop Tower's price does not read, so the choice stops at Comfort and never upgrades a Thrill ride."""
+        self.assertEqual("no Comfort ride with a readable price in view", self.choose(edited(FACILITIES_STALL, ("25", "2?"))))
+
+    def test_a_capped_lagging_ride_whose_price_does_not_read_still_lets_the_next_emotion_upgrade(self):
+        """Tagada at Lv.50/50, its price unread: Happiness has nothing left to upgrade, so Comfort's Merry-Go-Round at 4.65K."""
+        self.assertEqual(("Merry-Go-Round", "upgrade"), self.choose(edited(FACILITIES, ("Lv.29/50", "Lv.50/50"), ("6.37K", "6.3?K"))))
+
+    def test_a_lagging_build_whose_price_does_not_read_ends_the_choice_there(self):
+        """Comfort lags most and Drop Tower's Build does not read, so neither Happiness nor Thrill's Top Spin at 2.19K is upgraded."""
+        self.assertEqual("no Comfort ride with a readable price in view",
+                         self.choose(edited(FACILITIES_DROP_TOWER, ("385.00K", "385.0?K")), emotions=((60, 29, 36), 64)))
+        self.assertEqual(("Top Spin", "upgrade"), self.choose(edited(FACILITIES_DROP_TOWER, ("o Drop Tower", None)), emotions=((60, 29, 36), 64)))
+
+    def test_the_fallback_reaches_only_the_lagging_emotions(self):
+        """Comfort and Happiness lag with nothing in view, and Thrill, past its target, is never upgraded for them."""
+        self.assertEqual("no Comfort or Happiness ride with a readable price in view", self.choose(FACILITIES_DROP_TOWER))
+        capped = [dream_park.Ride("Tagada", 50, "Happiness", "upgrade", None, 10), dream_park.Ride("Drop Tower", 50, "Comfort", "upgrade", None, 10)]
+        self.assertEqual((None, "no Happiness or Comfort or Thrill ride with a readable price in view"),
+                         dream_park.choose(capped, ((63, 52, 50), 64), 1_000))
 
     def test_a_ride_at_its_level_cap_is_never_chosen(self):
         capped = [dream_park.Ride("Merry-Go-Round", 50, "Comfort", "upgrade", None, 10)]
@@ -1036,6 +1082,16 @@ class TestManageAndFacilities(Park):
         rose = tuple(("LV.3/50", x, y) if name == "LV.2/50" else (name, x, y) for name, x, y in FACILITIES_RANK1)
         self.show(rose)
         self.assertEqual("the emotions did not read", self.park()["note"])
+
+    def test_a_capped_lagging_emotion_hands_the_upgrade_to_the_next_one(self):
+        """The list that stalled the park every day: Drop Tower's Upgrade is pressed instead of the visit leaving with nothing spent."""
+        self.park()["phase"] = daily.TO_OPERATE
+        self.show(FACILITIES_STALL)
+        self.assertEqual(1, len(self.task.clicks), self.task.clicks)
+        self.assertTrue(self.pressed_at(DROP_TOWER_UPGRADE))
+        self.assertEqual(("Drop Tower", 1), self.park()["pending"][:2])
+        self.assertEqual(1, self.park()["upgrades"])
+        self.assertNothingForbidden()
 
     def test_a_list_still_drawing_is_waited_on_before_the_visit_leaves_it(self):
         self.park()["phase"] = daily.TO_OPERATE

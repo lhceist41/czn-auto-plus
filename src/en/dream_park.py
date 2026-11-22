@@ -298,8 +298,11 @@ def choose(rides, emotions, money, stretch=None):
 
     Build a newly unlocked ride first when its price is within the profit; when one costs more than the profit but no
     more than one full offline stretch, save for it and upgrade nothing. Otherwise upgrade the cheapest ride of the
-    emotion furthest below the Rank target; once all three are at the target, the cheapest ride of all, which counts
-    toward the ride-level achievements. A row whose price did not read is never chosen.
+    emotion furthest below the Rank target, or, when no row of that emotion below the level cap is in view, of the next
+    most lagging emotion; once all three are at the target, the cheapest ride of all, which counts toward the ride-level
+    achievements. A row whose price did not read is never chosen, and one of a lagging emotion ends the choice there. A
+    row `facility_rows` leaves out, its level, emotion line or button unread, does not, so a list still drawing can send
+    one upgrade on to the next lagging emotion.
 
     Args:
         rides: The rows, from `facility_rows`.
@@ -325,10 +328,17 @@ def choose(rides, emotions, money, stretch=None):
     upgrades = [ride for ride in rides if ride.action == UPGRADE and ride.price is not None and ride.level < MAX_LEVEL]
     shortfall = {emotion: target - value for emotion, value in zip(EMOTIONS, values) if value < target}
     if shortfall:
-        worst = max(shortfall.values())
-        lagging = [emotion for emotion, short in shortfall.items() if short == worst]
-        upgrades = [ride for ride in upgrades if ride.emotion in lagging]
-        if not upgrades:
+        unread = [ride for ride in rides if ride.price is None and ride.level < MAX_LEVEL]
+        for short in sorted(set(shortfall.values()), reverse=True):
+            lagging = [emotion for emotion in shortfall if shortfall[emotion] == short]
+            candidates = [ride for ride in upgrades if ride.emotion in lagging]
+            if candidates:
+                upgrades = candidates
+                break
+            if any(ride.emotion in lagging for ride in unread):
+                return None, f"no {' or '.join(lagging)} ride with a readable price in view"
+        else:
+            lagging = sorted(shortfall, key=lambda emotion: -shortfall[emotion])
             return None, f"no {' or '.join(lagging)} ride with a readable price in view"
     if not upgrades:
         return None, "no ride with a readable price in view"

@@ -1,4 +1,4 @@
-"""Run the daily chores from the Lobby: close its entry popups, claim all mail, visit Nightmare Dream Park, and stop on a clean Lobby.
+"""Run the daily chores from the Lobby: close its entry popups, claim attendance and all mail, visit Nightmare Dream Park, and stop on a clean Lobby.
 
 The Lobby, its menu and the Mail screen sit next to buttons that delete mail, open the Shop, refill Aether with Crystals,
 open Rescue or quit the game. So Daily presses only the fixed targets in `TARGETS`, each on the one screen it belongs to,
@@ -67,6 +67,8 @@ PROFIT_CLOSE = "the Profit Report's caption"
 STORY_SKIP = "the story bar's Skip"
 SKIP_TICK = "the skip dialog's Do not show box"
 SKIP_CONFIRM = "the skip dialog's 确认"
+ATTENDANCE_CLAIM = "the attendance popup's Claim Reward"
+ATTENDANCE_CLOSE = "the attendance popup's X"
 # Every Dream Park screen draws its back arrow at the same place, and each press of it takes one screen back.
 BACK = (0.041, 0.046)
 TARGETS = {
@@ -103,20 +105,22 @@ TARGETS = {
     STORY_SKIP: None,
     SKIP_TICK: (0.392, 0.532),
     SKIP_CONFIRM: None,
+    ATTENDANCE_CLAIM: None,
+    ATTENDANCE_CLOSE: (0.933, 0.127),
 }
 # How many upgrades one park visit may press, one level each, so the cap only bounds a loop that has gone wrong, and how
 # many achievement claims: the event has 23 achievements.
 UPGRADE_CAP = 200
 CLAIM_CAP = 30
-# How often each target may be pressed in one run. Claim All, the wake tap and Rank Up get one retry for a tap the game
-# ignored, and the skip dialog's box is tapped once a run; the rest allow two retries for a screen slow to change. A
-# target leading to another screen counts only until that screen shows (`ARRIVALS`), so a later step, or the next round
-# of the park, may press it again.
+# How often each target may be pressed in one run. Claim All, the wake tap, Rank Up and Claim Reward get one retry for a
+# tap the game ignored, and the skip dialog's box is tapped once a run; the rest allow two retries for a screen slow to
+# change. A target leading to another screen counts only until that screen shows (`ARRIVALS`), so a later step, or the
+# next round of the park, may press it again.
 TAP_LIMITS = {BANNER_CLOSE: 3, NOTICE_CLOSE: 3, MENU: 3, ENVELOPE: 3, MENU_CLOSE: 3, MAIL_CLOSE: 3, WAKE: 2, CLAIM_ALL: 2, ITEMS_CLOSE: 3,
               EVENT: 3, DREAM_PARK: 3, EVENT_LEAVE: 3, ENTER_PARK: 3, PARK_ACHIEVEMENTS: 3, PAGE_LEAVE: 3, PARK_MANAGE: 3, PARK_OPERATE: 3,
               PANEL_CLOSE: 3, PARK_LEAVE: 3, PARK_RANK: 3, RANK_UP: 2, RANK_CLOSE: 3, RANK_RESULT_CLOSE: 3, UPGRADE: UPGRADE_CAP, BUILD: 3,
               CLAIM: CLAIM_CAP, MANAGEMENT_TAB: 3, ACHIEVEMENTS_LEAVE: 3, RULES_CANCEL: 3, PROFIT_CLOSE: 3, STORY_SKIP: 3, SKIP_TICK: 1,
-              SKIP_CONFIRM: 3}
+              SKIP_CONFIRM: 3, ATTENDANCE_CLAIM: 2, ATTENDANCE_CLOSE: 3}
 TOWARD_MAIL = (MENU, ENVELOPE)
 
 # What `press` refuses whatever it was asked to press: mail deletion, the Shop, a purchase, Crystals or any account
@@ -153,6 +157,13 @@ MAIL_EMPTY = ("All items in the mail have been received", (0.30, 0.22, 0.70, 0.3
 # Items Obtained's title at (0.502, 0.377) and its close caption at (0.501, 0.935), above the `进入` at (0.500, 0.978).
 ITEMS_TITLE = ("Items Obtained", (0.40, 0.33, 0.60, 0.42))
 ITEMS_CAPTION = ("点击屏幕关闭窗口", (0.40, 0.90, 0.60, 0.965))
+# The daily attendance popup the game opens on the first Lobby of a game day: its title at (0.690, 0.169), `Permanent`
+# under it at (0.833, 0.229), and seven day cards, today's showing an orange Claim Reward, at (0.459, 0.830) on day 4.
+# Its X at (0.933, 0.127) is drawn before the claim too, though OCR reads it as `X` only after. The Event list's page
+# for the same event reads the title at (0.774, 0.136) and `Permanent` at (0.918, 0.201), outside both regions.
+ATTENDANCE_TITLE = ("Invitation to a New Journey", (0.60, 0.15, 0.76, 0.19))
+ATTENDANCE_TAG = ("Permanent", (0.79, 0.21, 0.87, 0.25))
+ATTENDANCE_CARDS = ("Claim Reward", (0.38, 0.25, 0.90, 0.90))
 # The tutorial's Skip Tutorial pill, read at (0.879, 0.055) wherever it shows. Its outline spans x 0.818-0.992 and
 # y 0.020-0.091, over the Lobby's Menu, the banner's X and the menu's X, and a tap on it skips the tutorial.
 SKIP_TUTORIAL = ("Skip Tutorial", (0.0, 0.0, 1.0, 1.0))
@@ -268,14 +279,14 @@ def run_state(task):
 
     Returns:
         A dict: each step's state, the presses per target, when the run started, when the Lobby was last read, when an
-        unknown screen and the Mail screen were first seen, when Claim All and the wake were last pressed, what the
-        mail step found, and the park visit's own state.
+        unknown screen, the Mail screen and the attendance popup were first seen, when Claim All, the wake, Claim Reward
+        and the attendance popup's X were last pressed, what the mail step found, and the park visit's own state.
     """
     state = vars(task).get(RUN)
     if state is None:
         state = {"steps": {step.name: PENDING for step in STEPS}, "taps": Counter(), "started": time.monotonic(),
                  "lobby_seen": None, "unknown_since": None, "mail_seen": None, "claim_pressed": None, "woken": None, "mail": None,
-                 "park": new_park()}
+                 "attendance_seen": None, "attendance_claimed": None, "attendance_closed": None, "park": new_park()}
         setattr(task, RUN, state)
     return state
 
@@ -497,6 +508,36 @@ def handle_daily_items_obtained(task):
         park["claim_pressed"], park["claim_misses"] = None, 0
         park["claims"] += 1
     return press(task, ITEMS_CLOSE, caption)
+
+
+def handle_daily_attendance(task):
+    """Claim today's card on the daily attendance popup, then close the popup on its X.
+
+    Claim Reward opens Items Obtained, which `handle_daily_items_obtained` closes, and the stamped popup under it shows no
+    Claim Reward. A popup without one is given a moment to draw before it counts as claimed, and a claim that opened
+    nothing is retried once, then the popup is closed all the same. Items Obtained's caption counts afresh while the
+    popup shows, as a screen's arrival does, so the claim's Items Obtained and the mail's each get the caption's limit.
+    """
+    if showing(task, ATTENDANCE_TITLE) is None or showing(task, ATTENDANCE_TAG) is None:
+        return False
+    recognised(task)
+    state = run_state(task)
+    state["taps"][ITEMS_CLOSE] = 0
+    now = time.monotonic()
+    if state["attendance_seen"] is None:
+        state["attendance_seen"] = now
+    claimed = state["attendance_claimed"]
+    if claimed is not None and now - claimed < CLAIM_WAIT:
+        return True
+    claim = showing(task, ATTENDANCE_CARDS)
+    if claim is not None and state["taps"][ATTENDANCE_CLAIM] < TAP_LIMITS[ATTENDANCE_CLAIM]:
+        state["attendance_claimed"] = now
+        return press(task, ATTENDANCE_CLAIM, claim)
+    closed = state["attendance_closed"]
+    if now - state["attendance_seen"] < SETTLE or (closed is not None and now - closed < NAV_WAIT):
+        return True
+    state["attendance_closed"] = now
+    return press(task, ATTENDANCE_CLOSE)
 
 
 def nothing_to_claim(task, reason):
@@ -1020,6 +1061,7 @@ PAGE_HANDLERS = [
     handle_daily_tutorial,
     handle_daily_overtime,
     handle_daily_items_obtained,
+    handle_daily_attendance,
     handle_daily_mail,
     handle_daily_rules_dialog,
     handle_daily_profit_report,
@@ -1048,8 +1090,9 @@ class DailyMode(TriggerTask):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.name = "Daily"
-        self.description = ("Start on the Lobby. Closes the entry popups, claims all mail, then visits Nightmare Dream Park while it runs: ranks it "
-                            "up, builds and upgrades rides with the park's own profit and claims its achievements. Stops on the Lobby. Presses nothing else.")
+        self.description = ("Start on the Lobby. Closes the entry popups, claims the daily attendance reward and all mail, then visits Nightmare "
+                            "Dream Park while it runs: ranks it up, builds and upgrades rides with the park's own profit and claims its achievements. "
+                            "Stops on the Lobby. Presses nothing else.")
         self.trigger_interval = 1
         self.all_texts = []
         self.default_config['_enabled'] = False
