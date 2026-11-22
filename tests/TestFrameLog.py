@@ -215,6 +215,7 @@ class ChaosMode:
     """A mode switched on that the executor has not picked up yet."""
 
     enabled = True
+    running = False
 
 
 class LateStart:
@@ -836,6 +837,48 @@ class TestRemote(unittest.TestCase):
             executor.current_job = None
             self.assertEqual("exiting", remote.quit()["state"])
             self.assertTrue(wait_for(lambda: exits))
+
+    def test_a_quit_is_refused_while_a_stopped_mode_finishes_its_last_pass(self):
+        """ok-script empties the running task as it raises the stop, and a handler that catches it can still click."""
+        exits = []
+        mode = ChaosMode()
+        mode.enabled = False
+        mode.running = True
+        executor = idle_executor(tasks=[mode])
+        with standing_in(remote, _executor=lambda: executor, _exit_app=lambda: exits.append(1), QUIT_DELAY=0):
+            with self.assertRaisesRegex(RuntimeError, "still finishing its last pass after a stop: ChaosMode. Wait"):
+                remote.quit()
+            time.sleep(0.1)
+            self.assertEqual([], exits)
+            self.assertIsNone(remote._quit_reply)
+            mode.running = False
+            self.assertEqual("exiting", remote.quit()["state"])
+            self.assertTrue(wait_for(lambda: exits))
+
+    def test_a_mode_finishing_its_last_pass_leaves_every_other_quit_refusal_its_own_message(self):
+        """A caller told to wait for the pass would miss that it has to stop a mode or wait for a job instead."""
+        finishing = ChaosMode()
+        finishing.enabled = False
+        finishing.running = True
+        starting = types.SimpleNamespace(start_controller=types.SimpleNamespace(starting=True))
+        cases = (
+            ("a running task", idle_executor(current_task=ChaosMode(), tasks=[finishing]), None, "is running: stop it with set_running first"),
+            ("a mode being started", idle_executor(tasks=[finishing]), starting, "a mode is being started"),
+            ("a mode switched on", idle_executor(tasks=[ChaosMode(), finishing]), None, "switched on and may start any moment: ChaosMode. Stop"),
+            ("a queued executor job", idle_executor(tasks=[finishing], job_queue=["ExecutorJob(2, run code, owner=None)"]), None,
+             "an executor job is queued"),
+            ("a running executor job", idle_executor(tasks=[finishing], current_job="ExecutorJob(1, run code, owner=None)"), None,
+             r"ExecutorJob\(1, run code, owner=None\) is running on the executor"),
+        )
+        exits = []
+        for name, executor, app, message in cases:
+            with self.subTest(name), standing_in(remote, _executor=lambda: executor, _exit_app=lambda: exits.append(1), QUIT_DELAY=0), \
+                    standing_in(og, app=app):
+                with self.assertRaisesRegex(RuntimeError, message):
+                    remote.quit()
+                self.assertIsNone(remote._quit_reply)
+        time.sleep(0.1)
+        self.assertEqual([], exits)
 
     def test_the_mcp_bridge_reaches_the_port(self):
         """The port's own guards must never shut out the one caller it is there for."""

@@ -538,8 +538,9 @@ def quit():
         `{"state": "exiting", "pid": ...}`: the process is gone when that pid is.
 
     Raises:
-        RuntimeError: A task is running, being started or switched on, or an executor job is queued or running, so a
-            quit could cut input mid-action. Stop the task with `set_running` first, or wait for the job to end.
+        RuntimeError: A task is running, being started or switched on, still finishing its last pass after a stop, or an
+            executor job is queued or running, so a quit could cut input mid-action. Stop the task with `set_running`
+            first, or wait for the pass or the job to end.
     """
     from ok import og
 
@@ -565,6 +566,10 @@ def quit():
             job = executor.current_job
             if job is not None:
                 raise RuntimeError(f"{job} is running on the executor: wait for it to end, then quit")
+            # ok-script empties `current_task` as it raises a stop, and a handler that catches that raise carries on.
+            finishing = [type(task).__name__ for task in executor.get_all_tasks() if task.running]
+            if finishing:
+                raise RuntimeError(f"still finishing its last pass after a stop: {', '.join(finishing)}. Wait for it to end, then send quit again")
             _quit_reply = {"state": "exiting", "pid": os.getpid()}
             logger.info("remote quit")
             timer = threading.Timer(QUIT_DELAY, _exit_app)
