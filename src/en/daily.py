@@ -7,7 +7,8 @@ A screen Daily does not know for 30 seconds, and the tutorial, stop it with noth
 
 The park spends only its own profit, a free counter that refills while the player is away. Its rows are read by
 `dream_park`, and one is pressed only when its price reads as a plain park number. When the ride it wants is further
-down, the list is dragged a short way, a few times a visit at most.
+down, the list is dragged a short way, a few times a visit at most. Once a visit, the panel's Skill tab gets AI Automation
+upgraded while one level pays for itself by the next visit, and no other skill is ever pressed.
 
 Imported by ok-script before `ok_tasks/` is on `sys.path`, so upstream is reached only through `handlers.loaded`.
 """
@@ -71,6 +72,9 @@ SKIP_TICK = "the skip dialog's Do not show box"
 SKIP_CONFIRM = "the skip dialog's 确认"
 ATTENDANCE_CLAIM = "the attendance popup's Claim Reward"
 ATTENDANCE_CLOSE = "the attendance popup's X"
+SKILL_TAB = "the park panel's Skill tab"
+FACILITIES_TAB = "the park panel's Facilities tab"
+SKILL_UPGRADE = "AI Automation's Upgrade"
 # Every Dream Park screen draws its back arrow at the same place, and each press of it takes one screen back.
 BACK = (0.041, 0.046)
 TARGETS = {
@@ -109,11 +113,16 @@ TARGETS = {
     SKIP_CONFIRM: None,
     ATTENDANCE_CLAIM: None,
     ATTENDANCE_CLOSE: (0.933, 0.127),
+    SKILL_TAB: (0.892, 0.185),
+    FACILITIES_TAB: (0.714, 0.185),
+    SKILL_UPGRADE: None,
 }
 # How many upgrades one park visit may press, one level each, so the cap only bounds a loop that has gone wrong, and how
 # many achievement claims: the event has 23 achievements.
 UPGRADE_CAP = 200
 CLAIM_CAP = 30
+# How many AI Automation presses one visit may make; the price rule ends them far sooner.
+SKILL_CAP = 30
 # How many short drags down the Facilities list one visit may make, how far a ride name must move for a drag to count as
 # having moved the list, and the seconds handed to ok-script's swipe, as the debug port hands them: 20 steps 10 ms apart.
 SCROLL_CAP = 3
@@ -127,7 +136,7 @@ TAP_LIMITS = {BANNER_CLOSE: 3, NOTICE_CLOSE: 3, MENU: 3, ENVELOPE: 3, MENU_CLOSE
               EVENT: 3, DREAM_PARK: 3, EVENT_LEAVE: 3, ENTER_PARK: 3, PARK_ACHIEVEMENTS: 3, PAGE_LEAVE: 3, PARK_MANAGE: 3, PARK_OPERATE: 3,
               PANEL_CLOSE: 3, PARK_LEAVE: 3, PARK_RANK: 3, RANK_UP: 2, RANK_CLOSE: 3, RANK_RESULT_CLOSE: 3, UPGRADE: UPGRADE_CAP, BUILD: 3,
               CLAIM: CLAIM_CAP, MANAGEMENT_TAB: 3, ACHIEVEMENTS_LEAVE: 3, RULES_CANCEL: 3, PROFIT_CLOSE: 3, STORY_SKIP: 3, SKIP_TICK: 1,
-              SKIP_CONFIRM: 3, ATTENDANCE_CLAIM: 2, ATTENDANCE_CLOSE: 3}
+              SKIP_CONFIRM: 3, ATTENDANCE_CLAIM: 2, ATTENDANCE_CLOSE: 3, SKILL_TAB: 3, FACILITIES_TAB: 3, SKILL_UPGRADE: SKILL_CAP}
 TOWARD_MAIL = (MENU, ENVELOPE)
 
 # What `press` refuses whatever it was asked to press: mail deletion, the Shop, a purchase, Crystals or any account
@@ -200,6 +209,9 @@ RANK_NUMBER = re.compile(r"rank\s*(\d+)\s*$", re.I)
 # The Facilities list: its title at (0.803, 0.274) and the hint under it at (0.802, 0.930).
 FACILITIES_TITLE = ("Facilities", (0.75, 0.25, 0.86, 0.30))
 FACILITIES_HINT = ("Press and hold", (0.70, 0.90, 0.90, 0.96))
+# The same panel's Skill tab, opened on the star tab at (0.892, 0.185) beside Facilities' tent at (0.714, 0.185): its
+# title at (0.803, 0.274) and the same hint under it.
+SKILL_TITLE = ("技能", (0.75, 0.25, 0.86, 0.30))
 # The Amusement Park Rank screen's title at (0.501, 0.137), and the result over it: `Rank 6 Achieved` at (0.500, 0.521)
 # with its close caption at (0.500, 0.938).
 RANK_TITLE = ("Amusement Park Rank", (0.40, 0.10, 0.60, 0.17))
@@ -247,6 +259,8 @@ NAV_WAIT = 3
 SETTLE = 2
 UPGRADE_WAIT = 2
 RANK_WAIT = 5
+# Why the Skill tab was left when AI Automation stopped taking presses, which the finish line names.
+NO_SKILL_RISE = "AI Automation's level did not rise after two presses"
 
 # Parked on the task for one run: dropped by `disable`, so every start begins afresh.
 RUN = "_en_daily_run"
@@ -265,7 +279,8 @@ ARRIVALS = {
     "profit report": (ENTER_PARK,),
     "park": (ENTER_PARK, PANEL_CLOSE, PROFIT_CLOSE, STORY_SKIP, SKIP_CONFIRM),
     "manage": (PARK_MANAGE, RANK_CLOSE),
-    "facilities": (PARK_OPERATE,),
+    "facilities": (PARK_OPERATE, FACILITIES_TAB),
+    "skill": (SKILL_TAB,),
     "rank": (PARK_RANK, RANK_RESULT_CLOSE),
     "rank result": (RANK_UP, STORY_SKIP, SKIP_CONFIRM),
     "achievements": (PARK_ACHIEVEMENTS, ITEMS_CLOSE),
@@ -310,9 +325,12 @@ def new_park():
         awaited and what it was, presses without a rise per ride, how many times the Facilities list was dragged, when
         last and the ride names it showed before that drag, whether the achievements were visited, when a claim ring was
         pressed and how many claims in a row opened nothing, the counts for the finish line and why the upgrades ended.
+        Then the Profit Status rate, whether the Skill tab trip is done, the AI Automation press whose level rise is
+        awaited, presses without a rise, presses made, the levels bought and why the trip ended.
     """
     return {"started": None, "phase": TO_MANAGE, "screen": None, "screen_since": None, "pressed": {}, "emotions": None, "emotions_at": 0,
-            "stretch": None, "rank_checked": None, "rank_wanted": None, "rank_sent": set(), "rank_unmet": set(),
+            "stretch": None, "rate": None, "skill_done": False, "skill_pending": None, "skill_no_rise": 0, "skill_presses": 0,
+            "skill_levels": [], "skill_note": None, "rank_checked": None, "rank_wanted": None, "rank_sent": set(), "rank_unmet": set(),
             "ranked": set(), "rank_pressed": None, "pending": None, "no_rise": Counter(),
             "scrolls": 0, "scrolled": None, "scroll_names": None,
             "claims_done": False, "claim_pressed": None, "claim_misses": 0, "ranks": [], "rank_ups": 0,
@@ -681,9 +699,12 @@ def park_summary(park):
         parts.append(f"ranked up to Rank {park['ranks'][-1]}" if park["ranks"] else f"ranked up {park['rank_ups']} time(s)")
     if park["builds"]:
         parts.append(f"built {', '.join(park['builds'])}")
+    if park["skill_levels"]:
+        parts.append(f"bought AI Automation Lv.{', Lv.'.join(str(level) for level in park['skill_levels'])}")
     parts.append(f"{park['claims']} achievement claim{'s' if park['claims'] != 1 else ''}")
     summary = "Dream Park: " + ", ".join(parts)
-    return summary + (f" (upgrades ended: {park['note']})" if park["note"] else "")
+    summary += f" (upgrades ended: {park['note']})" if park["note"] else ""
+    return summary + (f" ({NO_SKILL_RISE})" if park["skill_note"] == NO_SKILL_RISE else "")
 
 
 def handle_daily_rules_dialog(task):
@@ -803,6 +824,9 @@ def handle_daily_manage_panel(task):
     stretch = dream_park.offline_stretch(task)
     if stretch is not None:
         park["stretch"] = stretch
+    rate = dream_park.profit_rate(task)
+    if rate is not None:
+        park["rate"] = rate
     wanted, park["rank_wanted"] = park["rank_wanted"], None
     if emotions is not None:
         park["emotions"], park["emotions_at"] = emotions, park["upgrades"]
@@ -911,7 +935,8 @@ def handle_daily_facilities(task):
     a visit, however the targets the header reads come and go. Once tried without a rank up, the list is left with no
     press; the upgrades go on only when the Manage panel read an emotion below that target or read another target, or
     that target was just ranked up. When the ride `choose` wants may be further down, the list is dragged a short way
-    and given time to come to rest before its rows count.
+    and given time to come to rest before its rows count. Once a build is done and before any upgrade, or before leaving
+    the list, the visit makes its one trip to the Skill tab, when the Manage panel's rate has read.
     """
     if showing(task, FACILITIES_TITLE) is None or showing(task, FACILITIES_HINT) is None:
         return False
@@ -952,7 +977,10 @@ def handle_daily_facilities(task):
     if (emotions is not None and all(value >= emotions[1] for value in emotions[0]) and emotions[1] not in park["rank_unmet"]
             and emotions[1] not in park["ranked"]):
         # Each Rank so far has brought a new ride with a large build price, so the profit waits for that ride rather
-        # than going on the cheapest rides while the Rank Up the header shows as earned stays untaken.
+        # than going on the cheapest rides while the Rank Up the header shows as earned stays untaken. An AI Automation
+        # level that passes its price rule earns its price back by the next visit, so it is bought all the same.
+        if skill_due(task):
+            return press_once(task, SKILL_TAB)
         return leave_facilities(task, f"every emotion is at Rank target {emotions[1]}, but its Rank Up was not taken, so the profit is kept for the next Rank's ride; check the park's Rank screen if this repeats")
     if park["upgrades"] >= UPGRADE_CAP:
         return leave_facilities(task, f"the visit's {UPGRADE_CAP} upgrades are used")
@@ -962,12 +990,96 @@ def handle_daily_facilities(task):
             return True
         if may_scroll(task, rows, reason):
             return scroll_facilities(task)
+        if skill_due(task):
+            return press_once(task, SKILL_TAB)
         return leave_facilities(task, reason)
+    if ride.action != dream_park.BUILD and skill_due(task):
+        return True if shown_for < SETTLE else press_once(task, SKILL_TAB)
     park["pending"] = (ride.name, ride.level, time.monotonic(), ride.action)
     if ride.action == dream_park.BUILD:
         return press(task, BUILD, ride.button)
     park["upgrades"] += 1
     return press(task, UPGRADE, ride.button)
+
+
+def skill_due(task):
+    """Say whether the visit still owes its one trip to the Skill tab, which needs the Manage panel's rate."""
+    park = park_state(task)
+    return not park["skill_done"] and park["rate"] is not None
+
+
+def skill_risen(task, skills):
+    """Check the last AI Automation press took, once its level has had time to rise.
+
+    Args:
+        task: The Daily task.
+        skills: The Skill tab's rows now in view.
+
+    Returns:
+        None to go on, True to wait for the level, or the claim of the frame leaving the tab after two presses without
+        a rise.
+    """
+    park = park_state(task)
+    pending = park["skill_pending"]
+    if pending is None:
+        return None
+    level, pressed = pending
+    skill = next((skill for skill in skills if dream_park.AI_AUTOMATION.fullmatch(skill.name)), None)
+    if skill is not None and skill.level is not None and skill.level > level:
+        park["skill_pending"], park["skill_no_rise"] = None, 0
+        park["skill_levels"].append(skill.level)
+        return None
+    if time.monotonic() - pressed < UPGRADE_WAIT:
+        return True
+    park["skill_pending"] = None
+    park["skill_no_rise"] += 1
+    if park["skill_no_rise"] >= 2:
+        return leave_skills(task, NO_SKILL_RISE)
+    return None
+
+
+def leave_skills(task, note):
+    """End the visit's Skill tab trip and go back to the Facilities list."""
+    park = park_state(task)
+    park["skill_done"], park["skill_note"] = True, note
+    task.log_info(f"leaving the Skill tab: {note}")
+    return press_once(task, FACILITIES_TAB)
+
+
+def handle_daily_skill_tab(task):
+    """Upgrade AI Automation one level per pass while a level pays for itself by the next visit, then go back to Facilities.
+
+    Any box reading as Crystals, a currency or a purchase in a row's price column, or anywhere on the panel's right
+    side, stops Daily. Only AI Automation's own Upgrade is pressed, with taps; two presses without a level rise, the
+    visit's press cap, or a tab that does not read end the trip with no further press.
+    """
+    if showing(task, SKILL_TITLE) is None or showing(task, FACILITIES_HINT) is None:
+        return False
+    shown_for = arrive(task, "skill")
+    park = park_state(task)
+    if not park_active(task) or park["phase"] != TO_OPERATE or park["skill_done"]:
+        return press_once(task, FACILITIES_TAB)
+    skills = dream_park.skill_rows(task)
+    for skill in skills:
+        hit = next((box for box in skill.price_column if refused(box.name)), None)
+        if hit is not None:
+            return stop(task, f"Stopped: a Dream Park price reads {hit.name!r}, and Daily spends only the park's profit. Check the game, then press Start again.")
+    hit = next((box for box in dream_park.list_side(task) if refused(box.name)), None)
+    if hit is not None:
+        return stop(task, f"Stopped: the Dream Park Skill tab reads {hit.name!r}, and Daily spends only the park's profit. Check the game, then press Start again.")
+    if shown_for < SETTLE:
+        return True
+    waiting = skill_risen(task, skills)
+    if waiting is not None:
+        return waiting
+    if park["skill_presses"] >= SKILL_CAP:
+        return leave_skills(task, f"the visit's {SKILL_CAP} AI Automation presses are used")
+    skill, reason = dream_park.choose_skill(skills, dream_park.profit(task), park["rate"])
+    if skill is None:
+        return leave_skills(task, reason)
+    park["skill_pending"] = (skill.level, time.monotonic())
+    park["skill_presses"] += 1
+    return press(task, SKILL_UPGRADE, skill.button)
 
 
 def handle_daily_park_view(task):
@@ -1147,6 +1259,7 @@ PAGE_HANDLERS = [
     handle_daily_rank_screen,
     handle_daily_manage_panel,
     handle_daily_facilities,
+    handle_daily_skill_tab,
     handle_daily_park_view,
     handle_daily_park_achievements,
     handle_daily_event_page,
@@ -1167,7 +1280,8 @@ class DailyMode(TriggerTask):
         super().__init__(*args, **kwargs)
         self.name = "Daily"
         self.description = ("Start on the Lobby. Closes the entry popups, claims the daily attendance reward and all mail, then visits Nightmare "
-                            "Dream Park while it runs: ranks it up, builds and upgrades rides with the park's own profit and claims its achievements. "
+                            "Dream Park while it runs: ranks it up, builds and upgrades rides and its AI Automation skill with the park's "
+                            "own profit and claims its achievements. "
                             "Stops on the Lobby. Presses nothing else.")
         self.trigger_interval = 1
         self.all_texts = []

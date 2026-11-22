@@ -7,6 +7,7 @@ left its level where it was, press the grey Rank Up left on the next card, press
 Daily when the event is gone.
 """
 
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -608,6 +609,75 @@ ROWS = (0.166, 0.319, 0.471, 0.624, 0.776, 0.928)
 NONE_READY = claim_frame(*((False, y) for y in ROWS))
 FIRST_READY = claim_frame((True, ROWS[0]), *((False, y) for y in ROWS[1:]))
 
+# 099, the park panel's Skill tab at Rank 9: AI Automation Lv.5 with its Upgrade at 953, then two skills not yet
+# acquired and Another Happy Day's name, its button below the list.
+SKILL_TOP = (
+    ('9', 0.097, 0.045), ("The SS Nightmare's Most Popular Spot", 0.297, 0.046), ('57.25K', 0.956, 0.047), ('Rules of Gooal', 0.165, 0.132),
+    ('N', 0.212, 0.122), ('104/79 112 / 79', 0.758, 0.106), ('80/79', 0.930, 0.106), ('0/54', 0.170, 0.204), ('Order', 0.189, 0.167),
+    ('六', 0.714, 0.195), ('i', 0.033, 0.295), ('Manage', 0.087, 0.294), ('技能', 0.803, 0.274), ('Recruit', 0.084, 0.382),
+    ('o Al Automation', 0.773, 0.351), ('Lv.5/50', 0.930, 0.350), ('• +50 min Max Offline Time Increase', 0.836, 0.403), ('六', 0.033, 0.479),
+    ('Operate', 0.087, 0.473), ('强化', 0.772, 0.456), ('953', 0.953, 0.454), ('o Large-Scale Promotion', 0.802, 0.530),
+    ('unaffected)', 0.772, 0.597), ('+0 Max Simultaneous Visitors (profit', 0.845, 0.569), ('Acquire', 0.769, 0.634), ('1.44K', 0.947, 0.631),
+    ('o Social Etiquette', 0.778, 0.706), ('• +O Max Managers', 0.788, 0.757), ('Acquire', 0.770, 0.812), ('100.00K', 0.939, 0.810),
+    ('o Another Happy Day', 0.789, 0.884), ('Press and hold the button to upgrade quickly.', 0.802, 0.930),
+)
+# The same tab one level on. Its next price is a stand-in past ten minutes of profit at 89/s and 97/s, so the trip ends
+# there: the real Lv.6 price was not read.
+SKILL_LV6 = edited(SKILL_TOP, ("Lv.5/50", "Lv.6/50"), ("• +50 min Max Offline Time Increase", "• +60 min Max Offline Time Increase"),
+                   ("57.25K", "56.30K"), ("953", "60.00K"))
+# 100, the tab after one short drag: AI Automation gone above, Another Happy Day's Acquire at 1.07K in view.
+SKILL_DRAGGED = (
+    ('9', 0.097, 0.044), ("The SS Nightmare's Most Popular Spot", 0.298, 0.047), ('58.75K', 0.956, 0.046), ('Rules of Gooal', 0.165, 0.132),
+    ('N', 0.212, 0.122), ('104 /79 112/ 79', 0.766, 0.106), ('😄', 0.872, 0.106), ('80 /79', 0.929, 0.106), ('0/54', 0.171, 0.204),
+    ('Order', 0.190, 0.168), ('六', 0.714, 0.195), ('Manage', 0.087, 0.295), ('技能', 0.803, 0.274), ('Recruit', 0.084, 0.382),
+    ('o Large-Scale Promotion', 0.801, 0.386), ('六', 0.033, 0.478), ('Operate', 0.087, 0.472), ('unaffected)', 0.772, 0.455),
+    ('+0 Max Simultaneous Visitors (profit', 0.844, 0.426), ('Acquire', 0.770, 0.493), ('1.44K', 0.947, 0.489), ('o Social Etiquette', 0.778, 0.564),
+    ('• +0 Max Managers', 0.789, 0.615), ('Acquire', 0.770, 0.669), ('100.00K', 0.940, 0.668), ('o Another Happy Day', 0.789, 0.744),
+    ('•  +0 Amusement Park Happiness Increase', 0.851, 0.793), ('Acquire', 0.770, 0.847), ('1.07K', 0.948, 0.846),
+    ('Press and hold the button to upgrade quickly.', 0.802, 0.930),
+)
+# 1354, the tab at Rank 1: AI Automation not yet acquired, at 390, and Social Etiquette locked to Rank 7.
+SKILL_ACQUIRE = (
+    ('1', 0.099, 0.045), ('One Step at a Time', 0.208, 0.047), ('1.70K', 0.961, 0.046), ('Rules of Gooal', 0.165, 0.132), ('N', 0.212, 0.121),
+    ('017117', 0.771, 0.106), ('017', 0.929, 0.106), ('0/54', 0.171, 0.204), ('Order', 0.190, 0.168), ('六', 0.714, 0.195),
+    ('Manage', 0.087, 0.294), ('技能', 0.804, 0.274), ('Recruit', 0.084, 0.382), ('oAl Automation', 0.772, 0.350),
+    ('• +0 min Max Offline Time Increase', 0.831, 0.401), ('Operate', 0.087, 0.473), ('Acquire', 0.770, 0.456), ('390', 0.953, 0.454),
+    ('o Large-Scale Promotion', 0.801, 0.528), ('unaffected)', 0.772, 0.596), ('+0 Max Simultaneous Visitors (profit', 0.845, 0.568),
+    ('★', 0.136, 0.639), ('Acquire', 0.770, 0.633), ('1.44K', 0.947, 0.632), ('o Social Etiquette', 0.777, 0.705),
+    ('·  +0 Max Managers', 0.786, 0.757), ('Reach Amusement Park Rank 7', 0.848, 0.811), ('o Another Happy Day', 0.789, 0.884),
+    ('Press and hold the button to upgrade quickly.', 0.803, 0.931),
+)
+# 1401, the tab at Rank 4 once AI Automation was acquired: Lv.1, its Upgrade at 460.
+SKILL_LV1 = (
+    ('4', 0.097, 0.046), ('The Amusement Park All the Buzz Is About', 0.308, 0.047), ('20.51K', 0.957, 0.046), ('Rules of Gooal', 0.165, 0.132),
+    ('N', 0.212, 0.122), ('21/29 21/29', 0.765, 0.106), ('21/29', 0.929, 0.106), ('0/54', 0.170, 0.204), ('Order', 0.190, 0.168),
+    ('六', 0.714, 0.193), ('」', 0.033, 0.297), ('Manage', 0.087, 0.294), ('技能', 0.803, 0.274), ('Recruit', 0.084, 0.382),
+    ('oAl Automation', 0.772, 0.350), ('Lv.1/50', 0.930, 0.350), ('• +10 min Max Offline Time Increase', 0.835, 0.403),
+    ('Operate', 0.085, 0.473), ('强化', 0.772, 0.456), ('460', 0.953, 0.455), ('o Large-Scale Promotion', 0.802, 0.530),
+    ('unaffected)', 0.772, 0.597), ('+0 Max Simultaneous Visitors (profit', 0.845, 0.569), ('Acquire', 0.770, 0.634), ('1.44K', 0.948, 0.632),
+    ('o Social Etiquette', 0.778, 0.706), ('• +0 Max Managers', 0.787, 0.757), ('Reach Amusement Park Rank 7', 0.848, 0.811),
+    ('o Another Happy Day', 0.789, 0.884), ('Press and hold the button to upgrade quickly.', 0.802, 0.930),
+)
+# 1447, four levels later at Rank 5: Lv.5, its Upgrade at 953, with Rank 5's header and a story arrow over the art.
+SKILL_LV5 = (
+    ('5', 0.097, 0.047), ('← The Amusement Park All the Buzz Is About', 0.308, 0.046), ('5.92K', 0.959, 0.046), ('Rules of Good', 0.165, 0.132),
+    ('N', 0.211, 0.122), ('61/36 32 /36', 0.765, 0.106), ('😊', 0.874, 0.106), ('29/36', 0.928, 0.106), ('0/54★', 0.180, 0.204),
+    ('Order', 0.190, 0.168), ('六', 0.714, 0.195), ('i', 0.033, 0.295), ('Manage', 0.087, 0.293), ('技能', 0.804, 0.274),
+    ('Recruit', 0.085, 0.382), ('oAl Automation', 0.772, 0.350), ('Lv.5/50', 0.931, 0.350), ('• +50 min Max Offline Time Increase', 0.834, 0.402),
+    ('六', 0.033, 0.479), ('Operate', 0.087, 0.470), ('强化', 0.772, 0.456), ('953', 0.953, 0.454), ('o Large-Scale Promotion', 0.801, 0.528),
+    ('unaffected)', 0.772, 0.596), ('+0 Max Simultaneous Visitors (profit', 0.845, 0.569), ('Acquire', 0.770, 0.634), ('1.44K', 0.947, 0.632),
+    ('o Social Etiquette', 0.778, 0.706), ('·  +0 Max Managers', 0.786, 0.757), ('>>>>>>', 0.409, 0.823), ('>>>>>>>>', 0.484, 0.823),
+    ('Reach Amusement Park Rank 7', 0.847, 0.811), ('o Another Happy Day', 0.789, 0.885), ('Press and hold the button to upgrade quickly.', 0.802, 0.929),
+)
+# The Skill tab's other buttons: every skill but AI Automation, at the list's top and after the drag.
+SKILL_NEVER = {
+    "Large-Scale Promotion's Acquire": (0.769, 0.634),
+    "Social Etiquette's Acquire": (0.770, 0.812),
+    "Large-Scale Promotion's Acquire after the drag": (0.770, 0.493),
+    "Social Etiquette's Acquire after the drag": (0.770, 0.669),
+    "Another Happy Day's Acquire": (0.770, 0.847),
+}
+
 # Where the park presses, beyond Daily's own targets, and what it must never press.
 PARK_NEVER = {
     "the Rules of Good Order banner": (0.803, 0.803),
@@ -648,6 +718,10 @@ class Park(Daily):
         self.show(screen, frame)
         self.tick(daily.SETTLE)
         return self.show(screen, frame)
+
+    def skill_trip_made(self):
+        """Count the visit's Skill tab trip as made, for a test of what comes around it."""
+        self.park()["skill_done"] = True
 
     def pressed_at(self, point):
         """Say whether any tap landed on a point."""
@@ -1067,6 +1141,7 @@ class TestManageAndFacilities(Park):
         """The header reads every emotion at 36, the panel's values do not read: one trip to Manage, then the upgrades."""
         garbled = edited(MANAGE, ("61/36", "817"))
         self.park()["phase"] = daily.TO_OPERATE
+        self.skill_trip_made()
         self.run_screens([FACILITIES_DONE] + [garbled] * (daily.SETTLE + 1) + [FACILITIES_DONE])
         self.assertPressed(daily.PARK_MANAGE, daily.PARK_OPERATE, daily.PANEL_CLOSE)
         self.assertFalse(self.pressed_at(POINTS[daily.PARK_RANK]))
@@ -1100,6 +1175,7 @@ class TestManageAndFacilities(Park):
         below = tuple(("35/36", x, y) if name == "36 /36" and abs(y - 0.809) < 0.005 else (name, x, y) for name, x, y in MANAGE)
         self.assertEqual(((61, 36, 35), 36), dream_park.manage_emotions(Task().show(below)))
         self.park()["phase"] = daily.TO_OPERATE
+        self.skill_trip_made()
         screen = FACILITIES_DONE
         for _ in range(daily.PARK_SECONDS):
             before = len(self.task.clicks)
@@ -1137,6 +1213,7 @@ class TestManageAndFacilities(Park):
             The navigation presses, Manage and Operate, before the first other press.
         """
         self.park()["phase"] = daily.TO_OPERATE
+        self.skill_trip_made()
         returns, screen = 0, lists[0]
         for _ in range(daily.PARK_SECONDS):
             before = len(self.task.clicks)
@@ -1244,6 +1321,7 @@ class TestManageAndFacilities(Park):
         other = tuple(("80/64", x, y) if x > 0.9 and 0.6 < y < 0.85 else (name, x, y) for name, x, y in MANAGE_RANK9)
         self.assertEqual(((80, 80, 80), 64), dream_park.manage_emotions(Task().show(other), 79))
         self.park()["phase"], self.park()["rank_checked"] = daily.TO_OPERATE, 64
+        self.skill_trip_made()
         self.show(FACILITIES_RANK9_SLASH)
         self.tick(daily.NAV_WAIT)
         self.show(other)
@@ -1571,23 +1649,27 @@ class TestEventGone(Park):
 class TestWholeVisit(Park):
 
     def test_one_round_from_the_lobby_to_the_lobby(self):
-        """The live order: the list opens on another event, the park on Rank 5, one upgrade, nothing to claim."""
+        """The live order: the list opens on another event, the park on Rank 5, one AI Automation level at 89/s, one
+        upgrade, nothing to claim."""
         after = edited(FACILITIES, ("Lv.29/50", "Lv.30/50"), ("29/36", "30/36"), ("99.21K", "2.10K"), ("6.37K", "7.64K"))
         hold = daily.NAV_WAIT + 1
-        self.run_screens([LOBBY, MENU, EVENT_LIST, PAGE, PARK_VIEW, MANAGE_RANK5, FACILITIES] + [after] * hold + [PARK_VIEW, PAGE]
-                         + [(CHRONICLES, NONE_READY)] * (daily.SETTLE + 1) + [(MANAGEMENT, NONE_READY)] * hold + [PAGE, LOBBY])
-        self.assertPressed(daily.MENU, daily.EVENT, daily.DREAM_PARK, daily.ENTER_PARK, daily.PARK_MANAGE, daily.PARK_OPERATE, daily.UPGRADE,
-                           daily.PANEL_CLOSE, daily.PARK_LEAVE, daily.PARK_ACHIEVEMENTS, daily.MANAGEMENT_TAB, daily.ACHIEVEMENTS_LEAVE,
-                           daily.PAGE_LEAVE)
+        settle = daily.SETTLE + 1
+        self.run_screens([LOBBY, MENU, EVENT_LIST, PAGE, PARK_VIEW, MANAGE_RANK5] + [FACILITIES] * settle + [SKILL_TOP] * settle
+                         + [SKILL_LV6, FACILITIES] + [after] * hold + [PARK_VIEW, PAGE]
+                         + [(CHRONICLES, NONE_READY)] * settle + [(MANAGEMENT, NONE_READY)] * hold + [PAGE, LOBBY])
+        self.assertPressed(daily.MENU, daily.EVENT, daily.DREAM_PARK, daily.ENTER_PARK, daily.PARK_MANAGE, daily.PARK_OPERATE, daily.SKILL_TAB,
+                           daily.SKILL_UPGRADE, daily.FACILITIES_TAB, daily.UPGRADE, daily.PANEL_CLOSE, daily.PARK_LEAVE, daily.PARK_ACHIEVEMENTS,
+                           daily.MANAGEMENT_TAB, daily.ACHIEVEMENTS_LEAVE, daily.PAGE_LEAVE)
         self.assertParkNothingForbidden()
-        self.assertStopped("Daily finished: mail claimed; Dream Park: 1 upgrade, 0 achievement claims (upgrades ended: the next upgrade, "
-                           "Tagada, costs more than the profit)")
+        self.assertStopped("Daily finished: mail claimed; Dream Park: 1 upgrade, bought AI Automation Lv.6, 0 achievement claims (upgrades "
+                           "ended: the next upgrade, Tagada, costs more than the profit)")
 
     def test_a_rank_up_round(self):
         """Every emotion at 36: Manage, the Rank, Rank Up on the blue pill, its result, the grey caption left, then the new targets."""
         targets = edited(FACILITIES_DONE, ("61/36", "61/43"), ("36/36", "36/43"), ("36 /36", "36/43"), ("10.82K", "17.44K"))
         merry = edited(targets, ("Lv.36/50", "Lv.37/50", 0.934), ("36/43", "37/43", 0.803), ("17.44K", "10.75K"), ("6.69K", "8.03K"))
         self.park()["phase"] = daily.TO_OPERATE
+        self.skill_trip_made()
         self.run_screens([FACILITIES_DONE, MANAGE, (RANK_READY, LIVE_RANK6), RANK_RESULT, (RANK_AFTER, GREY_AFTER), MANAGE_RANK6, targets]
                          + [merry] * (daily.NAV_WAIT + 1))
         merry_upgrade = (0.772, 0.456)
@@ -1600,6 +1682,330 @@ class TestWholeVisit(Park):
         self.assertEqual(1, self.park()["rank_ups"])
         self.assertEqual([5, 6], self.park()["ranks"])
         self.assertParkNothingForbidden()
+
+
+class TestSkillRows(unittest.TestCase):
+
+    def rows(self, screen):
+        return [(skill.name, skill.level, skill.action, skill.price) for skill in dream_park.skill_rows(Task().show(screen))]
+
+    def test_the_top_of_the_tab_reads_ai_automation_and_the_two_skills_not_yet_acquired(self):
+        self.assertEqual([("Al Automation", 5, dream_park.UPGRADE, 953), ("Large-Scale Promotion", None, dream_park.ACQUIRE, 1_440),
+                          ("Social Etiquette", None, dream_park.ACQUIRE, 100_000)], self.rows(SKILL_TOP))
+        ai = dream_park.skill_rows(Task().show(SKILL_TOP))[0]
+        self.assertEqual(["Lv.5/50", "953"], [box.name for box in ai.price_column])
+        self.assertEqual((0.772, 0.456), (ai.button.x / WIDTH + ai.button.width / WIDTH / 2, ai.button.y / HEIGHT + ai.button.height / HEIGHT / 2))
+
+    def test_every_capture_reads_its_ai_automation_row(self):
+        self.assertEqual(("Al Automation", None, dream_park.ACQUIRE, 390), self.rows(SKILL_ACQUIRE)[0])
+        self.assertEqual(("Al Automation", 1, dream_park.UPGRADE, 460), self.rows(SKILL_LV1)[0])
+        self.assertEqual(("Al Automation", 5, dream_park.UPGRADE, 953), self.rows(SKILL_LV5)[0])
+
+    def test_a_locked_skill_and_a_name_without_its_button_are_no_rows(self):
+        self.assertEqual(["Al Automation", "Large-Scale Promotion"], [row[0] for row in self.rows(SKILL_ACQUIRE)])
+
+    def test_the_left_column_is_no_row_even_with_a_button_lined_up_under_it(self):
+        """The list part-way scrolled puts Large-Scale Promotion's Acquire 0.105 under the left column's `Operate`, which
+        reads as a bullet and a name."""
+        part_way = shifted(SKILL_TOP, 0.056)
+        self.assertEqual(["Large-Scale Promotion", "Social Etiquette"], [row[0] for row in self.rows(part_way)])
+
+    def test_a_row_whose_caption_reads_neither_upgrade_nor_acquire_is_no_row(self):
+        self.assertEqual(["Large-Scale Promotion", "Social Etiquette"], [row[0] for row in self.rows(edited(SKILL_TOP, ("强化", "强")))])
+
+    def test_after_the_drag_another_happy_day_reads_and_ai_automation_is_gone(self):
+        self.assertEqual(["Large-Scale Promotion", "Social Etiquette", "Another Happy Day"], [row[0] for row in self.rows(SKILL_DRAGGED)])
+        self.assertEqual(("Another Happy Day", None, dream_park.ACQUIRE, 1_070), self.rows(SKILL_DRAGGED)[2])
+
+    def test_the_profit_rate_reads_off_the_manage_panel(self):
+        self.assertEqual(91, dream_park.profit_rate(Task().show(MANAGE)))
+        self.assertEqual(116, dream_park.profit_rate(Task().show(MANAGE_RANK9)))
+        self.assertIsNone(dream_park.profit_rate(Task().show(edited(MANAGE, ("91/s", "9?/s")))))
+        self.assertIsNone(dream_park.profit_rate(Task().show(FACILITIES)))
+
+
+class TestSkillChoice(unittest.TestCase):
+
+    def choose(self, screen, rate, money=None):
+        task = Task().show(screen)
+        return dream_park.choose_skill(dream_park.skill_rows(task), dream_park.profit(task) if money is None else money, rate)
+
+    def test_ai_automation_is_chosen_while_a_level_costs_at_most_ten_minutes_of_profit(self):
+        skill, reason = self.choose(SKILL_TOP, 97)
+        self.assertEqual(("Al Automation", 5), (skill.name, skill.level))
+        self.assertIsNone(reason)
+        self.assertIsNotNone(self.choose(SKILL_TOP, 953 / 600)[0])
+        self.assertEqual((None, "AI Automation's next level costs 953, more than 10 minutes of profit at 2/s"), self.choose(SKILL_TOP, 1.5))
+
+    def test_at_a_rate_of_1_nothing_is_chosen(self):
+        self.assertEqual((None, "AI Automation's next level costs 953, more than 10 minutes of profit at 1/s"), self.choose(SKILL_TOP, 1))
+        self.assertIsNone(self.choose(SKILL_LV1, 0)[0])
+
+    def test_a_price_above_the_profit_is_not_chosen(self):
+        self.assertEqual((None, "AI Automation's next level costs 953, more than the profit"), self.choose(SKILL_TOP, 97, money=952))
+        self.assertIsNotNone(self.choose(SKILL_TOP, 97, money=953)[0])
+
+    def test_an_unread_rate_profit_level_or_price_chooses_nothing(self):
+        self.assertEqual((None, "the profit rate did not read"), self.choose(SKILL_TOP, None))
+        self.assertEqual((None, "the profit did not read"), self.choose(edited(SKILL_TOP, ("57.25K", "57.2?K")), 97))
+        self.assertEqual((None, "AI Automation shows no level to upgrade"), self.choose(edited(SKILL_TOP, ("Lv.5/50", "Lv.?/50")), 97))
+        self.assertEqual((None, "AI Automation's price did not read"), self.choose(edited(SKILL_TOP, ("953", "95?")), 97))
+
+    def test_a_skill_not_yet_acquired_is_never_chosen_even_with_a_level_read_beside_it(self):
+        self.assertEqual((None, "AI Automation shows no level to upgrade"), self.choose(SKILL_ACQUIRE, 1_000_000, money=1_000_000))
+        with_level = SKILL_ACQUIRE + (("Lv.0/50", 0.930, 0.350),)
+        self.assertEqual((None, "AI Automation shows no level to upgrade"), self.choose(with_level, 1_000_000, money=1_000_000))
+
+    def test_ai_automation_at_its_level_cap_is_never_chosen(self):
+        self.assertEqual((None, "AI Automation is at Lv.50"), self.choose(edited(SKILL_TOP, ("Lv.5/50", "Lv.50/50")), 1_000_000))
+
+    def test_no_other_skill_is_ever_chosen(self):
+        """After the drag Another Happy Day and Large-Scale Promotion are in view, and at the top either may carry an
+        Upgrade caption in AI Automation's place: neither is chosen at any rate."""
+        self.assertEqual((None, "AI Automation is not in view"), self.choose(SKILL_DRAGGED, 1_000_000, money=1_000_000))
+        for name in ("o Large-Scale Promotion", "o Another Happy Day", "o Social Etiquette"):
+            with self.subTest(name):
+                renamed = edited(SKILL_TOP, ("o Al Automation", name, 0.773))
+                self.assertEqual((None, "AI Automation is not in view"), self.choose(renamed, 1_000_000, money=1_000_000))
+
+
+class TestSkillTab(Park):
+    """The visit's one trip to the Skill tab, from the Facilities list."""
+
+    def setUp(self):
+        super().setUp()
+        self.park()["phase"], self.park()["rate"] = daily.TO_OPERATE, 97
+
+    def assertSkillNothingForbidden(self):
+        self.assertParkNothingForbidden()
+        for name, point in SKILL_NEVER.items():
+            self.assertFalse(self.pressed_at(point), name)
+        self.assertEqual([], self.task.swipes)
+
+    def test_the_manage_panel_keeps_the_profit_rate(self):
+        self.park()["rate"] = None
+        self.show(MANAGE_RANK5)
+        self.assertEqual(89, self.park()["rate"])
+        self.fresh()
+        self.show(edited(MANAGE_RANK5, ("89/s", "8?/s")))
+        self.assertIsNone(self.park()["rate"])
+
+    def test_the_list_waits_to_draw_then_opens_the_skill_tab_before_any_upgrade(self):
+        self.show(FACILITIES)
+        self.assertEqual([], self.task.clicks)
+        self.tick(daily.SETTLE)
+        self.show(FACILITIES)
+        self.assertPressed(daily.SKILL_TAB)
+        self.assertEqual(0, self.park()["upgrades"])
+
+    def test_without_a_profit_rate_the_list_never_opens_the_skill_tab(self):
+        self.park()["rate"] = None
+        self.show(FACILITIES)
+        self.assertPressed(daily.UPGRADE)
+
+    def test_at_rate_97_ai_automation_is_pressed_once_and_its_level_rise_awaited(self):
+        self.settled(SKILL_TOP)
+        self.assertPressed(daily.SKILL_UPGRADE)
+        self.tick()
+        self.show(SKILL_TOP)
+        self.assertPressed(daily.SKILL_UPGRADE)
+        self.tick()
+        self.show(SKILL_LV6)
+        self.assertEqual([6], self.park()["skill_levels"])
+        self.assertPressed(daily.SKILL_UPGRADE, daily.FACILITIES_TAB)
+        self.assertTrue(self.park()["skill_done"])
+        self.assertEqual("AI Automation's next level costs 60,000, more than 10 minutes of profit at 97/s", self.park()["skill_note"])
+        self.assertSkillNothingForbidden()
+
+    def test_the_tab_is_given_time_to_draw_before_a_press(self):
+        self.show(SKILL_TOP)
+        self.assertEqual([], self.task.clicks)
+
+    def test_at_rate_1_nothing_is_pressed_and_the_tab_is_left(self):
+        self.park()["rate"] = 1
+        self.settled(SKILL_TOP)
+        self.assertPressed(daily.FACILITIES_TAB)
+        self.assertEqual("AI Automation's next level costs 953, more than 10 minutes of profit at 1/s", self.park()["skill_note"])
+
+    def test_a_price_above_the_profit_is_not_pressed(self):
+        self.settled(edited(SKILL_TOP, ("57.25K", "900")))
+        self.assertPressed(daily.FACILITIES_TAB)
+        self.assertEqual("AI Automation's next level costs 953, more than the profit", self.park()["skill_note"])
+
+    def test_without_a_profit_rate_the_tab_is_left_with_nothing_pressed(self):
+        self.park()["rate"] = None
+        self.settled(SKILL_TOP)
+        self.assertPressed(daily.FACILITIES_TAB)
+
+    def test_an_unreadable_tab_is_left_with_nothing_pressed(self):
+        bare = tuple(box for box in SKILL_TOP if box[0] in ("技能", "Press and hold the button to upgrade quickly.", "57.25K"))
+        self.settled(bare)
+        self.assertPressed(daily.FACILITIES_TAB)
+        self.assertEqual("AI Automation is not in view", self.park()["skill_note"])
+
+    def test_a_skill_not_yet_acquired_is_never_pressed(self):
+        self.park()["rate"] = 1_000_000
+        self.settled(SKILL_ACQUIRE)
+        self.assertPressed(daily.FACILITIES_TAB)
+        self.assertFalse(self.pressed_at((0.770, 0.456)))
+
+    def test_large_scale_promotion_another_happy_day_and_social_etiquette_are_never_pressed(self):
+        self.park()["rate"] = 1_000_000
+        self.settled(edited(SKILL_DRAGGED, ("58.75K", "5.00M")))
+        self.assertPressed(daily.FACILITIES_TAB)
+        for name in ("o Large-Scale Promotion", "o Another Happy Day", "o Social Etiquette"):
+            with self.subTest(name):
+                self.fresh()
+                self.park()["phase"], self.park()["rate"] = daily.TO_OPERATE, 1_000_000
+                self.settled(edited(SKILL_TOP, ("o Al Automation", name, 0.773), ("57.25K", "5.00M")))
+                self.assertPressed(daily.FACILITIES_TAB)
+        self.assertSkillNothingForbidden()
+
+    def test_negative_control_without_the_name_check_another_skill_is_pressed(self):
+        """Proves the test above bites."""
+        self.park()["rate"] = 1_000_000
+        with mock.patch.object(dream_park, "AI_AUTOMATION", re.compile(r".*")):
+            self.settled(edited(SKILL_TOP, ("o Al Automation", "o Another Happy Day", 0.773), ("57.25K", "5.00M")))
+        self.assertPressed(daily.SKILL_UPGRADE)
+
+    def test_negative_control_without_the_price_rule_rate_1_presses(self):
+        """Proves the rate test bites."""
+        self.park()["rate"] = 1
+        with mock.patch.object(dream_park, "OFFLINE_STEP", 1_000):
+            self.settled(SKILL_TOP)
+        self.assertPressed(daily.SKILL_UPGRADE)
+
+    def test_a_crystal_word_in_the_price_column_stops_daily_with_nothing_pressed(self):
+        for name, change in (("price", ("953", "30 Crystals")), ("level", ("Lv.5/50", "Crystal")), ("acquire price", ("1.44K", "1,440 Crystals"))):
+            with self.subTest(name):
+                self.fresh()
+                self.park()["phase"], self.park()["rate"] = daily.TO_OPERATE, 97
+                self.show(edited(SKILL_TOP, change))
+                self.assertEqual([], self.task.clicks)
+                self.assertStopped(f"a Dream Park price reads {change[1]!r}")
+
+    def test_a_crystal_or_money_box_between_the_rows_stops_daily_with_nothing_pressed(self):
+        for box in (("Crystal", 0.750, 0.480), ("US$4.99", 0.900, 0.500)):
+            with self.subTest(box[0]):
+                self.fresh()
+                self.park()["phase"], self.park()["rate"] = daily.TO_OPERATE, 97
+                self.show(SKILL_TOP + (box,))
+                self.assertEqual([], self.task.clicks)
+                self.assertStopped(f"the Dream Park Skill tab reads {box[0]!r}")
+
+    def test_negative_control_without_the_side_check_a_crystal_between_rows_goes_unremarked(self):
+        """Proves the test above bites."""
+        with mock.patch.object(dream_park, "list_side", lambda task: []):
+            self.settled(SKILL_TOP + (("Crystal", 0.750, 0.480),))
+        self.assertEqual(0, self.task.disabled)
+        self.assertPressed(daily.SKILL_UPGRADE)
+
+    def test_no_box_on_the_right_side_of_any_captured_skill_tab_is_refused(self):
+        for screen in (SKILL_TOP, SKILL_DRAGGED, SKILL_ACQUIRE, SKILL_LV1, SKILL_LV5):
+            self.assertEqual([], [box.name for box in dream_park.list_side(Task().show(screen)) if daily.refused(box.name)])
+
+    def test_two_presses_without_a_level_rise_leave_the_tab(self):
+        self.task.show(SKILL_TOP)
+        for _ in range(daily.SETTLE + 2 * daily.UPGRADE_WAIT + 2):
+            run_pass(self.task)
+            self.tick()
+        self.assertPressed(daily.SKILL_UPGRADE, daily.SKILL_UPGRADE, daily.FACILITIES_TAB)
+        self.assertEqual(0, self.task.disabled)
+        self.assertEqual([], self.park()["skill_levels"])
+        self.assertIn("(AI Automation's level did not rise after two presses)", daily.park_summary(self.park()))
+
+    def test_negative_control_without_the_rise_check_the_presses_go_on(self):
+        """Proves the test above bites."""
+        self.task.show(SKILL_TOP)
+        with mock.patch.object(daily, "skill_risen", lambda task, skills: None):
+            for _ in range(daily.SETTLE + 2 * daily.UPGRADE_WAIT + 2):
+                run_pass(self.task)
+                self.tick()
+        self.assertGreater(self.state()["taps"][daily.SKILL_UPGRADE], 2)
+
+    def test_the_visit_stops_pressing_at_its_cap(self):
+        self.park()["skill_presses"] = daily.SKILL_CAP
+        self.settled(SKILL_TOP)
+        self.assertPressed(daily.FACILITIES_TAB)
+        self.assertEqual("the visit's 30 AI Automation presses are used", self.park()["skill_note"])
+
+    def test_the_cap_is_reached_through_real_presses_and_leaves_the_tab_without_a_stop(self):
+        """Each press raises the level, so no rise check ends the trip: the visit's own count does, before the tap limit."""
+        self.settled(SKILL_TOP)
+        for level in range(6, 6 + daily.SKILL_CAP):
+            self.tick()
+            self.show(edited(SKILL_TOP, ("Lv.5/50", f"Lv.{level}/50")))
+        self.assertEqual(daily.SKILL_CAP, self.state()["taps"][daily.SKILL_UPGRADE])
+        self.assertEqual(list(range(6, 6 + daily.SKILL_CAP)), self.park()["skill_levels"])
+        self.assertEqual(0, self.task.disabled)
+        self.assertEqual("the visit's 30 AI Automation presses are used", self.park()["skill_note"])
+        self.assertTrue(self.pressed_at(POINTS[daily.FACILITIES_TAB]))
+
+    def test_a_level_box_missing_after_a_press_counts_as_no_rise(self):
+        self.settled(SKILL_TOP)
+        self.assertPressed(daily.SKILL_UPGRADE)
+        self.tick(daily.UPGRADE_WAIT)
+        self.show(edited(SKILL_TOP, ("Lv.5/50", None)))
+        self.assertEqual(1, self.park()["skill_no_rise"])
+        self.assertEqual(0, self.task.disabled)
+        self.assertPressed(daily.SKILL_UPGRADE, daily.FACILITIES_TAB)
+
+    def test_the_skill_title_without_the_hold_hint_is_not_the_skill_tab(self):
+        self.task.show(edited(SKILL_TOP, ("Press and hold the button to upgrade quickly.", None)))
+        for _ in range(daily.SETTLE + 1):
+            self.assertFalse(daily.handle_daily_skill_tab(self.task))
+            self.tick()
+        self.assertEqual([], self.task.clicks)
+
+    def test_one_trip_a_visit(self):
+        self.settled(SKILL_TOP)
+        self.tick()
+        self.show(SKILL_LV6)
+        self.tick(daily.NAV_WAIT)
+        self.show(FACILITIES)
+        self.assertPressed(daily.SKILL_UPGRADE, daily.FACILITIES_TAB, daily.UPGRADE)
+        self.task.clicks.clear()
+        self.tick(daily.NAV_WAIT)
+        self.settled(SKILL_TOP)
+        self.assertPressed(daily.FACILITIES_TAB)
+
+    def test_the_tab_outside_the_upgrades_is_left_with_nothing_pressed(self):
+        self.park()["phase"] = daily.TO_LEAVE
+        self.settled(SKILL_TOP)
+        self.assertPressed(daily.FACILITIES_TAB)
+        self.assertFalse(self.park()["skill_done"])
+
+    def test_a_build_comes_before_the_skill_tab(self):
+        self.show(FACILITIES_TOP_SPIN_BUILD)
+        self.assertPressed(daily.BUILD)
+
+    def test_while_saving_for_a_build_the_skill_tab_is_opened_before_the_list_is_left(self):
+        self.park()["stretch"] = 2_500_000
+        self.settled(FACILITIES_HAPPINESS_LAGS)
+        self.tick(daily.SETTLE)
+        self.show(special_guest("2.00M"))
+        self.assertTrue(self.pressed_at(POINTS[daily.SKILL_TAB]))
+        self.assertEqual(daily.TO_OPERATE, self.park()["phase"])
+
+    def test_while_the_profit_waits_for_the_next_rank_the_skill_tab_is_opened_first(self):
+        self.park()["rank_sent"] = {79}
+        self.show(FACILITIES_RANK9)
+        self.assertPressed(daily.SKILL_TAB)
+        self.park()["skill_done"] = True
+        self.tick(daily.NAV_WAIT)
+        self.show(FACILITIES_RANK9)
+        self.assertPressed(daily.SKILL_TAB, daily.PANEL_CLOSE)
+        self.assertEqual(0, self.park()["upgrades"])
+
+    def test_a_skill_tab_press_is_not_repeated_while_the_tab_may_still_open(self):
+        self.settled(FACILITIES)
+        self.tick()
+        self.show(FACILITIES)
+        self.assertPressed(daily.SKILL_TAB)
+
+    def test_the_finish_line_names_the_levels_bought(self):
+        self.park()["skill_levels"] = [6, 7]
+        self.assertIn("Dream Park: 0 upgrades, bought AI Automation Lv.6, Lv.7, 0 achievement claims", daily.park_summary(self.park()))
 
 
 class TestScroll(Park):
@@ -1729,6 +2135,7 @@ class TestScroll(Park):
         self.assertPressed(daily.PARK_OPERATE)
 
     def test_the_cap_holds_across_a_return_to_the_list(self):
+        self.skill_trip_made()
         for step in range(daily.SCROLL_CAP + 1):
             self.show(shifted(FACILITIES_HAPPINESS_LAGS, 0.02 * step))
             self.tick(daily.SETTLE)

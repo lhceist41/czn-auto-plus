@@ -68,9 +68,19 @@ LOCKED = re.compile(r"reach\s*amusement\s*park\s*rank", re.I)
 # The reasons `choose` gives when the ride it wants may be further down the list.
 NOT_IN_VIEW = re.compile(r"no .*ride with a readable price in view")
 
-UPGRADE, BUILD = "upgrade", "build"
+# The Skill tab lays its rows out as the Facilities list does, with no emotion line: AI Automation first, its name at
+# y 0.351, `Lv.N/50` beside it and `强化` with the price 0.105 lower. A skill not yet bought shows `Acquire` and no level.
+# OCR reads AI as `Al`.
+AI_AUTOMATION = re.compile(r"a[il1|]\s*automation", re.I)
+ACQUIRE_CAPTIONS = ("acquire",)
+# One AI Automation level adds 10 minutes of Max Offline Time, so it earns its price back within one visit while the
+# price is at most this many seconds of the Profit Status rate.
+OFFLINE_STEP = 600
+
+UPGRADE, BUILD, ACQUIRE = "upgrade", "build", "acquire"
 # `price_column` holds every box right of `PRICE_X` from the name line to the button line, each checked before a press.
 Ride = namedtuple("Ride", "name level emotion action button price price_column", defaults=((),))
+Skill = namedtuple("Skill", "name level action button price price_column")
 
 # `Rank Up` is drawn on the next Rank's card whether or not it is earned: a saturated blue pill (BGR 247, 136, 50) when it
 # is, a grey lavender one (217, 184, 175) when not, and it stays on the next, grey card after a rank up. The band takes
@@ -260,6 +270,20 @@ def value_beside(task, label):
     return next((box.name.strip() for box, x, y in boxes if x >= MANAGE_VALUE_X and abs(y - line) <= SAME_LINE), None)
 
 
+def profit_rate(task):
+    """Read the Manage panel's Profit Status, the profit the park earns per second.
+
+    Args:
+        task: The Daily task.
+
+    Returns:
+        The rate, or None when it does not read.
+    """
+    text = value_beside(task, PROFIT_STATUS[0])
+    rate = PROFIT_STATUS[1].fullmatch(text) if text is not None else None
+    return parse_number(rate.group(1)) if rate else None
+
+
 def offline_stretch(task):
     """Work out what one full offline stretch earns: the Manage panel's Profit Status times its Max Idle Time.
 
@@ -269,13 +293,11 @@ def offline_stretch(task):
     Returns:
         The profit, or None when either does not read.
     """
-    rate_text, idle_text = value_beside(task, PROFIT_STATUS[0]), value_beside(task, IDLE_TIME)
-    if rate_text is None or idle_text is None:
+    rate, idle_text = profit_rate(task), value_beside(task, IDLE_TIME)
+    if rate is None or idle_text is None:
         return None
-    rate = PROFIT_STATUS[1].fullmatch(rate_text)
-    rate = parse_number(rate.group(1)) if rate else None
     hours, minutes = HOURS.search(idle_text), MINUTES.search(idle_text)
-    if rate is None or (hours is None and minutes is None):
+    if hours is None and minutes is None:
         return None
     seconds = 3600 * int(hours.group(1) if hours else 0) + 60 * int(minutes.group(1) if minutes else 0)
     return rate * seconds
@@ -410,6 +432,76 @@ def choose(rides, emotions, money, stretch=None):
     if cheapest.price > money:
         return None, f"the next upgrade, {cheapest.name}, costs more than the profit"
     return cheapest, None
+
+
+def skill_rows(task):
+    """Read the Skill tab's rows whose button shows.
+
+    A row is found by its name, with `Lv.N/50` on the name's line and the button and its price on the line 0.105 lower.
+    A locked skill shows `Reach Amusement Park Rank N` where its button would be, so it is no row.
+
+    Args:
+        task: The Daily task.
+
+    Returns:
+        The rows top to bottom, each a `Skill`: its level (None when it does not read), `UPGRADE` or `ACQUIRE`, the
+        button's box, the price (None when it does not read as a park number) and every box in the row's price column,
+        from the name line to the price line.
+    """
+    boxes = [(box, x, y) for box, x, y in boxes_of(task) if LIST_TOP <= y <= LIST_BOTTOM]
+    rows = []
+    for box, x, y in sorted(boxes, key=lambda item: item[2]):
+        name = NAME.fullmatch(box.name.strip())
+        if name is None or not NAME_X[0] <= x <= NAME_X[1]:
+            continue
+        level = next((LEVEL.search(other.name) for other, ox, oy in boxes if ox >= LEVEL_X and abs(oy - y) <= SAME_LINE
+                      and LEVEL.search(other.name)), None)
+        button = next(((other, oy) for other, ox, oy in boxes if BUTTON_X[0] <= ox <= BUTTON_X[1] and BUTTON_BELOW[0] <= oy - y <= BUTTON_BELOW[1]
+                       and other.name.strip().casefold() in UPGRADE_CAPTIONS + ACQUIRE_CAPTIONS), None)
+        if button is None:
+            continue
+        button_box, button_y = button
+        action = UPGRADE if button_box.name.strip().casefold() in UPGRADE_CAPTIONS else ACQUIRE
+        price_box = next((other for other, ox, oy in boxes if ox >= PRICE_X and abs(oy - button_y) <= SAME_LINE), None)
+        price = parse_number(price_box.name) if price_box is not None else None
+        column = tuple(other for other, ox, oy in boxes if ox >= PRICE_X and y - SAME_LINE <= oy <= button_y + SAME_LINE)
+        rows.append(Skill(name.group(1).strip(), int(level.group(1)) if level else None, action, button_box, price, column))
+    return rows
+
+
+def choose_skill(skills, money, rate):
+    """Choose whether to upgrade AI Automation one level, or why not.
+
+    AI Automation is the only skill ever chosen. One level is bought while its price is within the profit and within
+    what the park earns in the 10 minutes of offline time the level adds, so it pays for itself by the next visit. A
+    skill not yet acquired, a level or price that did not read, or a level at the cap is never chosen.
+
+    Args:
+        skills: The rows, from `skill_rows`.
+        money: The profit, or None when unread.
+        rate: The Profit Status rate per second, or None when unread.
+
+    Returns:
+        `(skill, None)` for the row to press, or `(None, reason)`.
+    """
+    if rate is None:
+        return None, "the profit rate did not read"
+    if money is None:
+        return None, "the profit did not read"
+    skill = next((skill for skill in skills if AI_AUTOMATION.fullmatch(skill.name)), None)
+    if skill is None:
+        return None, "AI Automation is not in view"
+    if skill.action != UPGRADE or skill.level is None:
+        return None, "AI Automation shows no level to upgrade"
+    if skill.level >= MAX_LEVEL:
+        return None, f"AI Automation is at Lv.{MAX_LEVEL}"
+    if skill.price is None:
+        return None, "AI Automation's price did not read"
+    if skill.price > rate * OFFLINE_STEP:
+        return None, f"AI Automation's next level costs {skill.price:,.0f}, more than {OFFLINE_STEP // 60} minutes of profit at {rate:,.0f}/s"
+    if skill.price > money:
+        return None, f"AI Automation's next level costs {skill.price:,.0f}, more than the profit"
+    return skill, None
 
 
 def rank_up_button(task):
