@@ -500,6 +500,68 @@ FACILITIES_LOCKED_LOW = (
     ('Reach Amusement Park Rank 12', 0.852, 0.816), ('o Observatory', 0.767, 0.890), ('Press and hold the button to upgrade quickly.', 0.802, 0.930),
 )
 
+# 026, the Manage panel at Rank 9 with every emotion past Rank 10's target of 79: Comfort's slash read as `1`.
+MANAGE_RANK9 = (
+    ('9', 0.097, 0.046), ("The SS Nightmare's Most Popular Spot", 0.292, 0.046), ('411.75K', 0.953, 0.047),
+    ('Rules of Goodl', 0.165, 0.131), ('N', 0.212, 0.121), ('Order', 0.190, 0.168), ('Manage', 0.803, 0.138),
+    ('0/54', 0.170, 0.204), ('Manage', 0.084, 0.295), ("The Ss Nightmare's Most Popular Spot Rank 9", 0.806, 0.316),
+    ('★★★★★★★', 0.807, 0.349), ('Recruit', 0.084, 0.383), ('o Profit Status', 0.691, 0.398), ('116/s', 0.933, 0.397),
+    ('Operate', 0.087, 0.471), ('o Total Profit', 0.688, 0.454), ('3.97M', 0.935, 0.452),
+    ('o Max Simultaneous Visitors', 0.741, 0.509), ('3', 0.953, 0.508), ('o Max ldle Time', 0.696, 0.564),
+    ('8h 10m', 0.929, 0.563), ('o Visitor Emotions', 0.705, 0.633), ('Thril', 0.706, 0.675), ('80 /79', 0.936, 0.675),
+    ('Comfort', 0.716, 0.744), ('80 179', 0.936, 0.744), ('Happiness', 0.722, 0.811), ('80 /79', 0.936, 0.810),
+    ('Amusement Park Rank', 0.804, 0.906),
+)
+# 028, the Facilities list at Rank 9 with every emotion at 80 of 79.
+FACILITIES_RANK9 = (
+    ('9', 0.097, 0.047), ("The Ss Nightmare's Most Popular Spot", 0.291, 0.047), ('412.13K', 0.953, 0.047),
+    ('Rules of Gooal', 0.165, 0.132), ('N', 0.212, 0.122), ('80/79', 0.700, 0.106), ('80/79', 0.802, 0.106),
+    ('80/79', 0.929, 0.106), ('0/54', 0.171, 0.204), ('Order', 0.190, 0.169), ('へ', 0.714, 0.195), ('i', 0.033, 0.295),
+    ('Manage', 0.087, 0.294), ('Facilities', 0.803, 0.274), ('Recruit', 0.084, 0.382), ('o Roller Coaster', 0.772, 0.350),
+    ('Lv.30/50', 0.934, 0.349), ('Thrill +30', 0.780, 0.402), ('+48/5s', 0.894, 0.403), ('へ', 0.033, 0.481),
+    ('Operate', 0.085, 0.471), ('强化', 0.772, 0.456), ('7.64K', 0.947, 0.454), ('o Top Spin', 0.756, 0.530),
+    ('Lv.25/50', 0.933, 0.530), ('Thrill +50', 0.779, 0.579), ('+50/5s', 0.885, 0.580), ('强化', 0.772, 0.634),
+    ('7.82K', 0.946, 0.632), ('o Drop Tower', 0.765, 0.707), ('Lv.15/50', 0.933, 0.706), ('Comfort +30', 0.787, 0.756),
+    ('+36/4s', 0.886, 0.758), ('强化', 0.772, 0.811), ('1.87K', 0.947, 0.809), ('o Special Guest', 0.771, 0.884),
+    ('Lv.15/50', 0.934, 0.884), ('Press and hold the button to upgrade quickly.', 0.803, 0.931),
+)
+# The same list with its header read as on 023, two values run together and a slash read as `1`.
+FACILITIES_RANK9_SLASH = edited(FACILITIES_RANK9, ("80/79", "80/7980 179", 0.700), ("80/79", None, 0.802))
+# 023, a few upgrades earlier: Happiness at 74 of 79, the header read the same way.
+FACILITIES_RANK9_LAGS = (
+    ('9', 0.097, 0.047), ("The SS Nightmare's Most Popular Spot", 0.290, 0.047), ('416.21K', 0.953, 0.047),
+    ('Rules of Gooal', 0.165, 0.132), ('N', 0.212, 0.122), ('80/7980 179', 0.767, 0.106), ('74 /79', 0.929, 0.106),
+    ('0/54', 0.171, 0.204), ('Order', 0.190, 0.169), ('へ', 0.714, 0.195), ('Manage', 0.087, 0.294),
+    ('Facilities', 0.803, 0.275), ('Recruit', 0.084, 0.382), ('o Top Spin', 0.755, 0.387), ('LV.25/50', 0.933, 0.386),
+    ('Thrill +50', 0.778, 0.437), ('+50/5s', 0.895, 0.438), ('Operate', 0.085, 0.471), ('强化', 0.772, 0.493),
+    ('7.82K', 0.946, 0.490), ('o Drop Tower', 0.765, 0.565), ('Lv.15/50', 0.932, 0.565), ('Comfort +30', 0.787, 0.613),
+    ('+36/4s', 0.896, 0.617), ('强化', 0.772, 0.670), ('1.87K', 0.948, 0.669), ('o Special Guest', 0.771, 0.742),
+    ('Lv.12/50', 0.933, 0.743), ('Happiness +24', 0.797, 0.793), ('+34/7s', 0.881, 0.792), ('强化', 0.773, 0.847),
+    ('1.60K', 0.947, 0.845), ('Press and hold the button to upgrade quickly.', 0.802, 0.930),
+)
+# 017, the Rank screen at Rank 8 with Rank 9 earned: Rank Up on the Rank 9 card.
+RANK8_READY = (
+    ('√', 0.041, 0.044), ('8', 0.097, 0.045), ("The SS Nightmare's Most Popular Spot", 0.290, 0.045),
+    ('465.52K', 0.951, 0.046), ('Amusement Park Rank', 0.501, 0.137),
+    ("'The SS Nightmare's Most Popular Spot ★★★★★★★★", 0.384, 0.256), ('RANK8', 0.176, 0.348), ('RANK9', 0.428, 0.348),
+    ('RANK 10', 0.686, 0.348), ('RANK 11', 0.937, 0.346), ('。Objective', 0.180, 0.407), ('oObjective', 0.432, 0.407),
+    ('oObjective', 0.683, 0.407), ('oObjective', 0.936, 0.410), ('43 /43', 0.058, 0.463), ('·Thrill', 0.180, 0.463),
+    ('50/50', 0.330, 0.464), ('·Thrill', 0.433, 0.464), ('64/64', 0.581, 0.463), ('·Thrill', 0.684, 0.464),
+    ('65/79', 0.834, 0.464), ('·Thrill', 0.937, 0.464), ('43/43', 0.057, 0.514), ('·Comfort', 0.193, 0.513),
+    ('50/50', 0.329, 0.511), ('Comfort', 0.447, 0.514), ('64/64', 0.581, 0.514), ('·Comfort', 0.695, 0.513),
+    ('64/79', 0.833, 0.514), ('·Comfort', 0.948, 0.513), ('43/43', 0.058, 0.562), ('•', 0.165, 0.565),
+    ('Happiness', 0.213, 0.564), ('50/50', 0.329, 0.562), ('Happiness', 0.454, 0.562), ('64/64', 0.581, 0.563),
+    ('· Happiness', 0.702, 0.562), ('64/79', 0.834, 0.563), ('· Happine', 0.947, 0.563),
+    ('o Rank Up Benefits', 0.206, 0.624), ('o Rank Up Benefits', 0.458, 0.624), ('o Rank Up Benefits', 0.709, 0.624),
+    ('o Rank Up Be', 0.942, 0.624), ('nin', 0.027, 0.679), ('unlocked', 0.046, 0.708),
+    ('• Max Offline Time + 10 min', 0.229, 0.679), ('· Max manager count +1', 0.222, 0.708),
+    ('· Max Offline Time + 10 min', 0.482, 0.679), ('· Max Offline Time + 10 min', 0.733, 0.679),
+    ('· [Special Guest] unlocked', 0.229, 0.736), ('·[Photo Booth] unlocked', 0.729, 0.706),
+    ('• Max Offline T', 0.947, 0.679), (';kill', 0.029, 0.737), ('·[Sereniel], [Cassius], [Maribell]', 0.246, 0.766),
+    ('·[Social Etiquette] Skill expanded', 0.754, 0.738), ('can be assigned as managers', 0.237, 0.798),
+    ('nplete', 0.041, 0.901), ('Achievement Complete', 0.253, 0.900), ('Rank Up', 0.504, 0.900),
+)
+
 
 RANK_UP_CROP = (0.06, 0.025)
 # Where the story's bar and the skip dialog's box were cut from the same captures.
@@ -521,6 +583,7 @@ LIVE_RANK3 = rank_frame("dream_park_rank_up_live", (0.402, 0.900))
 LIVE_RANK6 = rank_frame("dream_park_rank_up_live_rank6", (0.502, 0.900))
 GREY_RANK1 = rank_frame("dream_park_rank_up_grey", (0.152, 0.902))
 GREY_AFTER = rank_frame("dream_park_rank_up_grey_after", (0.503, 0.902))
+LIVE_RANK8 = rank_frame("dream_park_rank_up_live_rank8", (0.504, 0.900))
 
 
 def claim_frame(*rows):
@@ -663,6 +726,41 @@ class TestEmotions(unittest.TestCase):
         garbled = tuple(("817", x, y) if name == "61/36" else (name, x, y) for name, x, y in MANAGE_RANK5)
         self.assertIsNone(dream_park.manage_emotions(Task().show(garbled)))
         self.assertIsNone(dream_park.manage_emotions(Task().show(tuple(box for box in MANAGE_RANK5 if box[0] != "29/36"))))
+
+    def test_the_manage_panel_reads_through_a_slash_read_as_1(self):
+        """026: `80 179` beside two `80 /79` is 80 of 79, the one target every box fits; so is the same with no clean box."""
+        self.assertEqual(((80, 80, 80), 79), dream_park.manage_emotions(Task().show(MANAGE_RANK9)))
+        for misread in ("80 179", "80179"):
+            with self.subTest(misread):
+                screen = edited(MANAGE_RANK9, ("80 /79", misread), ("80 179", misread))
+                self.assertEqual(((80, 80, 80), 79), dream_park.manage_emotions(Task().show(screen)))
+
+    def test_a_three_digit_value_reads_as_it_is(self):
+        """A slash read as `1` adds a digit: 180/179 comes back as `180 1179`, 180/79 as `180 179`."""
+        self.assertEqual({(180, 179)}, dream_park.value_readings("180/179"))
+        self.assertEqual({(180, 179)}, dream_park.value_readings("180 1179"))
+        self.assertEqual({(180, 79)}, dream_park.value_readings("180 179"))
+        self.assertEqual({(61, 136), (611, 36)}, dream_park.value_readings("6 11136"))
+        for misread in ("180/179", "180 1179"):
+            with self.subTest(misread):
+                screen = edited(MANAGE_RANK9, ("80 /79", "180/179"), ("80 179", misread))
+                self.assertEqual(((180, 180, 180), 179), dream_park.manage_emotions(Task().show(screen)))
+
+    def test_a_manage_panel_no_single_target_fits_does_not_read(self):
+        """Happiness at another target, or every box splitting two ways with no header target to choose between them."""
+        mixed = tuple(("64/64", x, y) if name == "80 /79" and abs(y - 0.810) < 0.005 else (name, x, y) for name, x, y in MANAGE_RANK9)
+        self.assertIsNone(dream_park.manage_emotions(Task().show(mixed)))
+        self.assertIsNone(dream_park.manage_emotions(Task().show(mixed), 79))
+        two_ways = edited(MANAGE_RANK9, ("80 /79", "61 136"), ("80 179", "61 136"))
+        self.assertEqual({(61, 36), (6, 136)}, dream_park.value_readings("61 136"))
+        self.assertEqual(set(), dream_park.value_readings("81079") | dream_park.value_readings("05179"))
+        self.assertIsNone(dream_park.manage_emotions(Task().show(two_ways)))
+        self.assertIsNone(dream_park.manage_emotions(Task().show(two_ways), 79))
+
+    def test_a_manage_panel_splitting_two_ways_reads_at_the_target_the_header_asked_about(self):
+        two_ways = edited(MANAGE_RANK9, ("80 /79", "61 136"), ("80 179", "61 136"))
+        self.assertEqual(((61, 61, 61), 36), dream_park.manage_emotions(Task().show(two_ways), 36))
+        self.assertEqual(((6, 6, 6), 136), dream_park.manage_emotions(Task().show(two_ways), 136))
 
     def test_one_offline_stretch_is_the_profit_rate_times_the_idle_time(self):
         self.assertEqual(89 * (7 * 3600 + 30 * 60), dream_park.offline_stretch(Task().show(MANAGE_RANK5)))
@@ -953,7 +1051,7 @@ class TestManageAndFacilities(Park):
             self.show(edited(FACILITIES, ("6.37K", "6.3?K")))
         self.assertTrue(self.pressed_at(POINTS[daily.UPGRADE]))
 
-    def test_every_emotion_at_its_target_goes_to_the_rank_first_and_once_tried_upgrades_the_cheapest(self):
+    def test_every_emotion_at_its_target_goes_to_the_rank_first_and_once_tried_keeps_the_profit(self):
         self.park()["phase"] = daily.TO_OPERATE
         self.show(FACILITIES_DONE)
         self.assertPressed(daily.PARK_MANAGE)
@@ -961,18 +1059,16 @@ class TestManageAndFacilities(Park):
         self.task.clicks.clear()
         self.park()["phase"], self.park()["rank_checked"] = daily.TO_OPERATE, 36
         self.show(FACILITIES_DONE)
-        self.assertEqual(1, len(self.task.clicks))
-        self.assertAlmostEqual(0.812, self.task.clicks[0][1], delta=0.005)
+        self.assertPressed(daily.PANEL_CLOSE)
+        self.assertEqual(0, self.park()["upgrades"])
+        self.assertIn("Rank target 36, but its Rank Up was not taken", self.park()["note"])
 
     def test_an_unreadable_manage_panel_counts_the_header_target_as_tried_so_the_visit_does_not_shuttle(self):
         """The header reads every emotion at 36, the panel's values do not read: one trip to Manage, then the upgrades."""
         garbled = edited(MANAGE, ("61/36", "817"))
         self.park()["phase"] = daily.TO_OPERATE
         self.run_screens([FACILITIES_DONE] + [garbled] * (daily.SETTLE + 1) + [FACILITIES_DONE])
-        self.assertEqual(3, len(self.task.clicks), self.task.clicks)
-        self.assertTrue(self.pressed_at(POINTS[daily.PARK_MANAGE]))
-        self.assertTrue(self.pressed_at(POINTS[daily.PARK_OPERATE]))
-        self.assertAlmostEqual(0.812, self.task.clicks[2][1], delta=0.005)
+        self.assertPressed(daily.PARK_MANAGE, daily.PARK_OPERATE, daily.PANEL_CLOSE)
         self.assertFalse(self.pressed_at(POINTS[daily.PARK_RANK]))
         self.assertEqual(36, self.park()["rank_checked"])
         self.assertEqual(0, self.task.disabled)
@@ -1091,6 +1187,100 @@ class TestManageAndFacilities(Park):
         self.show(MANAGE)
         self.assertPressed(daily.PARK_MANAGE, daily.PARK_RANK)
         self.assertEqual({35, 36}, self.park()["rank_sent"])
+
+    def test_a_manage_panel_with_a_slash_read_as_1_still_opens_the_rank_and_presses_rank_up(self):
+        """At Rank 9: the header, `80 179` among its boxes, sends the visit to Manage for 79; the panel reads `80 179`
+        for Comfort, and the Rank and its Rank Up are pressed."""
+        self.assertEqual(((80, 80, 80), 79), dream_park.header_emotions(Task().show(FACILITIES_RANK9_SLASH)))
+        self.park()["phase"] = daily.TO_OPERATE
+        self.show(FACILITIES_RANK9_SLASH)
+        self.assertPressed(daily.PARK_MANAGE)
+        self.tick(daily.NAV_WAIT)
+        self.show(MANAGE_RANK9)
+        self.assertPressed(daily.PARK_MANAGE, daily.PARK_RANK)
+        self.assertEqual([9], self.park()["ranks"])
+        self.tick(daily.NAV_WAIT)
+        self.show(RANK8_READY, LIVE_RANK8)
+        self.assertPressed(daily.PARK_MANAGE, daily.PARK_RANK, daily.RANK_UP)
+        self.assertEqual(0, self.park()["upgrades"])
+        self.assertParkNothingForbidden()
+
+    def test_the_header_target_settles_a_manage_panel_that_splits_two_ways(self):
+        """Every box reads `61 136`: 61 of 36 or 6 of 136. The header asked about 36, so the panel reads 61 of 36."""
+        two_ways = edited(MANAGE, ("61/36", "61 136"), ("36 /36", "61 136"))
+        self.park()["phase"] = daily.TO_OPERATE
+        self.show(FACILITIES_DONE)
+        self.tick(daily.NAV_WAIT)
+        self.show(two_ways)
+        self.assertPressed(daily.PARK_MANAGE, daily.PARK_RANK)
+        self.assertEqual(((61, 61, 61), 36), self.park()["emotions"])
+
+    def test_an_unconfirmed_rank_up_at_a_met_target_leaves_the_list_with_the_profit_kept(self):
+        """Every emotion at 80 of 79, the trip to Manage for 79 spent without a rank up. Nothing is upgraded or built,
+        and the finish line says why."""
+        for name, screen in (("clean header", FACILITIES_RANK9), ("slash read as 1", FACILITIES_RANK9_SLASH)):
+            with self.subTest(name):
+                self.fresh()
+                self.park()["phase"], self.park()["rank_sent"] = daily.TO_OPERATE, {79}
+                self.settled(screen)
+                self.assertPressed(daily.PANEL_CLOSE)
+                self.assertEqual((0, daily.TO_LEAVE), (self.park()["upgrades"], self.park()["phase"]))
+                self.assertIn("every emotion is at Rank target 79, but its Rank Up was not taken, so the profit is kept for the next"
+                              " Rank's ride; check the park's Rank screen if this repeats)", daily.park_summary(self.park()))
+
+    def test_the_visit_with_an_unreadable_manage_panel_at_a_met_target_keeps_the_profit(self):
+        """A panel that does not read at all: one trip to Manage, back to Operate, then the list is left."""
+        garbled = edited(MANAGE_RANK9, ("80 179", "8O l79"))
+        self.assertIsNone(dream_park.manage_emotions(Task().show(garbled), 79))
+        navigation = self.follow([FACILITIES_RANK9_SLASH], garbled)
+        self.assertEqual([POINTS[daily.PARK_MANAGE], POINTS[daily.PARK_OPERATE]], navigation, self.task.clicks)
+        self.assertPressed(daily.PARK_MANAGE, daily.PARK_OPERATE, daily.PANEL_CLOSE)
+        self.assertEqual(0, self.park()["upgrades"])
+        self.assertEqual(0, self.task.disabled)
+
+    def test_a_manage_panel_met_at_another_target_keeps_the_upgrades(self):
+        """The header reads every emotion at 80 of 79, the panel every one at 80 of 64: the panel's target is not the one
+        the header sent the visit for, so the header's 79 is no Rank Up left untaken, and the upgrades go on."""
+        other = tuple(("80/64", x, y) if x > 0.9 and 0.6 < y < 0.85 else (name, x, y) for name, x, y in MANAGE_RANK9)
+        self.assertEqual(((80, 80, 80), 64), dream_park.manage_emotions(Task().show(other), 79))
+        self.park()["phase"], self.park()["rank_checked"] = daily.TO_OPERATE, 64
+        self.show(FACILITIES_RANK9_SLASH)
+        self.tick(daily.NAV_WAIT)
+        self.show(other)
+        self.assertPressed(daily.PARK_MANAGE, daily.PARK_OPERATE)
+        self.assertEqual({79}, self.park()["rank_unmet"])
+        self.tick(daily.NAV_WAIT)
+        self.task.clicks.clear()
+        self.show(FACILITIES_RANK9_SLASH)
+        self.assertEqual(1, len(self.task.clicks), self.task.clicks)
+        self.assertEqual(1, self.park()["upgrades"])
+        self.assertIsNone(self.park()["note"])
+
+    def test_below_the_target_the_lagging_emotion_still_gets_its_upgrade(self):
+        """023: Happiness at 74 of 79 after the trip for 79 was spent: Special Guest, the Happiness ride, is upgraded."""
+        self.assertEqual(((80, 80, 74), 79), dream_park.header_emotions(Task().show(FACILITIES_RANK9_LAGS)))
+        self.park()["phase"], self.park()["rank_sent"] = daily.TO_OPERATE, {79}
+        self.show(FACILITIES_RANK9_LAGS)
+        self.assertEqual(1, len(self.task.clicks), self.task.clicks)
+        self.assertAlmostEqual(0.847, self.task.clicks[0][1], delta=0.005)
+        self.assertEqual(1, self.park()["upgrades"])
+        self.assertIsNone(self.park()["note"])
+
+    def test_after_a_rank_up_the_target_just_taken_keeps_no_profit(self):
+        """The rank up to Rank 6 counted, then a list whose header does not read: the panel's last reading, every emotion
+        at 36, is the target just taken, so the upgrades go on."""
+        self.park()["emotions"] = ((61, 36, 36), 36)
+        self.show(RANK_READY, LIVE_RANK6)
+        self.tick()
+        self.show(RANK_RESULT)
+        self.assertEqual((1, {36}), (self.park()["rank_ups"], self.park()["ranked"]))
+        self.task.clicks.clear()
+        self.park()["phase"], self.park()["rank_checked"] = daily.TO_OPERATE, 36
+        headless = tuple(box for box in FACILITIES_DONE if not (box[1] >= 0.64 and 0.085 <= box[2] <= 0.118))
+        self.assertIsNone(dream_park.header_emotions(Task().show(headless)))
+        self.show(headless)
+        self.assertEqual(1, len(self.task.clicks), self.task.clicks)
+        self.assertEqual(1, self.park()["upgrades"])
 
     def test_a_crystal_or_money_box_anywhere_on_the_lists_side_stops_daily_with_nothing_pressed(self):
         """Left of the price column in Tagada's rows, and in the gaps between rows that belong to no row."""

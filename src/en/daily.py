@@ -305,14 +305,15 @@ def new_park():
         A dict: when the visit started, where it stands, the screen it is on and since when, when each target was last
         pressed, the last emotions read off the Manage panel and how many upgrades had been pressed then, what one
         offline stretch earns, the Rank target whose Rank Up was found grey or could not be checked, the target the
-        Operate header sent the visit to the Manage panel for and every one it has sent it there for, when Rank Up was
-        pressed, the press whose level rise is awaited and what it was, presses without a rise per ride, how many times
-        the Facilities list was dragged, when last and the ride names it showed before that drag, whether the
-        achievements were visited, when a claim ring was pressed and how many claims in a row opened nothing, the
-        counts for the finish line and why the upgrades ended.
+        Operate header sent the visit to the Manage panel for, every one it has sent it there for and those the panel
+        then read below, the targets whose Rank Up was taken, when Rank Up was pressed, the press whose level rise is
+        awaited and what it was, presses without a rise per ride, how many times the Facilities list was dragged, when
+        last and the ride names it showed before that drag, whether the achievements were visited, when a claim ring was
+        pressed and how many claims in a row opened nothing, the counts for the finish line and why the upgrades ended.
     """
     return {"started": None, "phase": TO_MANAGE, "screen": None, "screen_since": None, "pressed": {}, "emotions": None, "emotions_at": 0,
-            "stretch": None, "rank_checked": None, "rank_wanted": None, "rank_sent": set(), "rank_pressed": None, "pending": None, "no_rise": Counter(),
+            "stretch": None, "rank_checked": None, "rank_wanted": None, "rank_sent": set(), "rank_unmet": set(),
+            "ranked": set(), "rank_pressed": None, "pending": None, "no_rise": Counter(),
             "scrolls": 0, "scrolled": None, "scroll_names": None,
             "claims_done": False, "claim_pressed": None, "claim_misses": 0, "ranks": [], "rank_ups": 0,
             "upgrades": 0, "builds": [], "claims": 0, "note": None, "result": None}
@@ -756,6 +757,8 @@ def handle_daily_rank_result(task):
     if park["rank_pressed"] is not None:
         park["rank_ups"] += 1
         park["rank_pressed"] = None
+        if park["emotions"] is not None:
+            park["ranked"].add(park["emotions"][1])
     return press_once(task, RANK_RESULT_CLOSE, caption)
 
 
@@ -790,7 +793,7 @@ def handle_daily_manage_panel(task):
     park = park_state(task)
     if not park_active(task) or park["phase"] == TO_LEAVE:
         return press_once(task, PANEL_CLOSE)
-    emotions = dream_park.manage_emotions(task)
+    emotions = dream_park.manage_emotions(task, park["rank_wanted"])
     if emotions is None and shown_for < SETTLE:
         return True
     rank = next((RANK_NUMBER.search(box.name) for box in getattr(task, "all_texts", None) or []
@@ -804,6 +807,8 @@ def handle_daily_manage_panel(task):
     if emotions is not None:
         park["emotions"], park["emotions_at"] = emotions, park["upgrades"]
         values, target = emotions
+        if wanted is not None and (target != wanted or any(value < target for value in values)):
+            park["rank_unmet"].add(wanted)
         if all(value >= target for value in values) and park["rank_checked"] != target:
             return press_once(task, PARK_RANK)
     elif wanted is not None:
@@ -903,8 +908,10 @@ def handle_daily_facilities(task):
     Any box reading as Crystals, a currency or a purchase in a row's price column, or anywhere on the list's right side,
     stops Daily, and a row whose price does not read is never pressed. When every emotion has reached its target and its
     Rank Up has not been tried at that target, the visit goes to the Manage panel first, at most once for each target in
-    a visit, however the targets the header reads come and go. When the ride `choose` wants may be further down, the
-    list is dragged a short way and given time to come to rest before its rows count.
+    a visit, however the targets the header reads come and go. Once tried without a rank up, the list is left with no
+    press; the upgrades go on only when the Manage panel read an emotion below that target or read another target, or
+    that target was just ranked up. When the ride `choose` wants may be further down, the list is dragged a short way
+    and given time to come to rest before its rows count.
     """
     if showing(task, FACILITIES_TITLE) is None or showing(task, FACILITIES_HINT) is None:
         return False
@@ -942,6 +949,11 @@ def handle_daily_facilities(task):
         park["phase"], park["rank_wanted"] = TO_MANAGE, emotions[1]
         park["rank_sent"].add(emotions[1])
         return press_once(task, PARK_MANAGE)
+    if (emotions is not None and all(value >= emotions[1] for value in emotions[0]) and emotions[1] not in park["rank_unmet"]
+            and emotions[1] not in park["ranked"]):
+        # Each Rank so far has brought a new ride with a large build price, so the profit waits for that ride rather
+        # than going on the cheapest rides while the Rank Up the header shows as earned stays untaken.
+        return leave_facilities(task, f"every emotion is at Rank target {emotions[1]}, but its Rank Up was not taken, so the profit is kept for the next Rank's ride; check the park's Rank screen if this repeats")
     if park["upgrades"] >= UPGRADE_CAP:
         return leave_facilities(task, f"the visit's {UPGRADE_CAP} upgrades are used")
     ride, reason = dream_park.choose(rows, emotions, dream_park.profit(task), park["stretch"])

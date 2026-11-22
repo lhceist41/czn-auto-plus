@@ -185,31 +185,61 @@ def header_emotions(task):
     return split_header(text)
 
 
-def manage_emotions(task):
+def value_readings(text):
+    """Give every current/target a Manage box may stand for.
+
+    A box with a slash reads one way. Without one, OCR may have read the slash as `1`, as `80 179` for 80/79: each `1`
+    with one to three digits on either side is a candidate separator, so `1801179` gives 180/179 alone, its other `1`
+    leaving four digits before it.
+
+    Args:
+        text: The box's text.
+
+    Returns:
+        A set of `(value, target)` pairs, empty when the text is no current/target.
+    """
+    clean = re.fullmatch(r"(\d+)\s*/\s*(\d+)", text.strip())
+    if clean is not None:
+        return {(int(clean.group(1)), int(clean.group(2)))}
+    digits = text.replace(" ", "")
+    if not digits.isdigit():
+        return set()
+    return {(int(digits[:at]), int(digits[at + 1:])) for at in range(1, min(len(digits) - 1, 4))
+            if digits[at] == "1" and len(digits) - at - 1 <= 3 and (at == 1 or digits[0] != "0") and digits[at + 1] != "0"}
+
+
+def manage_emotions(task, wanted=None):
     """Read Thrill, Comfort and Happiness off the Manage panel, where each has its own box.
+
+    All three emotions share one target, so a box whose slash OCR read as `1` is taken only when exactly one target
+    fits every box, or several do and one is the target the Operate header asked about.
 
     Args:
         task: The Daily task.
+        wanted: The target the Operate header sent the visit here for, or None.
 
     Returns:
-        `((thrill, comfort, happiness), target)`, or None when a value is missing, garbled or the targets differ.
+        `((thrill, comfort, happiness), target)`, or None when a value is missing, garbled or no single target fits.
     """
     boxes = boxes_of(task)
-    values, targets = [], set()
+    readings = []
     for emotion in EMOTIONS:
         label = next(((x, y) for box, x, y in boxes if box.name.strip().casefold().startswith(emotion[:5].casefold())
                       and in_region(box, MANAGE_LABEL_REGION, task.width, task.height)), None)
         if label is None:
             return None
-        value = next((re.fullmatch(r"(\d+)\s*/\s*(\d+)", box.name.strip()) for box, x, y in boxes
-                      if x >= MANAGE_VALUE_X and abs(y - label[1]) <= SAME_LINE and re.fullmatch(r"(\d+)\s*/\s*(\d+)", box.name.strip())), None)
-        if value is None:
+        found = next((value_readings(box.name) for box, x, y in boxes
+                      if x >= MANAGE_VALUE_X and abs(y - label[1]) <= SAME_LINE and value_readings(box.name)), None)
+        if found is None:
             return None
-        values.append(int(value.group(1)))
-        targets.add(int(value.group(2)))
+        readings.append({target: value for value, target in found})
+    targets = set.intersection(*(set(reading) for reading in readings))
     if len(targets) != 1:
-        return None
-    return tuple(values), targets.pop()
+        if wanted not in targets:
+            return None
+        targets = {wanted}
+    target = targets.pop()
+    return tuple(reading[target] for reading in readings), target
 
 
 def value_beside(task, label):
