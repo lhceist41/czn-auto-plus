@@ -55,6 +55,8 @@ BUTTON_BELOW = (0.08, 0.13)
 UPGRADE_CAPTIONS = ("强化", "upgrade")
 BUILD_CAPTIONS = ("build",)
 PRICE_X = 0.88
+# Where the list's side of the screen starts, a little left of every name and button caption.
+LIST_SIDE_X = 0.70
 MAX_LEVEL = 50
 
 UPGRADE, BUILD = "upgrade", "build"
@@ -279,6 +281,11 @@ def facility_rows(task):
         rows.append(Ride(name.group(1).strip(), int(level.group(1)) if level else 0, emotion_of(emotion.group(1)), action, button_box, price,
                          price_box, column))
     return rows
+
+
+def list_side(task):
+    """Give every box on the Facilities list's side of the screen, in rows or between them, from its top to its bottom."""
+    return [box for box, x, y in boxes_of(task) if x >= LIST_SIDE_X and LIST_TOP <= y <= LIST_BOTTOM]
 
 
 def emotion_of(text):

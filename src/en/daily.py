@@ -268,15 +268,15 @@ def new_park():
         A dict: when the visit started, where it stands, the screen it is on and since when, when each target was last
         pressed, the last emotions read off the Manage panel and how many upgrades had been pressed then, what one
         offline stretch earns, the Rank target whose Rank Up was found grey or could not be checked, the target the
-        Operate header sent the visit to the Manage panel for, when Rank Up was pressed, the press whose
-        level rise is awaited, presses without a rise per ride, whether the park and its achievements were visited, when
-        a claim ring was pressed and how many claims in a row opened nothing, the counts for the finish line and why the
-        upgrades ended.
+        Operate header sent the visit to the Manage panel for and every one it has sent it there for, when Rank Up was
+        pressed, the press whose level rise is awaited and what it was, presses without a rise per ride, whether the
+        park and its achievements were visited, when a claim ring was pressed and how many claims in a row opened
+        nothing, the counts for the finish line and why the upgrades ended.
     """
     return {"started": None, "phase": TO_MANAGE, "screen": None, "screen_since": None, "pressed": {}, "emotions": None, "emotions_at": 0,
-            "stretch": None, "rank_checked": None, "rank_wanted": None, "rank_pressed": None, "pending": None, "no_rise": Counter(), "visited": False,
-            "claims_done": False, "tab_pressed": False, "claim_pressed": None, "claim_misses": 0, "ranks": [], "rank_ups": 0, "upgrades": 0, "builds": [],
-            "claims": 0, "note": None, "result": None}
+            "stretch": None, "rank_checked": None, "rank_wanted": None, "rank_sent": set(), "rank_pressed": None, "pending": None, "no_rise": Counter(),
+            "visited": False, "claims_done": False, "tab_pressed": False, "claim_pressed": None, "claim_misses": 0, "ranks": [], "rank_ups": 0,
+            "upgrades": 0, "builds": [], "claims": 0, "note": None, "result": None}
 
 
 def pending_step(task):
@@ -727,10 +727,12 @@ def ride_risen(task, rows):
     pending = park["pending"]
     if pending is None:
         return None
-    name, level, pressed = pending
+    name, level, pressed, action = pending
     ride = next((ride for ride in rows if ride.name == name), None)
     if ride is not None and ride.level > level:
         park["pending"], park["no_rise"][name] = None, 0
+        if action == dream_park.BUILD:
+            park["builds"].append(name)
         return None
     if time.monotonic() - pressed < UPGRADE_WAIT:
         return True
@@ -751,9 +753,10 @@ def leave_facilities(task, note):
 def handle_daily_facilities(task):
     """Build or upgrade one ride per pass with the park's profit, re-reading the list after every press.
 
-    Any box in a row's price column reading as Crystals, a currency or a purchase stops Daily, and a row whose price does
-    not read is never pressed. When every emotion has reached its target and its Rank Up has not been tried at that target, the Manage panel
-    comes first.
+    Any box reading as Crystals, a currency or a purchase in a row's price column, or anywhere on the list's right side,
+    stops Daily, and a row whose price does not read is never pressed. When every emotion has reached its target and its
+    Rank Up has not been tried at that target, the visit goes to the Manage panel first, at most once for each target in
+    a visit, however the targets the header reads come and go.
     """
     if showing(task, FACILITIES_TITLE) is None or showing(task, FACILITIES_HINT) is None:
         return False
@@ -768,14 +771,22 @@ def handle_daily_facilities(task):
         hit = next((box for box in ride.price_column if refused(box.name)), None)
         if hit is not None:
             return stop(task, f"Stopped: a Dream Park price reads {hit.name!r}, and Daily spends only the park's profit. Check the game, then press Start again.")
+    hit = next((box for box in dream_park.list_side(task) if refused(box.name)), None)
+    if hit is not None:
+        return stop(task, f"Stopped: the Dream Park list reads {hit.name!r}, and Daily spends only the park's profit. Check the game, then press Start again.")
     waiting = ride_risen(task, rows)
     if waiting is not None:
         return waiting
     emotions = dream_park.header_emotions(task)
     if emotions is None and park["emotions_at"] == park["upgrades"]:
         emotions = park["emotions"]
-    if emotions is not None and all(value >= emotions[1] for value in emotions[0]) and park["rank_checked"] != emotions[1]:
+    if (emotions is not None and all(value >= emotions[1] for value in emotions[0]) and park["rank_checked"] != emotions[1]
+            and emotions[1] not in park["rank_sent"]):
+        # At most one trip for each target in a visit: when the Manage panel reads an emotion below the target the
+        # header shows, or does not read at all, another trip for that target would read the same and send the visit
+        # back here, round and round until the visit runs out of time, also when the header reads two targets by turns.
         park["phase"], park["rank_wanted"] = TO_MANAGE, emotions[1]
+        park["rank_sent"].add(emotions[1])
         return press_once(task, PARK_MANAGE)
     if park["upgrades"] >= UPGRADE_CAP:
         return leave_facilities(task, f"the visit's {UPGRADE_CAP} upgrades are used")
@@ -784,9 +795,8 @@ def handle_daily_facilities(task):
         if shown_for < SETTLE:
             return True
         return leave_facilities(task, reason)
-    park["pending"] = (ride.name, ride.level, time.monotonic())
+    park["pending"] = (ride.name, ride.level, time.monotonic(), ride.action)
     if ride.action == dream_park.BUILD:
-        park["builds"].append(ride.name)
         return press(task, BUILD, ride.button)
     park["upgrades"] += 1
     return press(task, UPGRADE, ride.button)

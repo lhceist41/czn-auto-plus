@@ -872,6 +872,132 @@ class TestManageAndFacilities(Park):
         self.assertEqual(2, len(navigation), self.task.clicks)
         self.assertNotIn("ran for", " ".join(self.task.notifications))
 
+    def test_a_manage_panel_reading_an_emotion_below_the_headers_target_gets_one_trip_then_the_upgrades(self):
+        """The header reads every emotion at 36, the panel reads Happiness 35 of 36: each would send the visit to the other
+        for good, so the header's target gets one trip, Rank Up stays shut and the upgrades go on."""
+        below = tuple(("35/36", x, y) if name == "36 /36" and abs(y - 0.809) < 0.005 else (name, x, y) for name, x, y in MANAGE)
+        self.assertEqual(((61, 36, 35), 36), dream_park.manage_emotions(Task().show(below)))
+        self.park()["phase"] = daily.TO_OPERATE
+        screen = FACILITIES_DONE
+        for _ in range(daily.PARK_SECONDS):
+            before = len(self.task.clicks)
+            self.show(screen)
+            self.tick()
+            if len(self.task.clicks) > before:
+                last = self.task.clicks[-1]
+                if last == POINTS[daily.PARK_MANAGE]:
+                    screen = below
+                elif last == POINTS[daily.PARK_OPERATE]:
+                    screen = FACILITIES_DONE
+                else:
+                    break
+        self.assertEqual(3, len(self.task.clicks), self.task.clicks)
+        self.assertEqual([POINTS[daily.PARK_MANAGE], POINTS[daily.PARK_OPERATE]], self.task.clicks[:2])
+        self.assertAlmostEqual(0.812, self.task.clicks[2][1], delta=0.005)
+        self.assertFalse(self.pressed_at(POINTS[daily.PARK_RANK]))
+        self.assertEqual(0, self.task.disabled)
+        self.assertNotIn("ran for", " ".join(self.task.notifications))
+
+    def test_a_new_header_target_still_gets_its_own_trip_to_the_manage_panel(self):
+        self.park()["phase"], self.park()["rank_sent"] = daily.TO_OPERATE, {29}
+        self.show(FACILITIES_DONE)
+        self.assertPressed(daily.PARK_MANAGE)
+        self.assertEqual({29, 36}, self.park()["rank_sent"])
+
+    def follow(self, lists, manage):
+        """Follow each press to the screen it leads to for a whole visit's time, until a press that is no navigation.
+
+        Args:
+            lists: The Facilities screens the visit comes back to from Operate, in turn and round again.
+            manage: The Manage panel a press on Manage opens.
+
+        Returns:
+            The navigation presses, Manage and Operate, before the first other press.
+        """
+        self.park()["phase"] = daily.TO_OPERATE
+        returns, screen = 0, lists[0]
+        for _ in range(daily.PARK_SECONDS):
+            before = len(self.task.clicks)
+            self.show(screen)
+            self.tick()
+            if len(self.task.clicks) > before:
+                last = self.task.clicks[-1]
+                if last == POINTS[daily.PARK_MANAGE]:
+                    screen = manage
+                elif last == POINTS[daily.PARK_OPERATE]:
+                    returns += 1
+                    screen = lists[returns % len(lists)]
+                else:
+                    break
+        return [click for click in self.task.clicks if click in (POINTS[daily.PARK_MANAGE], POINTS[daily.PARK_OPERATE])]
+
+    def test_a_header_reading_two_targets_by_turns_gets_one_trip_for_each_then_the_upgrades(self):
+        """The header reads 36 and 35 on alternate returns, the panel reads Happiness and Comfort below 36: two trips, never
+        the overtime stop, and Rank Up stays shut."""
+        header_35 = edited(FACILITIES_DONE, ("61/36", "61/35"), ("36/36", "36/35"), ("36 /36", "36 /35"))
+        self.assertEqual(((61, 36, 36), 35), dream_park.header_emotions(Task().show(header_35)))
+        below = tuple(("35/36", x, y) if name == "36 /36" else (name, x, y) for name, x, y in MANAGE)
+        self.assertEqual(((61, 35, 35), 36), dream_park.manage_emotions(Task().show(below)))
+        navigation = self.follow([FACILITIES_DONE, header_35], below)
+        self.assertEqual([POINTS[daily.PARK_MANAGE], POINTS[daily.PARK_OPERATE]] * 2, navigation, self.task.clicks)
+        self.assertEqual(5, len(self.task.clicks), self.task.clicks)
+        self.assertAlmostEqual(0.812, self.task.clicks[4][1], delta=0.005)
+        self.assertEqual({35, 36}, self.park()["rank_sent"])
+        self.assertFalse(self.pressed_at(POINTS[daily.PARK_RANK]))
+        self.assertEqual(0, self.task.disabled)
+        self.assertNotIn("ran for", " ".join(self.task.notifications))
+
+    def test_a_header_reading_two_targets_by_turns_with_an_unreadable_manage_panel_gets_one_trip_for_each(self):
+        header_35 = edited(FACILITIES_DONE, ("61/36", "61/35"), ("36/36", "36/35"), ("36 /36", "36 /35"))
+        garbled = edited(MANAGE, ("61/36", "817"))
+        navigation = self.follow([FACILITIES_DONE, header_35], garbled)
+        self.assertEqual([POINTS[daily.PARK_MANAGE], POINTS[daily.PARK_OPERATE]] * 2, navigation, self.task.clicks)
+        self.assertEqual(5, len(self.task.clicks), self.task.clicks)
+        self.assertFalse(self.pressed_at(POINTS[daily.PARK_RANK]))
+        self.assertEqual(0, self.task.disabled)
+        self.assertNotIn("ran for", " ".join(self.task.notifications))
+
+    def test_a_readable_manage_panel_at_its_target_still_opens_the_rank_after_other_targets_were_sent(self):
+        self.park()["phase"], self.park()["rank_sent"] = daily.TO_OPERATE, {35}
+        self.show(FACILITIES_DONE)
+        self.assertPressed(daily.PARK_MANAGE)
+        self.tick(daily.NAV_WAIT)
+        self.show(MANAGE)
+        self.assertPressed(daily.PARK_MANAGE, daily.PARK_RANK)
+        self.assertEqual({35, 36}, self.park()["rank_sent"])
+
+    def test_a_crystal_or_money_box_anywhere_on_the_lists_side_stops_daily_with_nothing_pressed(self):
+        """Left of the price column in Tagada's rows, and in the gaps between rows that belong to no row."""
+        cases = {"Crystal by Tagada's emotion line": ("Crystal", 0.750, 0.600), "Crystal by Tagada's button": ("Crystal", 0.850, 0.632),
+                 "money by Tagada's name": ("US$4.99", 0.720, 0.530), "Crystal between Tagada and Roller Coaster": ("Crystal", 0.800, 0.670),
+                 "Crystal in the price column between rows": ("Crystal", 0.950, 0.670), "Crystal at the list's top": ("Crystal", 0.700, 0.300)}
+        for name, box in cases.items():
+            with self.subTest(name):
+                self.fresh()
+                self.park()["phase"] = daily.TO_OPERATE
+                self.show(FACILITIES + (box,))
+                self.assertEqual([], self.task.clicks)
+                self.assertStopped(f"the Dream Park list reads {box[0]!r}")
+
+    def test_negative_control_without_the_list_check_a_crystal_between_rows_goes_unremarked(self):
+        """Proves the test above bites: the row checks alone press Tagada's Upgrade."""
+        self.park()["phase"] = daily.TO_OPERATE
+        with mock.patch.object(dream_park, "list_side", lambda task: []):
+            self.show(FACILITIES + (("Crystal", 0.800, 0.670),))
+        self.assertPressed(daily.UPGRADE)
+        self.assertEqual(0, self.task.disabled)
+
+    def test_no_box_on_the_lists_side_of_any_captured_facilities_screen_is_refused(self):
+        screens = {"FACILITIES": FACILITIES, "FACILITIES_DONE": FACILITIES_DONE, "FACILITIES_RANK7": FACILITIES_RANK7,
+                   "FACILITIES_FLUNG": FACILITIES_FLUNG, "FACILITIES_RANK1": FACILITIES_RANK1, "FACILITIES_RANK1_LATER": FACILITIES_RANK1_LATER,
+                   "FACILITIES_TOP_SPIN_BUILD": FACILITIES_TOP_SPIN_BUILD, "FACILITIES_TOP_SPIN_BUILT": FACILITIES_TOP_SPIN_BUILT,
+                   "FACILITIES_LOCKED": FACILITIES_LOCKED, "FACILITIES_DROP_TOWER": FACILITIES_DROP_TOWER}
+        for name, screen in screens.items():
+            with self.subTest(name):
+                side = dream_park.list_side(Task().show(screen))
+                self.assertGreater(len(side), 10)
+                self.assertEqual([], [box.name for box in side if daily.refused(box.name)])
+
     def test_a_garbled_header_falls_back_to_the_manage_read_until_the_first_upgrade(self):
         """2"""
         self.park()["phase"], self.park()["emotions"] = daily.TO_OPERATE, ((8, 7, 2), 7)
@@ -909,6 +1035,21 @@ class TestManageAndFacilities(Park):
         self.assertEqual(0, self.park()["no_rise"]["Top Spin"])
         self.assertEqual(("Tagada", 26), self.park()["pending"][:2])
         self.assertAlmostEqual(0.493, self.task.clicks[1][1], delta=0.005)
+
+    def test_a_build_retried_after_no_rise_is_named_once_and_only_once_it_rises(self):
+        self.park()["phase"] = daily.TO_OPERATE
+        self.show(FACILITIES_TOP_SPIN_BUILD)
+        self.assertPressed(daily.BUILD)
+        self.assertEqual([], self.park()["builds"])
+        self.tick(daily.UPGRADE_WAIT)
+        self.show(FACILITIES_TOP_SPIN_BUILD)
+        self.assertPressed(daily.BUILD, daily.BUILD)
+        self.assertEqual(1, self.park()["no_rise"]["Top Spin"])
+        self.assertEqual([], self.park()["builds"])
+        self.tick()
+        self.show(FACILITIES_TOP_SPIN_BUILT)
+        self.assertEqual(["Top Spin"], self.park()["builds"])
+        self.assertEqual(1, daily.park_summary(self.park()).count("Top Spin"))
 
     def test_the_park_view_opens_manage_first_then_operate_then_leaves(self):
         self.show(PARK_VIEW)
