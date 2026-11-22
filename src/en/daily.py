@@ -24,8 +24,8 @@ from src.en.handlers import loaded
 from src.en.runs import stop
 from src.en.screen import centre_of, colour_share, frame_of, in_region, patch_of, text_in_region
 from src.en.dialog_ticks import UNTICKED, box_state
-from src.en.spend_guard import (ACCOUNT, DELETION, MONEY, PURCHASE, RESCUE_HEADER, RESCUE_PHRASES, Dialog, cleaned, folded, handle_rescue_screen,
-                                marker_in, shown)
+from src.en.spend_guard import (ACCOUNT, DELETION, MONEY, PURCHASE, RESCUE_HEADER, RESCUE_PHRASES, COMPACT_SKIP_DIALOG, cleaned, folded,
+                                handle_rescue_screen, marker_in, shown)
 from src.en.story import SKIP_IMAGE, SKIP_MATCH, find_icon, grey, tap
 
 logger = Logger.get_logger(__name__)
@@ -199,10 +199,6 @@ RULES_BUTTONS = (("取消", (0.28, 0.60, 0.42, 0.66)), ("Cancel", (0.28, 0.60, 0
 # (0.500-0.501, 0.356) and caption at (0.499-0.500, 0.938). Under it the park's Operate does not read.
 PROFIT_TITLE = ("Profit Report", (0.40, 0.32, 0.60, 0.40))
 PROFIT_CAPTION = ("点击屏幕关闭窗口", (0.40, 0.90, 0.60, 0.97))
-# The skip dialog of a story the park plays, smaller than Story mode's and without its synopsis: title at (0.501-0.502,
-# 0.412), label at (0.520, 0.530), buttons at y 0.631, its box at (0.392, 0.532).
-PARK_SKIP_DIALOG = Dialog("park story skip dialog", "doyouwanttoskipthisstory", False, (0.30, 0.37, 0.70, 0.45),
-                          "donotshowuntilnextlogin", (0.40, 0.50, 0.66, 0.56), ("取消", "确认"), (0.25, 0.60, 0.75, 0.66))
 BANNER_CORNER = (0.90, 0.0, 1.0, 0.12)
 BANNER_MATCH = 0.92
 
@@ -671,7 +667,7 @@ def handle_daily_skip_dialog(task):
 
     A box that did not take is left unticked and the story skipped all the same.
     """
-    if not shown(task, PARK_SKIP_DIALOG) or not in_park(task):
+    if not shown(task, COMPACT_SKIP_DIALOG) or not in_park(task):
         return False
     recognised(task)
     if box_state(frame_of(task), TARGETS[SKIP_TICK]) == UNTICKED:
@@ -681,7 +677,7 @@ def handle_daily_skip_dialog(task):
         if time.monotonic() - ticked < NAV_WAIT:
             return True
     confirm = next(box for box in getattr(task, "all_texts", None) or []
-                   if cleaned(box.name) == "确认" and in_region(box, PARK_SKIP_DIALOG.buttons_region, task.width, task.height))
+                   if cleaned(box.name) == "确认" and in_region(box, COMPACT_SKIP_DIALOG.buttons_region, task.width, task.height))
     return press_once(task, SKIP_CONFIRM, confirm)
 
 

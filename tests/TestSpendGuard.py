@@ -675,6 +675,109 @@ class TestSkipSynopsis(unittest.TestCase):
         self.assertIn(spend_guard.SKIP_DIALOG, [dialog for dialog, _ in dialog_ticks.TICKS])
 
 
+# The compact skip dialog as OCR read it off the Global client: an Ark City episode's ending, the same frame after its box
+# was ticked, and an Excursion story. The speaker and the subtitle line under the dialog stay readable.
+COMPACT_TOP = [("Do you want to skip this story?", 0.501, 0.413), ("Ctrl", 0.393, 0.492), ("Do not show until next login", 0.520, 0.530),
+               ("进入", 0.537, 0.594), ("取消", 0.348, 0.631), ("确认", 0.667, 0.631)]
+COMPACT_SPEAKER = ("Nono", 0.118, 0.753)
+COMPACT_SUBTITLE_AT = (0.426, 0.837)
+COMPACT_SCREENS = (
+    [*COMPACT_TOP, COMPACT_SPEAKER, ("So, what do you think? A safer Ark City, brought to you by Nono and Elaine!", *COMPACT_SUBTITLE_AT),
+     ("Space", 0.936, 0.912)],
+    [("Y①", 0.801, 0.050), ("Do you want to skip this story?", 0.501, 0.412), ("Ctrl", 0.392, 0.492),
+     ("Do not show until next login", 0.520, 0.530), ("ESC", 0.216, 0.593), ("取消", 0.348, 0.631), ("进入", 0.536, 0.594),
+     ("确认", 0.667, 0.631), COMPACT_SPEAKER,
+     ("So, what do you think? A safer Ark City, brought to you by Nono and Elaine!", *COMPACT_SUBTITLE_AT), ("Space", 0.937, 0.912)],
+    [("DD=", 0.855, 0.049), ("Do you want to skip this story?", 0.501, 0.412), ("Ctrl", 0.393, 0.493),
+     ("Do not show until next login", 0.520, 0.530), ("ESC", 0.216, 0.593), ("取消", 0.347, 0.631), ("进入", 0.537, 0.594),
+     ("确认", 0.666, 0.631), ("Selena", 0.126, 0.753), ("Captain, if you're everin need of some plushies, please tell me.", 0.370, 0.835),
+     ("Space", 0.935, 0.911)],
+)
+# Lines a story could well say, each holding a word the guard stops on anywhere else.
+RISKY_SUBTITLES = ("We have to retreat before the Chaos closes in.", "Let's buy some snacks on Main Street.",
+                   "The Aether readings are off the chart.", "Don't give up now, Captain!", "a Purchase made long ago",
+                   "Elaine can Erase a memory.", "It only cost US$4.99!")
+# The Loot dialog draws the same label, box and button row a little lower than the compact dialog's title.
+LOOT = [("Settlement", 0.59, 0.065), ("Loot", 0.539, 0.139),
+        ("There is additional loot available. Continue without using Loot Certification Card?", 0.502, 0.412),
+        ("Ctrl", 0.393, 0.492), ("Do not show until next login", 0.521, 0.531), ("ESC", 0.214, 0.593), ("进入", 0.535, 0.593),
+        ("取消", 0.347, 0.632), ("确认", 0.667, 0.63), ("Temporary Return", 0.623, 0.916), ("继续", 0.927, 0.915)]
+
+
+def compact_dialog(subtitle, top=COMPACT_TOP):
+    """Build a task showing the compact skip dialog over a line of dialogue.
+
+    Args:
+        subtitle: The dialogue line under the dialog.
+        top: The dialog's own boxes.
+
+    Returns:
+        The task.
+    """
+    return FakeTask([*top, COMPACT_SPEAKER, (subtitle, *COMPACT_SUBTITLE_AT), ("Space", 0.936, 0.912)])
+
+
+class TestCompactSkip(unittest.TestCase):
+    """The compact skip dialog leaves the scene's dialogue showing under it, and a line of dialogue is no dialog that spends."""
+
+    def test_captured_compact_dialogs_are_confirmed(self):
+        for screen in COMPACT_SCREENS:
+            with self.subTest(subtitle=screen[-2][0]):
+                task = FakeTask(screen)
+                self.assertIsNone(spend_guard.risky_confirm(task))
+                self.assertIs(True, confirm(task))
+                self.assertEqual(["确认"], task.clicked)
+
+    def test_a_marker_in_the_dialogue_under_it_is_confirmed(self):
+        for line in RISKY_SUBTITLES:
+            with self.subTest(line=line):
+                task = compact_dialog(line)
+                self.assertIsNone(spend_guard.risky_confirm(task))
+                self.assertIs(True, confirm(task))
+                self.assertEqual(["确认"], task.clicked)
+                self.assertFalse(task.disabled)
+
+    def test_a_marker_in_the_speaker_name_is_confirmed(self):
+        task = FakeTask([*COMPACT_TOP, ("Retreat Officer", 0.118, 0.753), ("Over here!", *COMPACT_SUBTITLE_AT)])
+        self.assertIsNone(spend_guard.risky_confirm(task))
+
+    def test_a_marker_inside_the_dialog_still_stops(self):
+        for where, extra in (("under the title", ("Use 1 Aether?", 0.5, 0.45)), ("beside the title", ("Retreat?", 0.62, 0.413)),
+                             ("a price by the buttons", ("US$4.99", 0.5, 0.6))):
+            with self.subTest(where=where):
+                task = compact_dialog(COMPACT_SCREENS[0][-2][0])
+                task.all_texts.append(FakeBox(*extra))
+                self.assertIsNotNone(spend_guard.risky_confirm(task))
+                self.assertIs(True, confirm(task))
+                self.assertEqual(["取消"], task.clicked)
+                self.assertTrue(task.disabled)
+
+    def test_the_same_line_on_another_dialog_with_the_same_button_row_still_stops(self):
+        line = RISKY_SUBTITLES[0]
+        self.assertIsNone(spend_guard.risky_confirm(FakeTask(LOOT)), "the Loot dialog itself is safe to confirm")
+        cases = {
+            "the Loot dialog": FakeTask([*LOOT, COMPACT_SPEAKER, (line, *COMPACT_SUBTITLE_AT)]),
+            "no title": compact_dialog(line, [box for box in COMPACT_TOP if not box[0].startswith("Do you want")]),
+            "the large dialog's title": compact_dialog(
+                line, [(("Do you want to skip the current dialogue?" if name.startswith("Do you want") else name), x, y)
+                       for name, x, y in COMPACT_TOP]),
+            "the title where the large dialog draws it": compact_dialog(
+                line, [(name, x, 0.212 if name.startswith("Do you want") else y) for name, x, y in COMPACT_TOP]),
+            "no label": compact_dialog(line, [box for box in COMPACT_TOP if not box[0].startswith("Do not show")]),
+            "no Cancel": compact_dialog(line, [box for box in COMPACT_TOP if box[0] != "取消"]),
+            "buttons where the large dialog draws them": compact_dialog(
+                line, [(name, x, 0.786 if name in ("取消", "确认") else y) for name, x, y in COMPACT_TOP]),
+        }
+        for case, task in cases.items():
+            with self.subTest(case=case):
+                self.assertEqual(spend_guard.RETREAT, spend_guard.risky_confirm(task)[0])
+                self.assertIs(True, confirm(task))
+                self.assertTrue(task.disabled)
+
+    def test_the_compact_dialog_is_told_apart_by_the_same_whitelist_as_its_tick(self):
+        self.assertIn(spend_guard.COMPACT_SKIP_DIALOG, [dialog for dialog, _ in dialog_ticks.TICKS])
+
+
 class TestInstall(unittest.TestCase):
 
     def test_the_guard_is_applied_before_notify(self):

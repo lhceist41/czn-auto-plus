@@ -1,16 +1,17 @@
-"""Tick "Do not show" on the Story skip dialog and on Battle Prep: the first stays away until the next login, the second for the day.
+"""Tick "Do not show" on both Story skip dialogs and on Battle Prep: the skip dialogs until the next login, Battle Prep for the day.
 
-Both dialogs are still confirmed by the handlers that press them today, `handle_center_confirm` and `handle_enter`, behind
+The dialogs are still confirmed by the handlers that press them today, `handle_center_confirm` and `handle_enter`, behind
 every guard those sit behind: this only taps the box first, once per appearance. The Rescue dialog draws the same box at
-the same x, and a tick there would drop the pull confirmation, so a box is tapped only on these two dialogs, each told
-apart by its title, its label and its button row, and only while it reads as unticked and lit.
+the large skip dialog's x and the Loot dialog at the compact one's spot, and a tick there would drop the pull
+confirmation or the lost-loot warning, so a box is tapped only on these three dialogs, each told apart by its title, its
+label and its button row, and only while it reads as unticked and lit.
 """
 
 import numpy as np
 
 from src.en.handlers import insert_before, register
 from src.en.screen import colour_share, frame_of, patch_of
-from src.en.spend_guard import SKIP_DIALOG, Dialog, rescue_marker, risky_confirm, shown
+from src.en.spend_guard import COMPACT_SKIP_DIALOG, SKIP_DIALOG, Dialog, rescue_marker, risky_confirm, shown
 from src.en.story import tap
 
 # The title must be the whole box, since the Settings page reads "Display Battle Prep Confirmation Popup". Read off three
@@ -19,7 +20,7 @@ from src.en.story import tap
 BATTLE_PREP = Dialog("Battle Prep Confirmation", "battleprepconfirmation", True, (0.30, 0.12, 0.70, 0.21),
                      "donotshowagaintoday", (0.40, 0.69, 0.66, 0.75), ("取消", "进入"), (0.25, 0.80, 0.75, 0.86))
 # Each dialog with the centre of its box. These are the only points this module ever taps.
-TICKS = ((SKIP_DIALOG, (0.3925, 0.678)), (BATTLE_PREP, (0.404, 0.721)))
+TICKS = ((SKIP_DIALOG, (0.3925, 0.678)), (BATTLE_PREP, (0.404, 0.721)), (COMPACT_SKIP_DIALOG, (0.392, 0.532)))
 # Half the patch read around a box's centre, as screen fractions: 23 x 22 pixels at 1080p, inside the box's grey square.
 PATCH_HALF = (0.006, 0.01)
 # The tick's orange, about (240, 142, 75), as OpenCV HSV bounds. It covered 0.79 of the patch on the ticked capture, and
@@ -65,19 +66,19 @@ def box_state(frame, spot):
 
 
 def shown_tick(task):
-    """Find which of the two dialogs is up.
+    """Find which of the three dialogs is up.
 
     Args:
         task: The running task, whose `all_texts` holds the current OCR pass.
 
     Returns:
-        The `(dialog, spot)` pair from `TICKS`, or None when neither is on screen.
+        The `(dialog, spot)` pair from `TICKS`, or None when none is on screen.
     """
     return next(((dialog, spot) for dialog, spot in TICKS if shown(task, dialog)), None)
 
 
 def handle_dont_show_again(task):
-    """Tap the "Do not show" box once on the Story skip dialog or Battle Prep, and leave the confirm to the handlers after.
+    """Tap the "Do not show" box once on a Story skip dialog or Battle Prep, and leave the confirm to the handlers after.
 
     Args:
         task: The running task, whose `all_texts` and `frame` hold the current reading.
@@ -117,7 +118,7 @@ def install():
 
 
 def apply():
-    """Tick "Do not show" on the Story skip dialog and Battle Prep before they are confirmed."""
+    """Tick "Do not show" on both Story skip dialogs and Battle Prep before they are confirmed."""
     global _patched
     if _patched:
         return

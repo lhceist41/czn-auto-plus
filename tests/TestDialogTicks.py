@@ -1,7 +1,7 @@
-"""Check that "Do not show" is ticked on the Story skip dialog and Battle Prep only, once, and on nothing else.
+"""Check that "Do not show" is ticked on both Story skip dialogs and Battle Prep only, once, and on nothing else.
 
-The Rescue dialog draws the same box at the same x as the skip dialog, and a tick there would drop the pull confirmation,
-so every refusal matters as much as the tap. The screens are the Global client's, their text as OCR read it and their
+The Rescue dialog draws the same box at the same x as the large skip dialog and the Loot dialog at the compact one's spot,
+and a tick there would drop the pull confirmation or the lost-loot warning, so every refusal matters as much as the tap. The screens are the Global client's, their text as OCR read it and their
 box as cut from the capture.
 """
 
@@ -28,9 +28,13 @@ from tests.fakes import HEIGHT, WIDTH, FakeBox  # noqa: E402
 
 SKIP_SPOT = (0.3925, 0.678)
 PREP_SPOT = (0.404, 0.721)
+COMPACT_SPOT = (0.392, 0.532)
 INSTALLS = 3
-# Where every crop in `tests/images/` was cut from its 1080p capture: x 691-845, y 691-821.
+# Where the crops in `tests/images/` were cut from their 1080p captures: x 691-845, y 691-821, and for the compact skip
+# dialog's box, y 510-640.
 CROP_LEFT, CROP_TOP = 691, 691
+COMPACT_TOP = 510
+COMPACT_CROPS = ("dont_show_compact", "dont_show_compact_ticked", "dont_show_compact_excursion")
 
 SKIP_SYNOPSIS = [("Do you want to skip the current dialogue?", 0.5, 0.212),
                  ("Renoa collapses and loses consciousness immediately after returning to the SS Nightmare.", 0.499, 0.294),
@@ -60,6 +64,18 @@ LOOT = [("Settlement", 0.59, 0.065), ("Loot", 0.539, 0.139),
         ("There is additional loot available. Continue without using Loot Certification Card?", 0.502, 0.412),
         ("Ctrl", 0.393, 0.492), ("Do not show until next login", 0.521, 0.531), ("ESC", 0.214, 0.593), ("进入", 0.535, 0.593),
         ("取消", 0.347, 0.632), ("确认", 0.667, 0.63), ("Temporary Return", 0.623, 0.916), ("继续", 0.927, 0.915)]
+# The compact skip dialog: an Ark City episode's ending, the same frame after its box was ticked, and an Excursion story.
+COMPACT = [("Do you want to skip this story?", 0.501, 0.413), ("Ctrl", 0.393, 0.492), ("Do not show until next login", 0.520, 0.530),
+           ("进入", 0.537, 0.594), ("取消", 0.348, 0.631), ("确认", 0.667, 0.631), ("Nono", 0.118, 0.753),
+           ("So, what do you think? A safer Ark City, brought to you by Nono and Elaine!", 0.426, 0.837), ("Space", 0.936, 0.912)]
+COMPACT_TICKED = [("Y①", 0.801, 0.050), ("Do you want to skip this story?", 0.501, 0.412), ("Ctrl", 0.392, 0.492),
+                  ("Do not show until next login", 0.520, 0.530), ("ESC", 0.216, 0.593), ("取消", 0.348, 0.631), ("进入", 0.536, 0.594),
+                  ("确认", 0.667, 0.631), ("Nono", 0.118, 0.753),
+                  ("So, what do you think? A safer Ark City, brought to you by Nono and Elaine!", 0.426, 0.837), ("Space", 0.937, 0.912)]
+COMPACT_EXCURSION = [("DD=", 0.855, 0.049), ("Do you want to skip this story?", 0.501, 0.412), ("Ctrl", 0.393, 0.493),
+                     ("Do not show until next login", 0.520, 0.530), ("ESC", 0.216, 0.593), ("取消", 0.347, 0.631), ("进入", 0.537, 0.594),
+                     ("确认", 0.666, 0.631), ("Selena", 0.126, 0.753),
+                     ("Captain, if you're everin need of some plushies, please tell me.", 0.370, 0.835), ("Space", 0.935, 0.911)]
 SETTINGS = [("Game Settings", 0.176, 0.091), ("Customize Detailed Popups", 0.205, 0.394), ("Display Story Skip Popup", 0.202, 0.458),
             ("on", 0.797, 0.459), ("Display Rescue Progress Popup", 0.226, 0.531), ("on", 0.797, 0.529),
             ("Display Battle Prep Confirmation Popup", 0.253, 0.601), ("on", 0.797, 0.6),
@@ -78,18 +94,31 @@ def crop(name):
     return cv2.imread(str(REPO_ROOT / "tests" / "images" / f"{name}.png"))
 
 
-def frame(patch):
+def frame(patch, top=CROP_TOP):
     """Put a crop back where it was cut from, in an otherwise black frame.
 
     Args:
         patch: The crop's pixels.
+        top: The row the crop was cut from.
 
     Returns:
         A 1080p frame.
     """
     full = np.zeros((HEIGHT, WIDTH, 3), dtype=np.uint8)
-    full[CROP_TOP:CROP_TOP + patch.shape[0], CROP_LEFT:CROP_LEFT + patch.shape[1]] = patch
+    full[top:top + patch.shape[0], CROP_LEFT:CROP_LEFT + patch.shape[1]] = patch
     return full
+
+
+def compact_frame(name):
+    """Put a crop of the compact skip dialog's box back where it was cut from.
+
+    Args:
+        name: The crop's base name in `tests/images/`.
+
+    Returns:
+        A 1080p frame.
+    """
+    return frame(crop(name), COMPACT_TOP)
 
 
 def ticked_skip_crop():
@@ -125,13 +154,16 @@ class FakeTask:
 
         Args:
             texts: `(name, x, y)` triples, placed as fractions of the screen.
-            patch: The crop around the boxes, or None for no frame.
+            patch: The crop around the boxes, a whole frame, or None for no frame.
 
         Returns:
             The task.
         """
         self.all_texts = [FakeBox(name, x, y) for name, x, y in texts]
-        self.frame = None if patch is None else frame(patch)
+        if patch is None or patch.shape[:2] == (HEIGHT, WIDTH):
+            self.frame = patch
+        else:
+            self.frame = frame(patch)
         return self
 
     def move_relative(self, x, y):
@@ -201,6 +233,12 @@ class TestBoxState(unittest.TestCase):
             with self.subTest(crop=name):
                 self.assertEqual(state, dialog_ticks.box_state(frame(crop(name)), spot))
 
+    def test_each_captured_compact_box_reads_as_drawn(self):
+        for name, state in zip(COMPACT_CROPS, (dialog_ticks.UNTICKED, dialog_ticks.TICKED, dialog_ticks.UNTICKED)):
+            with self.subTest(crop=name):
+                self.assertEqual(state, dialog_ticks.box_state(compact_frame(name), COMPACT_SPOT))
+                self.assertIsNone(dialog_ticks.box_state(compact_frame(name), SKIP_SPOT), "no box at the large dialog's spot")
+
     def test_the_composed_ticked_skip_box_reads_ticked(self):
         self.assertEqual(dialog_ticks.TICKED, dialog_ticks.box_state(frame(ticked_skip_crop()), SKIP_SPOT))
 
@@ -243,13 +281,44 @@ class TestTick(unittest.TestCase):
                 self.assertEqual([], self.task.boxes_clicked, "Confirm stays with the centred Confirm")
                 self.assertEqual(["ticking Do not show on the Story skip dialog"], self.task.logged)
 
+    def test_the_compact_skip_dialog_box_is_tapped_once(self):
+        for texts, name in ((COMPACT, "dont_show_compact"), (COMPACT_EXCURSION, "dont_show_compact_excursion")):
+            with self.subTest(crop=name):
+                self.task = FakeTask()
+                self.assertIs(True, self.run_handler(texts, compact_frame(name)))
+                self.assertEqual([COMPACT_SPOT], self.task.moved)
+                self.assertEqual([COMPACT_SPOT], self.task.clicked)
+                self.assertEqual([], self.task.boxes_clicked, "Confirm stays with the centred Confirm")
+                self.assertEqual(["ticking Do not show on the compact story skip dialog"], self.task.logged)
+
+    def test_the_compact_box_is_tapped_over_a_risky_line_of_dialogue(self):
+        """The guard reads only the dialog's own box there, so a story line with a word it stops on elsewhere is no dialog that spends."""
+        for line in ("We have to retreat before the Chaos closes in.", "The Aether readings are off the chart."):
+            with self.subTest(line=line):
+                self.task = FakeTask()
+                texts = [(line if name.startswith("So, what") else name, x, y) for name, x, y in COMPACT]
+                self.assertIs(True, self.run_handler(texts, compact_frame("dont_show_compact")))
+                self.assertEqual([COMPACT_SPOT], self.task.clicked)
+
+    def test_a_risky_word_inside_the_compact_dialog_gets_no_tap(self):
+        texts = [*COMPACT, ("Use 1 Aether?", 0.5, 0.45)]
+        self.assertIsNotNone(spend_guard.risky_confirm(self.task.show(texts)))
+        self.assertNoTap(self.run_handler(texts, compact_frame("dont_show_compact")))
+
+    def test_the_compact_ticked_box_after_the_tap_is_left_to_the_confirm(self):
+        self.assertIs(True, self.run_handler(COMPACT, compact_frame("dont_show_compact")))
+        self.assertIs(False, self.run_handler(COMPACT_TICKED, compact_frame("dont_show_compact_ticked")))
+        self.assertIs(False, self.run_handler(COMPACT, compact_frame("dont_show_compact")), "one tap per appearance")
+        self.assertEqual([COMPACT_SPOT], self.task.clicked)
+
     def test_the_battle_prep_box_is_tapped_once(self):
         self.assertIs(True, self.run_handler(PREP, crop("dont_show_prep")))
         self.assertEqual([PREP_SPOT], self.task.clicked)
         self.assertEqual([], self.task.boxes_clicked, "Enter stays with handle_enter")
 
     def test_an_already_ticked_box_is_left_alone(self):
-        for texts, patch in ((PREP_TICKED, crop("dont_show_prep_ticked")), (SKIP_SYNOPSIS, ticked_skip_crop())):
+        for texts, patch in ((PREP_TICKED, crop("dont_show_prep_ticked")), (SKIP_SYNOPSIS, ticked_skip_crop()),
+                             (COMPACT_TICKED, compact_frame("dont_show_compact_ticked"))):
             with self.subTest(dialog=texts[0][0]):
                 self.task = FakeTask()
                 self.assertNoTap(self.run_handler(texts, patch))
@@ -286,17 +355,19 @@ class TestTick(unittest.TestCase):
 
     def test_the_rescue_dialog_gets_no_tap_even_over_a_lit_box(self):
         """Its box sits at the skip box's x; the lit skip box under it stands for a layout that moved it to the same spot."""
-        for name in ("dont_show_skip_synopsis", "dont_show_prep"):
+        for name, patch in (("dont_show_skip_synopsis", crop("dont_show_skip_synopsis")), ("dont_show_prep", crop("dont_show_prep")),
+                            ("dont_show_compact", compact_frame("dont_show_compact"))):
             with self.subTest(crop=name):
                 self.task = FakeTask()
-                self.assertNoTap(self.run_handler(RESCUE, crop(name)))
+                self.assertNoTap(self.run_handler(RESCUE, patch))
                 self.assertIsNone(dialog_ticks.shown_tick(self.task))
 
     def test_a_rescue_marker_on_a_whitelisted_dialog_gets_no_tap(self):
-        for texts, name in ((SKIP_SYNOPSIS, "dont_show_skip_synopsis"), (PREP, "dont_show_prep")):
+        for texts, patch in ((SKIP_SYNOPSIS, crop("dont_show_skip_synopsis")), (PREP, crop("dont_show_prep")),
+                             (COMPACT, compact_frame("dont_show_compact"))):
             with self.subTest(dialog=texts[0][0]):
                 self.task = FakeTask()
-                self.assertNoTap(self.run_handler([*texts, ("Rescue 10 time(s)", 0.85, 0.912)], crop(name)))
+                self.assertNoTap(self.run_handler([*texts, ("Rescue 10 time(s)", 0.85, 0.912)], patch))
 
     def test_a_risky_dialog_gets_no_tap(self):
         """Below the synopsis the skip dialog shows only portraits, so an account marker there is a dialog the guard stops on."""
@@ -305,9 +376,12 @@ class TestTick(unittest.TestCase):
         self.assertNoTap(self.run_handler(texts, crop("dont_show_skip_synopsis")))
 
     def test_the_loot_dialog_gets_no_tap_even_over_a_lit_box(self):
-        """A tick there would hide the lost-loot warning until the next login."""
-        self.assertNoTap(self.run_handler(LOOT, crop("dont_show_skip_synopsis")))
-        self.assertIsNone(dialog_ticks.shown_tick(self.task))
+        """A tick there would hide the lost-loot warning until the next login. Its box sits where the compact dialog draws its own."""
+        for name, patch in (("dont_show_skip_synopsis", crop("dont_show_skip_synopsis")), ("dont_show_compact", compact_frame("dont_show_compact"))):
+            with self.subTest(crop=name):
+                self.task = FakeTask()
+                self.assertNoTap(self.run_handler(LOOT, patch))
+                self.assertIsNone(dialog_ticks.shown_tick(self.task))
 
     def test_the_settings_page_gets_no_tap(self):
         self.assertNoTap(self.run_handler(SETTINGS, crop("dont_show_prep")))
@@ -344,19 +418,47 @@ class TestTick(unittest.TestCase):
                 self.task = FakeTask()
                 self.assertNoTap(self.run_handler(texts, crop(name)))
 
-    def test_only_the_two_boxes_are_ever_tapped(self):
-        """Every screen above, lit box or not, in one long run: the only points pressed are the two boxes."""
-        screens = [(texts, crop(name)) for texts in (SKIP_SYNOPSIS, SKIP_DIALOGUE, PREP, PREP_TICKED, PREP_DIMMED, RESCUE, LOOT, SETTINGS)
-                   for name in ("dont_show_skip_synopsis", "dont_show_skip_dialogue", "dont_show_prep", "dont_show_prep_ticked",
-                                "dont_show_prep_dimmed")]
+    def test_each_part_of_the_compact_whitelist_is_needed(self):
+        title, label = COMPACT[0][0], "Do not show until next login"
+        loot_question = "There is additional loot available. Continue without using Loot Certification Card?"
+        cases = {
+            "title missing": without(COMPACT, title),
+            "title out of place": moved(COMPACT, (title, 0.501, 0.212)),
+            "the large dialog's title": [(("Do you want to skip the current dialogue?" if name == title else name), x, y) for name, x, y in COMPACT],
+            "the Loot dialog's question for a title": [((loot_question if name == title else name), x, y) for name, x, y in COMPACT],
+            "label missing": without(COMPACT, label),
+            "label out of place": moved(COMPACT, (label, 0.520, 0.677)),
+            "Cancel missing": without(COMPACT, "取消"),
+            "Confirm missing": without(COMPACT, "确认"),
+            "buttons out of place": moved(COMPACT, ("取消", 0.348, 0.786), ("确认", 0.667, 0.786)),
+            "Enter for Confirm": [(name, x, y) for name, x, y in COMPACT if name != "确认"] + [("进入", 0.667, 0.631)],
+            "the Battle Prep label": [(("Do not show again today" if name == label else name), x, y) for name, x, y in COMPACT],
+        }
+        for case, texts in cases.items():
+            with self.subTest(case=case):
+                self.task = FakeTask()
+                self.assertNoTap(self.run_handler(texts, compact_frame("dont_show_compact")))
+
+    def test_only_the_three_boxes_are_ever_tapped(self):
+        """Every screen above, lit box or not, in one long run: the only points pressed are the three boxes."""
+        patches = [crop(name) for name in ("dont_show_skip_synopsis", "dont_show_skip_dialogue", "dont_show_prep", "dont_show_prep_ticked",
+                                           "dont_show_prep_dimmed")] + [compact_frame(name) for name in COMPACT_CROPS]
+        screens = [(texts, patch) for texts in (SKIP_SYNOPSIS, SKIP_DIALOGUE, PREP, PREP_TICKED, PREP_DIMMED, RESCUE, LOOT, SETTINGS,
+                                                COMPACT, COMPACT_TICKED, COMPACT_EXCURSION)
+                   for patch in patches]
         for texts, patch in screens * 2:
             self.run_handler(texts, patch)
             self.run_handler([])
-        self.assertTrue(self.task.clicked)
-        self.assertLessEqual(set(self.task.clicked), {SKIP_SPOT, PREP_SPOT})
+        self.assertEqual({SKIP_SPOT, PREP_SPOT, COMPACT_SPOT}, set(self.task.clicked))
         self.assertEqual(self.task.clicked, self.task.moved)
         self.assertEqual([], self.task.boxes_clicked)
-        self.assertEqual({SKIP_SPOT, PREP_SPOT}, {spot for _, spot in dialog_ticks.TICKS})
+        self.assertEqual({SKIP_SPOT, PREP_SPOT, COMPACT_SPOT}, {spot for _, spot in dialog_ticks.TICKS})
+
+    def test_story_and_daily_share_one_compact_dialog(self):
+        """Daily ticks and confirms the same dialog in the park; two copies of it could drift apart."""
+        self.assertIs(spend_guard.COMPACT_SKIP_DIALOG, daily.COMPACT_SKIP_DIALOG)
+        self.assertFalse(hasattr(daily, "PARK_SKIP_DIALOG"))
+        self.assertEqual(COMPACT_SPOT, daily.TARGETS[daily.SKIP_TICK])
 
 
 def stand_in_utils():

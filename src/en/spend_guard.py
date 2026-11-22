@@ -105,6 +105,13 @@ SKIP_DIALOG = Dialog("Story skip dialog", "doyouwanttoskipthecurrent", False, (0
 # Where that dialog retells the scene, three lines at y 0.293-0.371 on every capture, with room for a fourth. The title,
 # label and buttons all sit outside it.
 SYNOPSIS_REGION = (0.009, 0.25, 0.977, 0.42)
+# The smaller skip dialog Story, Excursion and the park's stories draw, without a synopsis: title at (0.501-0.502,
+# 0.412-0.413), label at (0.520, 0.530), buttons at y 0.631, its box at (0.392, 0.532).
+COMPACT_SKIP_DIALOG = Dialog("compact story skip dialog", "doyouwanttoskipthisstory", False, (0.30, 0.37, 0.70, 0.45),
+                             "donotshowuntilnextlogin", (0.40, 0.50, 0.66, 0.56), ("取消", "确认"), (0.25, 0.60, 0.75, 0.66))
+# That dialog's own box, holding its title, key hints, label and buttons. The speaker and the subtitle line stay readable
+# under it, at y 0.753 and 0.835-0.837.
+COMPACT_SKIP_AREA = (0.25, 0.37, 0.75, 0.66)
 
 TAPS_TAG = "no blind tap on a spend screen"
 CONFIRM_TAG = "no Confirm on an account spend"
@@ -309,6 +316,9 @@ def risky_confirm(task):
     # The synopsis retells the scene, so a story in which the group retreats or buys something would stop Story at its skip.
     if shown(task, SKIP_DIALOG):
         boxes = [box for box in boxes if not in_region(box, SYNOPSIS_REGION, task.width, task.height)]
+    # So would a line of dialogue the compact dialog leaves showing under it, so only that dialog's own box is read.
+    if shown(task, COMPACT_SKIP_DIALOG):
+        boxes = [box for box in boxes if in_region(box, COMPACT_SKIP_AREA, task.width, task.height)]
     texts = read_texts(boxes)
     asked = getattr(task, "node_status", None) or {}
     for group in (ACCOUNT, MONEY):
