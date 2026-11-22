@@ -164,6 +164,10 @@ POINTS = {
     daily.MANAGEMENT_TAB: (0.100, 0.270),
     daily.ACHIEVEMENTS_LEAVE: (0.041, 0.046),
     daily.RULES_CANCEL: (0.347, 0.631),
+    daily.PROFIT_CLOSE: (0.500, 0.938),
+    daily.STORY_SKIP: (0.767, 0.053),
+    daily.SKIP_TICK: (0.392, 0.532),
+    daily.SKIP_CONFIRM: (0.667, 0.631),
 }
 # What Daily must never press, by where it sits. Power is the icon's centre in 265 (rows 972-1022 of 1080) and the
 # `End` key label under it in 273. Skip Tutorial is a box over three targets, not a point: `TestTutorial` covers it.
@@ -198,6 +202,9 @@ OWN = (
     daily.handle_daily_items_obtained,
     daily.handle_daily_mail,
     daily.handle_daily_rules_dialog,
+    daily.handle_daily_profit_report,
+    daily.handle_daily_skip_dialog,
+    daily.handle_daily_park_story,
     daily.handle_daily_rank_result,
     daily.handle_daily_rank_screen,
     daily.handle_daily_manage_panel,
@@ -598,19 +605,32 @@ class TestFadedLobby(Daily):
     def test_a_faded_lobby_moments_after_a_lobby_read_gets_the_menu_tap(self):
         run_pass(self.task.show(LOBBY))
         self.tick(19)
-        self.assertTrue(run_pass(self.task.show(FADED)))
+        self.assertTrue(run_pass(self.task.show(FADED, faded_lobby())))
         self.assertPressed(daily.MENU, daily.MENU)
 
-    def test_a_blank_screen_gets_no_tap_without_a_recent_lobby_or_a_pending_step(self):
-        """8: a screen reading nothing could be a loading screen or anything else."""
-        self.assertFalse(daily.handle_daily_faded_lobby(self.task.show(FADED)))
-        run_pass(self.task.show(LOBBY))
-        self.tick(20)
-        self.assertFalse(daily.handle_daily_faded_lobby(self.task.show(FADED)))
-        self.tick(-20)
-        self.finish_chores()
-        self.assertFalse(daily.handle_daily_faded_lobby(self.task.show(FADED)))
-        self.assertPressed(daily.MENU)
+    def test_a_faded_lobby_gets_no_menu_tap_without_a_recent_lobby_or_a_pending_step(self):
+        """Past the Lobby read's time, or with every chore done, the faded Lobby gets the wake tap instead."""
+        for case, wait in (("stale Lobby read", daily.FADED_SECONDS), ("chores done", 1)):
+            with self.subTest(case=case):
+                self.task = Task()
+                run_pass(self.task.show(LOBBY))
+                self.tick(wait)
+                if wait == 1:
+                    self.finish_chores()
+                self.assertTrue(daily.handle_daily_faded_lobby(self.task.show(FADED, faded_lobby())))
+                self.assertPressed(daily.MENU, daily.WAKE)
+
+    def test_a_frame_reading_nothing_moments_after_a_lobby_read_gets_no_tap_unless_it_is_the_faded_lobby(self):
+        """A live run pressed Menu on the Mail popup still loading and inside the park after a build, both read as nothing."""
+        frames = {"black": np.zeros((HEIGHT, WIDTH, 3), dtype=np.uint8), "no capture": None}
+        frames.update({name: placed(name, SCENE_REGION) for name in ("daily_blank_mail", "daily_blank_park", "daily_blank_cutscene")})
+        for name, frame in frames.items():
+            with self.subTest(frame=name):
+                self.task = Task()
+                run_pass(self.task.show(LOBBY))
+                self.tick()
+                self.assertFalse(daily.handle_daily_faded_lobby(self.task.show(FADED, frame)))
+                self.assertPressed(daily.MENU)
 
     def test_a_screen_with_any_confident_text_is_not_a_faded_lobby(self):
         run_pass(self.task.show(LOBBY))
@@ -620,7 +640,7 @@ class TestFadedLobby(Daily):
     def test_the_low_confidence_scrap_ocr_reads_off_the_faded_lobby_still_counts_as_faded(self):
         """264 read `rort` at 0.585 through the app's own OCR settings, whose floor is 0.2."""
         run_pass(self.task.show(LOBBY))
-        self.task.show((("rort", 0.083, 0.531),))
+        self.task.show((("rort", 0.083, 0.531),), faded_lobby())
         self.task.all_texts[0].confidence = 0.585
         self.assertTrue(daily.handle_daily_faded_lobby(self.task))
         self.task.all_texts[0].confidence = 0.69
@@ -823,7 +843,7 @@ class TestStops(Daily):
                 self.assertStopped(f"{target} was pressed {limit} times")
 
     def test_the_limits_are_as_designed(self):
-        special = {daily.CLAIM_ALL: 2, daily.WAKE: 2, daily.RANK_UP: 2, daily.UPGRADE: 200, daily.CLAIM: 30}
+        special = {daily.CLAIM_ALL: 2, daily.WAKE: 2, daily.RANK_UP: 2, daily.UPGRADE: 200, daily.CLAIM: 30, daily.SKIP_TICK: 1}
         self.assertEqual({target: special.get(target, 3) for target in POINTS}, daily.TAP_LIMITS)
         self.assertEqual(set(POINTS), set(daily.TARGETS))
 

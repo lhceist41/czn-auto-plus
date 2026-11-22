@@ -369,6 +369,44 @@ MANAGE_RANK5 = (
     ('34 /36', 0.935, 0.744), ('>>>>>>>>', 0.401, 0.823), ('>>>>>>>>', 0.475, 0.823), ('Happiness', 0.721, 0.811), ('29/36', 0.934, 0.807),
     ('Amusement Park Rank', 0.804, 0.906),
 )
+# A live run's park on the first entry after 7h 40m away, its Profit Report up: Operate does not read under it.
+PROFIT_REPORT = (
+    ('6 The Amusement Park AIlthe Buzz Is About', 0.295, 0.045), ('2.54M', 0.957, 0.045), ('Rules of Gooa', 0.165, 0.132), ('N', 0.211, 0.122),
+    ('Order', 0.190, 0.167), ('0/54', 0.172, 0.204), ('Manage', 0.087, 0.295), ('Profit Report', 0.500, 0.356),
+    ("Here's the profit earned while you were away, Captain!", 0.501, 0.468), ('。offine Time', 0.295, 0.588), ('7h 40m', 0.694, 0.587),
+    ('o Offine Profit', 0.297, 0.651), ('2.54M', 0.698, 0.652), ('点击屏幕关闭窗口', 0.499, 0.938),
+)
+# The same park once the report is closed.
+PROFIT_CLOSED = (
+    ('6', 0.098, 0.046), ('The Amusement Park All the Buzz Is About', 0.317, 0.046), ('2.54M', 0.959, 0.046), ('Rules of Gooal', 0.165, 0.132),
+    ('N', 0.212, 0.122), ('+36', 0.951, 0.100), ('Order', 0.190, 0.168), ('0/54', 0.170, 0.205), ('Manage', 0.087, 0.294),
+    ('Recruit', 0.085, 0.382), ('へ', 0.034, 0.481), ('Operate', 0.088, 0.473), ('★', 0.698, 0.639),
+)
+# The story the Rank 8 Rank Up plays before its result, then its skip dialog unticked and ticked, then the result.
+STORY_RANK8 = (
+    ('R', 0.831, 0.077), ('Ctr', 0.894, 0.079), ('DZ', 0.894, 0.050), ('Q', 0.959, 0.078), ('Cassius', 0.132, 0.753),
+    ('Hohoho, if you were going to do something this fun, you should have called me from the', 0.482, 0.835), ('start.', 0.114, 0.881),
+    ('Space', 0.937, 0.912),
+)
+SKIP_UNTICKED = (
+    ('D | |D> |=', 0.857, 0.050), ('Do you want to skip this story?', 0.502, 0.412), ('Ctrl', 0.393, 0.492),
+    ('Do not show until next login', 0.520, 0.530), ('进入', 0.535, 0.592), ('取消', 0.348, 0.631), ('确认', 0.667, 0.631),
+    ('Cassius', 0.132, 0.753), ('Hohoho, if you were going to do something this fun,you should have called me from the', 0.482, 0.836),
+    ('start.', 0.114, 0.880), ('Space', 0.936, 0.911),
+)
+SKIP_TICKED = (
+    ('DD>=', 0.857, 0.049), ('Do you want to skip this story?', 0.501, 0.412), ('Ctrl', 0.392, 0.492), ('Do not show until next login', 0.520, 0.530),
+    ('ESO', 0.214, 0.593), ('进入', 0.535, 0.593), ('取消', 0.348, 0.631), ('确认', 0.667, 0.631), ('Cassius', 0.132, 0.753),
+    ('Hohoho, if you were going to do something this fun, you should have called me from the', 0.482, 0.836), ('start.', 0.114, 0.880),
+    ('Space', 0.937, 0.911),
+)
+RANK8_RESULT = (
+    ("The SS Nightmare'sMost Popular Spot", 0.304, 0.048), ('837.07K', 0.950, 0.047), ('RAN', 0.162, 0.345), ('RANK 11', 0.935, 0.346),
+    ("The SS Nightmare's Most Popular Spot", 0.500, 0.411), ('大★★★★★★', 0.508, 0.444), ('Rank 8 Achieved', 0.500, 0.520),
+    ('· Max Offline Time +10 min', 0.502, 0.606), ('·Max manager count +1', 0.503, 0.643), ('[Special Guest] unlocked', 0.504, 0.677),
+    ('· [Sereniel], [Cassius], [Maribell] can be assigned as managers', 0.502, 0.714), ('nplete', 0.040, 0.901),
+    ('Achievement Complete', 0.252, 0.901), ('点击屏幕关闭窗口', 0.500, 0.938),
+)
 # 1390, a park story playing, its dialogue bar showing.
 STORY = (
     ('R', 0.831, 0.077), ('Ctrl', 0.894, 0.078), ('Q', 0.959, 0.078), ('★', 0.184, 0.557), ('-', 0.320, 0.557), ('Lucas', 0.121, 0.755),
@@ -398,6 +436,12 @@ def edited(screen, *changes):
 
 
 RANK_UP_CROP = (0.06, 0.025)
+# Where the story's bar and the skip dialog's box were cut from the same captures.
+BAR_CROP = (0.70, 0.0, 1.0, 0.10)
+BOX_CROP = (0.38, 0.51, 0.405, 0.555)
+STORY_BAR = placed("dream_park_story_bar", BAR_CROP)
+BOX_UNTICKED = placed("dream_park_skip_box_unticked", BOX_CROP)
+BOX_TICKED = placed("dream_park_skip_box_ticked", BOX_CROP)
 
 
 def rank_frame(name, centre):
@@ -1061,6 +1105,101 @@ class TestManageAndFacilities(Park):
         self.show(STORY)
         self.assertEqual([], self.task.clicks)
         self.assertStopped("Daily does not know this screen")
+
+
+class TestProfitReport(Park):
+
+    def test_the_report_is_closed_on_its_caption_then_the_park_view_opens_manage(self):
+        self.show(PROFIT_REPORT)
+        self.tick()
+        self.show(PROFIT_CLOSED)
+        self.assertPressed(daily.PROFIT_CLOSE, daily.PARK_MANAGE)
+        self.assertParkNothingForbidden()
+
+    def test_a_report_the_tap_did_not_close_is_tapped_again_once_it_has_had_time(self):
+        for _ in range(daily.NAV_WAIT + 1):
+            self.show(PROFIT_REPORT)
+            self.tick()
+        self.assertPressed(daily.PROFIT_CLOSE, daily.PROFIT_CLOSE)
+
+    def test_the_report_needs_its_title_and_its_caption(self):
+        """Items Obtained and the Rank result draw the same caption at the same place."""
+        self.assertFalse(daily.handle_daily_profit_report(self.task.show(ITEMS)))
+        self.assertFalse(daily.handle_daily_profit_report(self.task.show(RANK8_RESULT)))
+        self.assertFalse(daily.handle_daily_profit_report(self.task.show(edited(PROFIT_REPORT, ('点击屏幕关闭窗口', None)))))
+        self.assertEqual([], self.task.clicks)
+
+
+class TestParkStory(Park):
+    """The Rank 8 Rank Up plays a story before its result: Skip on the bar, the box ticked, then 确认."""
+
+    def rank_up(self):
+        """Press Rank Up on the blue pill, as the story's Rank Up was pressed."""
+        self.show(RANK_READY, LIVE_RANK6)
+        self.tick()
+
+    def test_a_rank_up_story_is_skipped_with_the_box_ticked_and_the_rank_up_counted(self):
+        self.rank_up()
+        self.run_screens([(STORY_RANK8, STORY_BAR), (SKIP_UNTICKED, BOX_UNTICKED), (SKIP_TICKED, BOX_TICKED), RANK8_RESULT])
+        self.assertPressed(daily.RANK_UP, daily.STORY_SKIP, daily.SKIP_TICK, daily.SKIP_CONFIRM, daily.RANK_RESULT_CLOSE)
+        self.assertEqual(1, self.park()["rank_ups"])
+        self.assertNothingForbidden()
+        self.assertEqual(0, self.task.disabled)
+
+    def test_a_box_already_ticked_or_not_read_gets_the_confirm_alone(self):
+        for frame in (BOX_TICKED, None):
+            with self.subTest(frame="ticked" if frame is not None else "no capture"):
+                self.fresh()
+                self.rank_up()
+                self.show(SKIP_TICKED, frame)
+                self.assertPressed(daily.RANK_UP, daily.SKIP_CONFIRM)
+
+    def test_a_tick_that_did_not_take_is_waited_on_then_the_story_skipped_unticked(self):
+        self.rank_up()
+        for _ in range(daily.NAV_WAIT):
+            self.show(SKIP_UNTICKED, BOX_UNTICKED)
+            self.tick()
+        self.assertPressed(daily.RANK_UP, daily.SKIP_TICK)
+        self.show(SKIP_UNTICKED, BOX_UNTICKED)
+        self.assertPressed(daily.RANK_UP, daily.SKIP_TICK, daily.SKIP_CONFIRM)
+        self.assertEqual(0, self.task.disabled)
+
+    def test_the_box_is_tapped_once_a_run(self):
+        self.rank_up()
+        self.run_screens([(SKIP_UNTICKED, BOX_UNTICKED), (SKIP_TICKED, BOX_TICKED), RANK8_RESULT, (STORY_RANK8, STORY_BAR)]
+                         + [(SKIP_UNTICKED, BOX_UNTICKED)])
+        self.assertPressed(daily.RANK_UP, daily.SKIP_TICK, daily.SKIP_CONFIRM, daily.RANK_RESULT_CLOSE, daily.STORY_SKIP, daily.SKIP_CONFIRM)
+
+    def test_a_story_outside_the_park_visit_gets_no_skip(self):
+        """Before the park is entered, on the mail step and once the visit is over, a story is a screen Daily does not know."""
+        cases = {"before the park": lambda: None, "mail step": lambda: self.state()["steps"].update(mail=daily.PENDING),
+                 "visit over": lambda: (self.show(PARK_VIEW), self.tick(), daily.end_park(self.task))}
+        for name, setup in cases.items():
+            with self.subTest(case=name):
+                self.fresh()
+                setup()
+                clicks = list(self.task.clicks)
+                self.assertFalse(daily.handle_daily_park_story(self.task.show(STORY_RANK8, STORY_BAR)))
+                self.assertFalse(daily.handle_daily_skip_dialog(self.task.show(SKIP_UNTICKED, BOX_UNTICKED)))
+                self.assertEqual(clicks, self.task.clicks)
+
+    def test_the_story_bar_needs_its_skip_icon(self):
+        """The dialogue's text alone is no story bar, nor is any park screen's top-right corner."""
+        self.rank_up()
+        self.assertFalse(daily.handle_daily_park_story(self.task.show(STORY_RANK8)))
+        self.assertFalse(daily.handle_daily_park_story(self.task.show(STORY_RANK8, BOX_UNTICKED)))
+        self.assertPressed(daily.RANK_UP)
+
+    def test_the_dialog_needs_its_title_label_and_both_buttons(self):
+        """The paid Rescue dialog and the Rules of Good Order draw 确认 at the same place."""
+        self.rank_up()
+        screens = {"no title": edited(SKIP_UNTICKED, ('Do you want to skip this story?', None)),
+                   "no label": edited(SKIP_UNTICKED, ('Do not show until next login', None)),
+                   "no 取消": edited(SKIP_UNTICKED, ('取消', None)), "rules": RULES}
+        for name, screen in screens.items():
+            with self.subTest(screen=name):
+                self.assertFalse(daily.handle_daily_skip_dialog(self.task.show(screen, BOX_UNTICKED)))
+        self.assertPressed(daily.RANK_UP)
 
 
 class TestAchievements(Park):

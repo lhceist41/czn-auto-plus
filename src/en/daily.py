@@ -23,8 +23,10 @@ from src.en import dream_park
 from src.en.handlers import loaded
 from src.en.runs import stop
 from src.en.screen import centre_of, colour_share, frame_of, in_region, patch_of, text_in_region
-from src.en.spend_guard import ACCOUNT, DELETION, MONEY, PURCHASE, RESCUE_HEADER, RESCUE_PHRASES, cleaned, folded, handle_rescue_screen, marker_in
-from src.en.story import find_icon, grey, tap
+from src.en.dialog_ticks import UNTICKED, box_state
+from src.en.spend_guard import (ACCOUNT, DELETION, MONEY, PURCHASE, RESCUE_HEADER, RESCUE_PHRASES, Dialog, cleaned, folded, handle_rescue_screen,
+                                marker_in, shown)
+from src.en.story import SKIP_IMAGE, SKIP_MATCH, find_icon, grey, tap
 
 logger = Logger.get_logger(__name__)
 
@@ -61,6 +63,10 @@ CLAIM = "an achievement's claim ring"
 MANAGEMENT_TAB = "the Achievements' Management tab"
 ACHIEVEMENTS_LEAVE = "the Achievements' back arrow"
 RULES_CANCEL = "the Rules of Good Order's 取消"
+PROFIT_CLOSE = "the Profit Report's caption"
+STORY_SKIP = "the story bar's Skip"
+SKIP_TICK = "the skip dialog's Do not show box"
+SKIP_CONFIRM = "the skip dialog's 确认"
 # Every Dream Park screen draws its back arrow at the same place, and each press of it takes one screen back.
 BACK = (0.041, 0.046)
 TARGETS = {
@@ -93,18 +99,24 @@ TARGETS = {
     MANAGEMENT_TAB: (0.100, 0.270),
     ACHIEVEMENTS_LEAVE: BACK,
     RULES_CANCEL: None,
+    PROFIT_CLOSE: None,
+    STORY_SKIP: None,
+    SKIP_TICK: (0.392, 0.532),
+    SKIP_CONFIRM: None,
 }
 # How many upgrades one park visit may press, one level each, so the cap only bounds a loop that has gone wrong, and how
 # many achievement claims: the event has 23 achievements.
 UPGRADE_CAP = 200
 CLAIM_CAP = 30
 # How often each target may be pressed in one run. Claim All, the wake tap and Rank Up get one retry for a tap the game
-# ignored; the rest allow two retries for a screen slow to change. A target leading to another screen counts only until
-# that screen shows (`ARRIVALS`), so a later step, or the next round of the park, may press it again.
+# ignored, and the skip dialog's box is tapped once a run; the rest allow two retries for a screen slow to change. A
+# target leading to another screen counts only until that screen shows (`ARRIVALS`), so a later step, or the next round
+# of the park, may press it again.
 TAP_LIMITS = {BANNER_CLOSE: 3, NOTICE_CLOSE: 3, MENU: 3, ENVELOPE: 3, MENU_CLOSE: 3, MAIL_CLOSE: 3, WAKE: 2, CLAIM_ALL: 2, ITEMS_CLOSE: 3,
               EVENT: 3, DREAM_PARK: 3, EVENT_LEAVE: 3, ENTER_PARK: 3, PARK_ACHIEVEMENTS: 3, PAGE_LEAVE: 3, PARK_MANAGE: 3, PARK_OPERATE: 3,
               PANEL_CLOSE: 3, PARK_LEAVE: 3, PARK_RANK: 3, RANK_UP: 2, RANK_CLOSE: 3, RANK_RESULT_CLOSE: 3, UPGRADE: UPGRADE_CAP, BUILD: 3,
-              CLAIM: CLAIM_CAP, MANAGEMENT_TAB: 3, ACHIEVEMENTS_LEAVE: 3, RULES_CANCEL: 3}
+              CLAIM: CLAIM_CAP, MANAGEMENT_TAB: 3, ACHIEVEMENTS_LEAVE: 3, RULES_CANCEL: 3, PROFIT_CLOSE: 3, STORY_SKIP: 3, SKIP_TICK: 1,
+              SKIP_CONFIRM: 3}
 TOWARD_MAIL = (MENU, ENVELOPE)
 
 # What `press` refuses whatever it was asked to press: mail deletion, the Shop, a purchase, Crystals or any account
@@ -183,6 +195,14 @@ ACHIEVEMENTS_TITLE = ("Event Special Rewards", (0.08, 0.0, 0.30, 0.09))
 # and its 取消 at (0.347, 0.631), with 确认 at (0.667, 0.631).
 RULES_LINE = ("This event takes place after reaching the highest Rank", (0.25, 0.38, 0.75, 0.48))
 RULES_BUTTONS = (("取消", (0.28, 0.60, 0.42, 0.66)), ("Cancel", (0.28, 0.60, 0.42, 0.66)))
+# The Profit Report the park opens on after time away, its caption where the Rank result draws its own: title at
+# (0.500-0.501, 0.356) and caption at (0.499-0.500, 0.938). Under it the park's Operate does not read.
+PROFIT_TITLE = ("Profit Report", (0.40, 0.32, 0.60, 0.40))
+PROFIT_CAPTION = ("点击屏幕关闭窗口", (0.40, 0.90, 0.60, 0.97))
+# The skip dialog of a story the park plays, smaller than Story mode's and without its synopsis: title at (0.501-0.502,
+# 0.412), label at (0.520, 0.530), buttons at y 0.631, its box at (0.392, 0.532).
+PARK_SKIP_DIALOG = Dialog("park story skip dialog", "doyouwanttoskipthisstory", False, (0.30, 0.37, 0.70, 0.45),
+                          "donotshowuntilnextlogin", (0.40, 0.50, 0.66, 0.56), ("取消", "确认"), (0.25, 0.60, 0.75, 0.66))
 BANNER_CORNER = (0.90, 0.0, 1.0, 0.12)
 BANNER_MATCH = 0.92
 
@@ -228,13 +248,16 @@ TO_MANAGE, TO_OPERATE, TO_LEAVE = "manage", "operate", "leave"
 ARRIVALS = {
     "event list": (MENU, EVENT),
     "event page": (MENU, EVENT, DREAM_PARK, PARK_LEAVE, ACHIEVEMENTS_LEAVE),
-    "park": (ENTER_PARK, PANEL_CLOSE),
+    "profit report": (ENTER_PARK,),
+    "park": (ENTER_PARK, PANEL_CLOSE, PROFIT_CLOSE, STORY_SKIP, SKIP_CONFIRM),
     "manage": (PARK_MANAGE, RANK_CLOSE),
     "facilities": (PARK_OPERATE,),
     "rank": (PARK_RANK, RANK_RESULT_CLOSE),
-    "rank result": (RANK_UP,),
+    "rank result": (RANK_UP, STORY_SKIP, SKIP_CONFIRM),
     "achievements": (PARK_ACHIEVEMENTS, ITEMS_CLOSE),
 }
+# The screens inside the park, where a Rank Up can start one of the park's stories.
+IN_PARK = ("profit report", "park", "manage", "facilities", "rank", "rank result")
 # A press on a point the OCR read nothing at, shaped as a box for `press`.
 Spot = namedtuple("Spot", "name x y width height")
 
@@ -627,6 +650,53 @@ def handle_daily_rules_dialog(task):
     return press_once(task, RULES_CANCEL, button)
 
 
+def handle_daily_profit_report(task):
+    """Close the Profit Report the park opens on after time away, on its caption."""
+    if showing(task, PROFIT_TITLE) is None:
+        return False
+    caption = showing(task, PROFIT_CAPTION)
+    if caption is None:
+        return False
+    arrive(task, "profit report")
+    return press_once(task, PROFIT_CLOSE, caption)
+
+
+def in_park(task):
+    """Say whether the park visit is under way and has reached a screen inside the park."""
+    return park_active(task) and park_state(task)["screen"] in IN_PARK
+
+
+def handle_daily_skip_dialog(task):
+    """Tick "Do not show until next login" on a park story's skip dialog, once a run, then press its 确认.
+
+    A box that did not take is left unticked and the story skipped all the same.
+    """
+    if not shown(task, PARK_SKIP_DIALOG) or not in_park(task):
+        return False
+    recognised(task)
+    if box_state(frame_of(task), TARGETS[SKIP_TICK]) == UNTICKED:
+        ticked = park_state(task)["pressed"].get(SKIP_TICK)
+        if ticked is None:
+            return press_once(task, SKIP_TICK)
+        if time.monotonic() - ticked < NAV_WAIT:
+            return True
+    confirm = next(box for box in getattr(task, "all_texts", None) or []
+                   if cleaned(box.name) == "确认" and in_region(box, PARK_SKIP_DIALOG.buttons_region, task.width, task.height))
+    return press_once(task, SKIP_CONFIRM, confirm)
+
+
+def handle_daily_park_story(task):
+    """Press Skip on the dialogue bar of a story the park plays, as the Rank 8 Rank Up does before its result."""
+    if not in_park(task):
+        return False
+    point = find_icon(frame_of(task), SKIP_IMAGE, SKIP_MATCH)
+    if point is None:
+        return False
+    recognised(task)
+    x, y = point[0] * task.width, point[1] * task.height
+    return press_once(task, STORY_SKIP, Spot("Skip", x - 1, y - 1, 2, 2))
+
+
 def handle_daily_rank_result(task):
     """Close the Rank result, counting the rank up."""
     if not any(RANK_ACHIEVED.search(box.name) and in_region(box, RANK_ACHIEVED_REGION, task.width, task.height)
@@ -909,11 +979,13 @@ def handle_daily_lobby(task):
 def handle_daily_faded_lobby(task):
     """Bring back the UI of a Lobby that has faded out.
 
-    Moments after a Lobby read, with a chore pending, it gets the Menu tap the Lobby would get, which brings the UI back
-    or opens the menu. Without that read, as at a start on an idle Lobby, it gets the wake tap on open sky, but only on
-    the faded Lobby's own scene: a screen that reads nothing could be anything else.
+    Only on the faded Lobby's own scene, since a screen that reads nothing could be anything else, as a popup still
+    loading. Moments after a Lobby read, with a chore pending, it gets the Menu tap the Lobby would get, which brings the
+    UI back or opens the menu. Without that read, as at a start on an idle Lobby, it gets the wake tap on open sky.
     """
     if not reads_nothing(task):
+        return False
+    if find_icon(frame_of(task), FADED_SCENE_IMAGE, FADED_SCENE_MATCH, FADED_SCENE_REGION, grey) is None:
         return False
     state = run_state(task)
     now = time.monotonic()
@@ -922,8 +994,6 @@ def handle_daily_faded_lobby(task):
     if seen is not None and now - seen < FADED_SECONDS and step is not None:
         recognised(task)
         return press(task, step.lobby_entry)
-    if find_icon(frame_of(task), FADED_SCENE_IMAGE, FADED_SCENE_MATCH, FADED_SCENE_REGION, grey) is None:
-        return False
     recognised(task)
     woken = state["woken"]
     if woken is not None and now - woken < WAKE_WAIT:
@@ -945,10 +1015,10 @@ def handle_daily_unknown_screen(task):
 
 # The run loop takes the first handler returning True. `remote` puts its handler first and `stuck_stop` its stop ahead
 # of the Rescue stop. Overlays come before what they cover, the banner's weak check after every text check, and the Lobby
-# last of the known screens, so a popup is never taken for a clean Lobby. The park's dialogs come before the panels under
-# them, its panels before the park view drawn beside them, and Dream Park's page before the Event list it sits in. None
-# of upstream's generic handlers is here: its Lobby stop would end Daily on its first frame, and its blind taps and
-# centred Confirm press what Daily never reads.
+# last of the known screens, so a popup is never taken for a clean Lobby. The park's dialogs and stories come before the
+# panels under them, its panels before the park view drawn beside them, and Dream Park's page before the Event list it
+# sits in. None of upstream's generic handlers is here: its Lobby stop would end Daily on its first frame, and its blind
+# taps and centred Confirm press what Daily never reads.
 PAGE_HANDLERS = [
     handle_rescue_screen,
     handle_daily_tutorial,
@@ -956,6 +1026,9 @@ PAGE_HANDLERS = [
     handle_daily_items_obtained,
     handle_daily_mail,
     handle_daily_rules_dialog,
+    handle_daily_profit_report,
+    handle_daily_skip_dialog,
+    handle_daily_park_story,
     handle_daily_rank_result,
     handle_daily_rank_screen,
     handle_daily_manage_panel,
