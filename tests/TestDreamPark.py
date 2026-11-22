@@ -19,7 +19,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(REPO_ROOT / "ok_tasks"))
 
-from src.en import daily, dream_park  # noqa: E402
+from src.en import daily, dream_park, remote  # noqa: E402
 from tests.fakes import HEIGHT, WIDTH  # noqa: E402
 from tests.TestDailyMode import EVENT_LIST, EVENT_LIST_WITHOUT_PARK, ITEMS, LOBBY, MENU, NEAR, POINTS, Daily, Task, placed, run_pass  # noqa: E402
 
@@ -448,6 +448,57 @@ def edited(screen, *changes):
         if name is not None:
             out.append((name, x, y))
     return tuple(out)
+
+
+# The same list once those upgrades are spent: Top Spin two levels up, Drop Tower six, so Thrill 65 and Comfort 64 pass
+# the target and only Happiness lags, with no Happiness ride in view. Prices as read before the upgrades.
+FACILITIES_HAPPINESS_LAGS = edited(FACILITIES_STALL, ("61/64", "65/64"), ("52/64", "64/64"), ("Lv.18/50", "Lv.20/50"), ("Thrill +36", "Thrill +40"),
+                                   ("+36/5s", "+40/5s"), ("Lv.1/50", "Lv.7/50"), ("Comfort +2", "Comfort +14"), ("+2/4s", "+14/4s"))
+
+
+def shifted(screen, dy, *added):
+    """Give a Facilities screen with its list moved up by `dy`, as a short drag moves it, and boxes newly in view added.
+
+    Boxes on the list's side move; one moved above the list's top is hidden under the header and dropped. The title,
+    the hint, the header and the left column stay where they are.
+    """
+    out = []
+    for name, x, y in screen:
+        if x >= dream_park.LIST_SIDE_X and dream_park.LIST_TOP <= y <= dream_park.LIST_BOTTOM:
+            y = round(y - dy, 3)
+            if y < dream_park.LIST_TOP:
+                continue
+        out.append((name, x, y))
+    return tuple(out) + added
+
+
+def special_guest(price):
+    """Give the list one short drag on, 0.135 up as 1443 to 1444 moved it, with Special Guest's Build at a price.
+
+    Roller Coaster's name leaves at the top and its button stays, and Special Guest's row shows whole, its lines placed as
+    Drop Tower's sat under its name on 1444.
+    """
+    return shifted(FACILITIES_HAPPINESS_LAGS, 0.135, ("Happiness +0", 0.791, 0.799), ("+0/7s", 0.879, 0.800), ("Build", 0.761, 0.854),
+                   (price, 0.924, 0.853))
+
+
+SPECIAL_GUEST_BUILD = (0.761, 0.854)
+# The same list with every row's box gone, the cut off name, the header and the left column left.
+NO_ROWS = tuple(box for box in FACILITIES_HAPPINESS_LAGS if box[1] < 0.70 or box[2] < 0.30
+                or box[0] in ("Facilities", "o Special Guest", "Press and hold the button to upgrade quickly."))
+# The Rank 8 header with only Happiness below its target.
+HAPPINESS_HEADER = (('65/64', 0.706, 0.106), ('64/64', 0.802, 0.105), ('50 /64', 0.929, 0.106))
+# 1360, the list scrolled to Special Guest while still locked: lock lines between the rides and Observatory cut off at the
+# bottom. Its header did not read.
+FACILITIES_LOCKED_LOW = (
+    ('One Step at a Time', 0.209, 0.047), ('3.54K', 0.960, 0.046), ('Rules of Gooal', 0.165, 0.132), ('N', 0.212, 0.122),
+    ('017 117', 0.773, 0.106), ('017', 0.923, 0.106), ('0/54', 0.171, 0.204), ('Order', 0.189, 0.167), ('i', 0.033, 0.295),
+    ('Manage', 0.087, 0.294), ('Facilities', 0.803, 0.274), ('Recruit', 0.084, 0.382), ('o Special Guest', 0.772, 0.356),
+    ('Happiness +0', 0.792, 0.407), ('+0/7s', 0.879, 0.406), ('Operate', 0.087, 0.473), ('Reach Amusement Park Rank 8', 0.848, 0.460),
+    ('o Photo Booth', 0.766, 0.532), ('Comfort +0', 0.783, 0.584), ('+0/6s', 0.891, 0.585), ('Reach Amusement Park Rank 10', 0.852, 0.638),
+    ('o Haunted House', 0.777, 0.710), ('🌟', 0.298, 0.745), ('Thrill +0', 0.767, 0.763), ('+0/5s', 0.891, 0.764),
+    ('Reach Amusement Park Rank 12', 0.852, 0.816), ('o Observatory', 0.767, 0.890), ('Press and hold the button to upgrade quickly.', 0.802, 0.930),
+)
 
 
 RANK_UP_CROP = (0.06, 0.025)
@@ -1359,3 +1410,183 @@ class TestWholeVisit(Park):
         self.assertEqual(1, self.park()["rank_ups"])
         self.assertEqual([5, 6], self.park()["ranks"])
         self.assertParkNothingForbidden()
+
+
+class TestScroll(Park):
+    """The short drag down the Facilities list that reaches a ride below the rows in view."""
+
+    def setUp(self):
+        super().setUp()
+        self.park()["phase"] = daily.TO_OPERATE
+
+    def assertDragged(self, times):
+        drag = (*dream_park.SCROLL_FROM, *dream_park.SCROLL_TO, daily.DRAG_DURATION)
+        self.assertEqual([drag] * times, self.task.swipes)
+
+    def assertLeft(self, note_part):
+        self.assertPressed(daily.PANEL_CLOSE)
+        self.assertEqual(daily.TO_LEAVE, self.park()["phase"])
+        self.assertIn(note_part, self.park()["note"])
+
+    def locked(self):
+        return edited(FACILITIES_LOCKED_LOW, ('017 117', None), ('017', None)) + HAPPINESS_HEADER
+
+    def test_the_drag_starts_and_ends_inside_the_list_and_moves_it_up_a_short_way(self):
+        for x, y in (dream_park.SCROLL_FROM, dream_park.SCROLL_TO):
+            self.assertTrue(dream_park.LIST_SIDE_X <= x <= 0.90 and dream_park.LIST_TOP <= y <= dream_park.LIST_BOTTOM, (x, y))
+        self.assertEqual(dream_park.SCROLL_FROM[0], dream_park.SCROLL_TO[0])
+        self.assertAlmostEqual(0.15, dream_park.SCROLL_FROM[1] - dream_park.SCROLL_TO[1])
+
+    def test_the_lowest_name_counts_as_cut_off_only_low_in_the_list_and_without_its_button(self):
+        self.assertTrue(dream_park.cut_off_below(Task().show(FACILITIES_STALL)))
+        self.assertFalse(dream_park.cut_off_below(Task().show(edited(FACILITIES_STALL, ("o Special Guest", None)))))
+        self.assertFalse(dream_park.cut_off_below(Task().show(special_guest("800.00K"))))
+        self.assertFalse(dream_park.cut_off_below(Task().show(shifted(FACILITIES_STALL, 0.135))))
+        low = shifted(FACILITIES_STALL, 0.06)
+        self.assertTrue(dream_park.cut_off_below(Task().show(low)))
+        self.assertFalse(dream_park.cut_off_below(Task().show(low + (("Build", 0.761, 0.926),))))
+
+    def test_the_real_stall_upgrades_drop_tower_and_never_drags(self):
+        """021 as read: Comfort lags too and Drop Tower is in view, so the upgrade goes there first."""
+        self.settled(FACILITIES_STALL)
+        self.assertTrue(self.pressed_at(DROP_TOWER_UPGRADE))
+        self.assertDragged(0)
+
+    def test_with_only_happiness_lagging_the_stall_drags_the_list_once_at_the_named_points(self):
+        self.show(FACILITIES_HAPPINESS_LAGS)
+        self.assertDragged(0)
+        self.tick(daily.SETTLE)
+        self.show(FACILITIES_HAPPINESS_LAGS)
+        self.assertDragged(1)
+        self.assertEqual([(0.80, 0.70, 0.80, 0.55, 2)], self.task.swipes)
+        self.assertEqual([], self.task.clicks)
+        self.assertEqual(1, self.park()["scrolls"])
+        self.tick()
+        self.show(FACILITIES_HAPPINESS_LAGS)
+        self.assertDragged(1)
+        self.assertEqual([], self.task.clicks)
+
+    def test_after_the_drag_special_guest_is_built_once_the_list_has_settled(self):
+        self.settled(FACILITIES_HAPPINESS_LAGS)
+        self.assertDragged(1)
+        self.tick()
+        self.show(special_guest("800.00K"))
+        self.assertEqual([], self.task.clicks)
+        self.tick(daily.SETTLE)
+        self.show(special_guest("800.00K"))
+        self.assertEqual(1, len(self.task.clicks), self.task.clicks)
+        self.assertTrue(self.pressed_at(SPECIAL_GUEST_BUILD))
+        self.assertEqual(1, self.state()["taps"][daily.BUILD])
+        pending = self.park()["pending"]
+        self.assertEqual(("Special Guest", 0, dream_park.BUILD), (pending[0], pending[1], pending[3]))
+        self.assertDragged(1)
+        self.assertParkNothingForbidden()
+
+    def test_a_build_above_the_profit_within_one_stretch_is_saved_for_and_the_visit_leaves(self):
+        self.park()["stretch"] = 2_500_000
+        self.settled(FACILITIES_HAPPINESS_LAGS)
+        self.tick(daily.SETTLE)
+        self.show(special_guest("2.00M"))
+        self.assertLeft("saving for Special Guest (2,000,000) (the list dragged 1 time)")
+        self.assertDragged(1)
+
+    def test_a_list_whose_lowest_row_is_not_cut_off_never_drags(self):
+        self.settled(edited(FACILITIES_HAPPINESS_LAGS, ("o Special Guest", None)))
+        self.assertLeft("no Happiness ride with a readable price in view")
+        self.assertDragged(0)
+
+    def test_a_locked_ride_in_view_never_drags(self):
+        self.assertTrue(dream_park.cut_off_below(Task().show(self.locked())))
+        self.settled(self.locked())
+        self.assertLeft("no Happiness ride with a readable price in view")
+        self.assertDragged(0)
+
+    def test_negative_control_without_the_lock_check_a_locked_list_is_dragged(self):
+        with mock.patch.object(dream_park, "locked_in_view", return_value=False):
+            self.settled(self.locked())
+        self.assertDragged(1)
+
+    def test_rows_that_did_not_move_stop_the_drags(self):
+        self.settled(FACILITIES_HAPPINESS_LAGS)
+        self.tick(daily.SETTLE)
+        self.show(FACILITIES_HAPPINESS_LAGS)
+        self.assertLeft("(the list dragged 1 time)")
+        self.assertDragged(1)
+
+    def test_negative_control_without_the_movement_check_unmoved_rows_are_dragged_again(self):
+        with mock.patch.object(daily, "unmoved", return_value=False):
+            self.settled(FACILITIES_HAPPINESS_LAGS)
+            self.tick(daily.SETTLE)
+            self.show(FACILITIES_HAPPINESS_LAGS)
+        self.assertDragged(2)
+
+    def test_the_drag_takes_as_long_as_the_debug_ports_drag(self):
+        """2 s makes 20 steps, which moved the list without a fling; a faster drag flings it."""
+        self.assertEqual(2, daily.DRAG_DURATION)
+        self.assertEqual(remote.DRAG_DURATION, daily.DRAG_DURATION)
+
+    def test_a_return_to_the_list_forgets_the_names_read_before_the_drag(self):
+        """The list reopens at its top after a Manage trip, so a second stall drags again, the count going on."""
+        self.settled(FACILITIES_HAPPINESS_LAGS)
+        self.assertDragged(1)
+        self.tick(daily.SETTLE)
+        self.show(MANAGE_RANK6)
+        self.assertPressed(daily.PARK_OPERATE)
+        self.tick(daily.NAV_WAIT)
+        self.settled(FACILITIES_HAPPINESS_LAGS)
+        self.assertDragged(2)
+        self.assertEqual(2, self.park()["scrolls"])
+        self.assertPressed(daily.PARK_OPERATE)
+
+    def test_the_cap_holds_across_a_return_to_the_list(self):
+        for step in range(daily.SCROLL_CAP + 1):
+            self.show(shifted(FACILITIES_HAPPINESS_LAGS, 0.02 * step))
+            self.tick(daily.SETTLE)
+        self.assertDragged(daily.SCROLL_CAP)
+        self.show(MANAGE_RANK6)
+        self.tick(daily.NAV_WAIT)
+        self.settled(FACILITIES_HAPPINESS_LAGS)
+        self.assertDragged(daily.SCROLL_CAP)
+        self.assertPressed(daily.PARK_OPERATE, daily.PANEL_CLOSE)
+        self.assertIn("(the list dragged 3 times)", self.park()["note"])
+
+    def test_the_drags_stop_at_their_cap(self):
+        """Every read moved a little and left the last row cut off: three drags, then the visit leaves."""
+        for step in range(daily.SCROLL_CAP + 2):
+            self.show(shifted(FACILITIES_HAPPINESS_LAGS, 0.02 * step))
+            self.tick(daily.SETTLE)
+        self.assertDragged(daily.SCROLL_CAP)
+        self.assertLeft("(the list dragged 3 times)")
+
+    def test_a_read_after_a_drag_with_no_rows_leaves(self):
+        self.assertTrue(dream_park.cut_off_below(Task().show(NO_ROWS)))
+        self.settled(FACILITIES_HAPPINESS_LAGS)
+        self.tick(daily.SETTLE)
+        self.show(NO_ROWS)
+        self.assertLeft("(the list dragged 1 time)")
+        self.assertDragged(1)
+
+    def test_a_row_whose_price_did_not_read_never_drags(self):
+        """Roller Coaster's price unread: Thrill is at its target, so `choose` still says no Happiness ride is in view."""
+        self.settled(edited(FACILITIES_HAPPINESS_LAGS, ("3.07K", "3.0?K")))
+        self.assertLeft("no Happiness ride with a readable price in view")
+        self.assertDragged(0)
+
+    def test_a_reason_other_than_a_ride_out_of_view_never_drags(self):
+        self.settled(edited(FACILITIES_HAPPINESS_LAGS, ("1.13M", "1.1?M")))
+        self.assertLeft("the profit did not read")
+        self.assertDragged(0)
+
+    def test_input_that_does_not_let_go_where_the_drag_ends_never_drags(self):
+        self.task.executor.interaction = object()
+        self.settled(FACILITIES_HAPPINESS_LAGS)
+        self.assertLeft("no Happiness ride with a readable price in view")
+        self.assertDragged(0)
+
+    def test_a_crystal_read_on_the_list_after_a_drag_stops_daily_with_nothing_pressed(self):
+        self.settled(FACILITIES_HAPPINESS_LAGS)
+        self.tick(daily.SETTLE)
+        self.show(edited(special_guest("800.00K"), ("800.00K", "800 Crystals")))
+        self.assertEqual([], self.task.clicks)
+        self.assertStopped("a Dream Park price reads")
+        self.assertDragged(1)

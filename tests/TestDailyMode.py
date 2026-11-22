@@ -29,6 +29,7 @@ import utils_chaos  # noqa: E402,F401
 import utils_sortie  # noqa: E402,F401
 import utils_story  # noqa: E402,F401
 from ok import TriggerTask  # noqa: E402
+from ok.device.interaction_methods.post_message import PostMessageInteraction  # noqa: E402
 
 from src.en import daily, handlers, skip_tutorial, spend_guard, stuck_stop  # noqa: E402
 from tests.fakes import HEIGHT, WIDTH, FakeBox  # noqa: E402
@@ -297,17 +298,18 @@ class Clock:
 
 
 class Executor:
-    """Finds the app's modes by class name, as ok-script's executor does."""
+    """Finds the app's modes by class name, as ok-script's executor does, and carries its PostMessage input."""
 
     def __init__(self, *tasks):
         self.tasks = list(tasks)
+        self.interaction = mock.Mock(spec=PostMessageInteraction)
 
     def get_task_by_class_name(self, name):
         return next((task for task in self.tasks if type(task).__name__ == name), None)
 
 
 class Task:
-    """Daily looking at one screen, recording every tap, announcement and stop."""
+    """Daily looking at one screen, recording every tap, drag, announcement and stop."""
 
     width, height = WIDTH, HEIGHT
 
@@ -317,6 +319,7 @@ class Task:
         self.frame = None
         self.enabled = True
         self.clicks = []
+        self.swipes = []
         self.logged = []
         self.notifications = []
         self.disabled = 0
@@ -344,6 +347,9 @@ class Task:
 
     def click(self, x, y, after_sleep=0):
         self.clicks.append((x, y))
+
+    def swipe_relative(self, from_x, from_y, to_x, to_y, duration=0.5, settle_time=0):
+        self.swipes.append((from_x, from_y, to_x, to_y, duration))
 
     def log_info(self, message, notify=False):
         self.logged.append(message)

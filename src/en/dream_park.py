@@ -58,6 +58,15 @@ PRICE_X = 0.88
 # Where the list's side of the screen starts, a little left of every name and button caption.
 LIST_SIDE_X = 0.70
 MAX_LEVEL = 50
+# A short drag down the list, x 0.80 from y 0.70 to 0.55: it moved the list 0.135, under a row, with no fling, where a
+# 0.30 drag flung it more than five rows on.
+SCROLL_FROM, SCROLL_TO = (0.80, 0.70), (0.80, 0.55)
+# A name this far down whose button did not read is a row cut off at the bottom of the list.
+CUT_OFF_Y = 0.80
+# A locked ride's line. Rides unlock in list order, so every row below one is locked too.
+LOCKED = re.compile(r"reach\s*amusement\s*park\s*rank", re.I)
+# The reasons `choose` gives when the ride it wants may be further down the list.
+NOT_IN_VIEW = re.compile(r"no .*ride with a readable price in view")
 
 UPGRADE, BUILD = "upgrade", "build"
 # `price_column` holds every box right of `PRICE_X` from the name line to the button line, each checked before a press.
@@ -286,6 +295,31 @@ def facility_rows(task):
 def list_side(task):
     """Give every box on the Facilities list's side of the screen, in rows or between them, from its top to its bottom."""
     return [box for box, x, y in boxes_of(task) if x >= LIST_SIDE_X and LIST_TOP <= y <= LIST_BOTTOM]
+
+
+def row_names(task):
+    """Give every ride name in the Facilities list as `(name, y)`, top to bottom, locked rides and cut off rows included."""
+    names = []
+    for box, x, y in sorted(boxes_of(task), key=lambda item: item[2]):
+        name = NAME.fullmatch(box.name.strip())
+        if name is not None and NAME_X[0] <= x <= NAME_X[1] and LIST_TOP <= y <= LIST_BOTTOM:
+            names.append((name.group(1).strip(), y))
+    return names
+
+
+def cut_off_below(task):
+    """Say whether the lowest ride name in the list sits at its bottom with no button read under it."""
+    names = row_names(task)
+    if not names or names[-1][1] <= CUT_OFF_Y:
+        return False
+    low = names[-1][1]
+    return not any(box.name.strip().casefold() in UPGRADE_CAPTIONS + BUILD_CAPTIONS and BUTTON_X[0] <= x <= BUTTON_X[1]
+                   and BUTTON_BELOW[0] <= y - low <= BUTTON_BELOW[1] for box, x, y in boxes_of(task))
+
+
+def locked_in_view(task):
+    """Say whether a locked ride's `Reach Amusement Park Rank N` line shows in the list."""
+    return any(LOCKED.search(box.name) for box in list_side(task))
 
 
 def emotion_of(text):

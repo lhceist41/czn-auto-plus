@@ -6,7 +6,8 @@ every press goes through `press`, which refuses a box that reads as any of those
 A screen Daily does not know for 30 seconds, and the tutorial, stop it with nothing pressed.
 
 The park spends only its own profit, a free counter that refills while the player is away. Its rows are read by
-`dream_park`, and one is pressed only when its price reads as a plain park number.
+`dream_park`, and one is pressed only when its price reads as a plain park number. When the ride it wants is further
+down, the list is dragged a short way, a few times a visit at most.
 
 Imported by ok-script before `ok_tasks/` is on `sys.path`, so upstream is reached only through `handlers.loaded`.
 """
@@ -18,6 +19,7 @@ from pathlib import Path
 
 import numpy as np
 from ok import Logger, TriggerTask
+from ok.device.interaction_methods.post_message import PostMessageInteraction
 
 from src.en import dream_park
 from src.en.handlers import loaded
@@ -112,6 +114,11 @@ TARGETS = {
 # many achievement claims: the event has 23 achievements.
 UPGRADE_CAP = 200
 CLAIM_CAP = 30
+# How many short drags down the Facilities list one visit may make, how far a ride name must move for a drag to count as
+# having moved the list, and the seconds handed to ok-script's swipe, as the debug port hands them: 20 steps 10 ms apart.
+SCROLL_CAP = 3
+SCROLL_MOVED = 0.01
+DRAG_DURATION = 2
 # How often each target may be pressed in one run. Claim All, the wake tap, Rank Up and Claim Reward get one retry for a
 # tap the game ignored, and the skip dialog's box is tapped once a run; the rest allow two retries for a screen slow to
 # change. A target leading to another screen counts only until that screen shows (`ARRIVALS`), so a later step, or the
@@ -299,12 +306,14 @@ def new_park():
         pressed, the last emotions read off the Manage panel and how many upgrades had been pressed then, what one
         offline stretch earns, the Rank target whose Rank Up was found grey or could not be checked, the target the
         Operate header sent the visit to the Manage panel for and every one it has sent it there for, when Rank Up was
-        pressed, the press whose level rise is awaited and what it was, presses without a rise per ride, whether the
+        pressed, the press whose level rise is awaited and what it was, presses without a rise per ride, how many times
+        the Facilities list was dragged, when last and the ride names it showed before that drag, whether the
         achievements were visited, when a claim ring was pressed and how many claims in a row opened nothing, the
         counts for the finish line and why the upgrades ended.
     """
     return {"started": None, "phase": TO_MANAGE, "screen": None, "screen_since": None, "pressed": {}, "emotions": None, "emotions_at": 0,
             "stretch": None, "rank_checked": None, "rank_wanted": None, "rank_sent": set(), "rank_pressed": None, "pending": None, "no_rise": Counter(),
+            "scrolls": 0, "scrolled": None, "scroll_names": None,
             "claims_done": False, "claim_pressed": None, "claim_misses": 0, "ranks": [], "rank_ups": 0,
             "upgrades": 0, "builds": [], "claims": 0, "note": None, "result": None}
 
@@ -838,8 +847,54 @@ def ride_risen(task, rows):
 def leave_facilities(task, note):
     """Stop upgrading for this visit and close the Facilities list."""
     park = park_state(task)
+    if park["scrolls"]:
+        note += f" (the list dragged {park['scrolls']} time{'s' if park['scrolls'] != 1 else ''})"
     park["phase"], park["note"] = TO_LEAVE, note
     return press_once(task, PANEL_CLOSE)
+
+
+def may_scroll(task, rows, reason):
+    """Say whether a short drag down the Facilities list may bring the ride `choose` wants into view.
+
+    Only when the ride it wants is not in view, no row in view waits on its price, the lowest row is cut off at the
+    bottom, no locked ride shows, the last drag moved the list and left rows to read, the visit has drags left, and the
+    drag lets go where it ends, which ok-script's PostMessage input does.
+
+    Args:
+        task: The Daily task.
+        rows: The Facilities rows now in view.
+        reason: Why `choose` pressed nothing.
+
+    Returns:
+        True when the list may be dragged.
+    """
+    park = park_state(task)
+    if not dream_park.NOT_IN_VIEW.fullmatch(reason) or park["scrolls"] >= SCROLL_CAP:
+        return False
+    if any(ride.price is None and ride.level < dream_park.MAX_LEVEL for ride in rows):
+        return False
+    if not dream_park.cut_off_below(task) or dream_park.locked_in_view(task):
+        return False
+    if park["scrolls"] and (not rows or unmoved(park["scroll_names"], dream_park.row_names(task))):
+        return False
+    return isinstance(getattr(task.executor, "interaction", None), PostMessageInteraction)
+
+
+def unmoved(before, after):
+    """Say whether two reads of the list show the same ride names at the same places."""
+    return (before is not None and len(before) == len(after)
+            and all(a[0] == b[0] and abs(a[1] - b[1]) < SCROLL_MOVED for a, b in zip(before, after)))
+
+
+def scroll_facilities(task):
+    """Drag the Facilities list a short way down, through ok-script's own swipe, so the rows below it come into view."""
+    park = park_state(task)
+    park["scrolls"] += 1
+    park["scroll_names"] = dream_park.row_names(task)
+    task.log_info(f"dragging the Facilities list from {dream_park.SCROLL_FROM} to {dream_park.SCROLL_TO} ({park['scrolls']} of {SCROLL_CAP})")
+    task.swipe_relative(*dream_park.SCROLL_FROM, *dream_park.SCROLL_TO, duration=DRAG_DURATION)
+    park["scrolled"] = time.monotonic()
+    return True
 
 
 def handle_daily_facilities(task):
@@ -848,12 +903,17 @@ def handle_daily_facilities(task):
     Any box reading as Crystals, a currency or a purchase in a row's price column, or anywhere on the list's right side,
     stops Daily, and a row whose price does not read is never pressed. When every emotion has reached its target and its
     Rank Up has not been tried at that target, the visit goes to the Manage panel first, at most once for each target in
-    a visit, however the targets the header reads come and go.
+    a visit, however the targets the header reads come and go. When the ride `choose` wants may be further down, the
+    list is dragged a short way and given time to come to rest before its rows count.
     """
     if showing(task, FACILITIES_TITLE) is None or showing(task, FACILITIES_HINT) is None:
         return False
+    reopened = park_state(task)["screen"] != "facilities"
     shown_for = arrive(task, "facilities")
     park = park_state(task)
+    if reopened:
+        # The list opens at its top each time, so names read before an earlier drag say nothing of this opening.
+        park["scroll_names"], park["scrolled"] = None, None
     if not park_active(task) or park["phase"] == TO_LEAVE:
         return press_once(task, PANEL_CLOSE)
     if park["phase"] == TO_MANAGE:
@@ -866,6 +926,8 @@ def handle_daily_facilities(task):
     hit = next((box for box in dream_park.list_side(task) if refused(box.name)), None)
     if hit is not None:
         return stop(task, f"Stopped: the Dream Park list reads {hit.name!r}, and Daily spends only the park's profit. Check the game, then press Start again.")
+    if park["scrolled"] is not None and time.monotonic() - park["scrolled"] < SETTLE:
+        return True
     waiting = ride_risen(task, rows)
     if waiting is not None:
         return waiting
@@ -886,6 +948,8 @@ def handle_daily_facilities(task):
     if ride is None:
         if shown_for < SETTLE:
             return True
+        if may_scroll(task, rows, reason):
+            return scroll_facilities(task)
         return leave_facilities(task, reason)
     park["pending"] = (ride.name, ride.level, time.monotonic(), ride.action)
     if ride.action == dream_park.BUILD:
