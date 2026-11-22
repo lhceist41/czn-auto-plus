@@ -1040,6 +1040,17 @@ class TestCallingBackTheTurn(unittest.TestCase):
                 handlers_of(utils_sortie)["handle_battle_page"](task)
                 self.assertEqual(len(utils_sortie.asked), 0 if ended in (None, True) else 1)
 
+    def test_an_empty_counter_that_outlasts_the_deal_ends_the_turn(self):
+        # Live, a turn played its last card with 3 AP left, was taken as ended, and then waited on 00/10 for a deal that never came.
+        for case, button, asked in (("player's turn", [True], 1), ("enemy's turn", [], 0)):
+            with self.subTest(case), upstream([]) as (utils_sortie, task):
+                task.find_feature = lambda **kwargs: button
+                battle.install()
+                battle.turn_of(task, 3).ended = True
+                for _ in range(battle.DEAL_WAIT + 1):
+                    handlers_of(utils_sortie)["handle_battle_page"](task)
+                self.assertEqual(len(utils_sortie.asked), asked)
+
     def test_a_card_passed_over_for_cost_is_tried_once_the_game_says_it_plays(self):
         # Live, Rossweisse's Sword Resonance showed 0 AP against the data's 1, and was held at 0 AP for good.
         with upstream(hand("Sword Resonance"), action_points=False) as (utils_sortie, task):

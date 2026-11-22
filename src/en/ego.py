@@ -371,6 +371,18 @@ def payable(task, frame, tinted, banked):
     return keys
 
 
+def finish_turn_up(task):
+    """Say whether the end-turn button is showing, which means the turn is the player's to act in.
+
+    Args:
+        task: The running task, on a battle screen.
+
+    Returns:
+        True when upstream's end-turn template matches in its corner.
+    """
+    return bool(task.find_feature(feature_name=FINISH_TURN, box=task.box_of_screen(*FINISH_TURN_REGION)))
+
+
 def take_turn(task, utils, turn):
     """Fire an Ego when one helps right now, reading any Ego not yet seen first.
 
@@ -382,7 +394,7 @@ def take_turn(task, utils, turn):
     Returns:
         True when this frame was spent previewing or firing an Ego.
     """
-    if turn.ego_fires >= FIRES_PER_TURN or not task.find_feature(feature_name=FINISH_TURN, box=task.box_of_screen(*FINISH_TURN_REGION)):
+    if turn.ego_fires >= FIRES_PER_TURN or not finish_turn_up(task):
         return False
     hand = utils._hand_cards(task) or []
     if any(cards.canonical(card["name"]) == ESCAPE_CARD for card in hand):

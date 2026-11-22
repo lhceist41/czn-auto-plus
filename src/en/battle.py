@@ -138,6 +138,10 @@ KIT_PAUSE = 0.5
 # Frames a read that lost cards the last one held is waited on, a hand size at a time. Live, a Rhythm's hit still played over the hand
 # 2s after its key, and the read caught 1 of 6 cards.
 SETTLE_WAIT = 2
+# Frames in a row the counter may read 00/10 with the end-turn button up before the turn is taken as still open. The deal lands 1-2
+# frames after the Start Turn banner shows 00/10. The enemy's turn hides the button, so a long one does not count towards it.
+DEAL_WAIT = 4
+DEAL_WAITS = "_en_deal_waits"
 # The shortest reading taken for a card the turn last read whole, give or take one letter. Live, a crowded hand read Void Fragment as
 # "Void" and "foid", too short for the roster's `cards.MIN_STUB`, and the free card was never played.
 REMEMBERED_STUB = 4
@@ -1457,10 +1461,17 @@ def install():
         elif count == 0 and turn is not None and turn.ended:
             # The hand is discarded at end turn, so the next deal is a new turn even when it is no bigger than what was left.
             turn.hand_count = 0
-        if count == 0 and (turn is None or turn.ended):
+        waiting = count == 0 and (turn is None or turn.ended)
+        waits = getattr(task, DEAL_WAITS, 0) + 1 if waiting and ego.finish_turn_up(task) else 0
+        setattr(task, DEAL_WAITS, waits)
+        if waiting:
             # The counter reads 00/10 under the Start Turn banner, before the deal. Live, upstream ended a Story fight's first turn on it.
-            task.log_info("the hand counter reads 0 before the deal, so it gets a frame to settle")
-            return True
+            if waits <= DEAL_WAIT:
+                task.log_info("the hand counter reads 0 before the deal, so it gets a frame to settle")
+                return True
+            # Live, a turn that played out its hand was taken as ended and then waited on 00/10 for good, so upstream ends it.
+            task.log_info(f"the hand counter has read 0 for {DEAL_WAIT} frames with the turn still open, so it is ended")
+            setattr(task, DEAL_WAITS, 0)
         if count:
             turn = turn_of(task, count)
             if getattr(task, TEAM_WANTED, False) and not (turn.played or turn.attempted):
