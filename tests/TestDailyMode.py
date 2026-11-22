@@ -508,7 +508,6 @@ class TestMail(Daily):
 class TestLobbyAndMenu(Daily):
 
     def test_the_lobby_opens_the_menu_while_mail_is_pending_and_finishes_with_no_tap_once_done(self):
-        """4"""
         self.assertTrue(run_pass(self.task.show(LOBBY)))
         self.assertPressed(daily.MENU)
         self.task.clicks.clear()
@@ -553,7 +552,6 @@ class TestLobbyAndMenu(Daily):
         self.assertEqual([], self.task.clicks)
 
     def test_the_notice_board_is_closed_on_its_x_and_go_now_is_never_pressed(self):
-        """6"""
         self.assertTrue(run_pass(self.task.show(NOTICE)))
         self.assertPressed(daily.NOTICE_CLOSE)
         self.assertNothingForbidden()
@@ -562,7 +560,6 @@ class TestLobbyAndMenu(Daily):
 class TestBanner(Daily):
 
     def test_the_banner_x_is_found_on_the_banner_and_pressed(self):
-        """7"""
         self.assertTrue(run_pass(self.task.show(BANNER, corner("daily_corner_banner"))))
         self.assertPressed(daily.BANNER_CLOSE)
         self.assertNothingForbidden()
@@ -599,7 +596,6 @@ class TestBanner(Daily):
 class TestFadedLobby(Daily):
 
     def test_a_faded_lobby_moments_after_a_lobby_read_gets_the_menu_tap(self):
-        """8"""
         run_pass(self.task.show(LOBBY))
         self.tick(19)
         self.assertTrue(run_pass(self.task.show(FADED)))
@@ -785,7 +781,6 @@ class TestTutorial(Daily):
 class TestStops(Daily):
 
     def test_an_unknown_screen_gets_no_press_and_stops_after_thirty_seconds(self):
-        """9"""
         for elapsed in range(30):
             self.assertTrue(run_pass(self.task.show(SETTINGS)), elapsed)
             self.assertEqual(0, self.task.disabled, elapsed)
@@ -803,7 +798,6 @@ class TestStops(Daily):
         self.assertEqual(0, self.task.disabled)
 
     def test_a_rescue_screen_or_dialog_stops_at_once_with_nothing_pressed(self):
-        """9"""
         for screen in (RESCUE, PAID_RESCUE):
             with self.subTest(screen=screen[0][0]):
                 self.task = Task()
@@ -1095,7 +1089,6 @@ class TestOneModeAtATime(unittest.TestCase):
             self.addCleanup(patcher.stop)
 
     def test_starting_daily_stops_whichever_mode_runs(self):
-        """11"""
         for other in self.others:
             with self.subTest(mode=type(other).__name__):
                 other.enabled = True

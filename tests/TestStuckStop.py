@@ -206,7 +206,7 @@ class TestStuckStop(unittest.TestCase):
             self.assertIs(elapsed >= stuck_stop.STOP_SECONDS, self.handler(task), f"{elapsed}s after the gap")
         self.assertEqual(1, task.disabled)
 
-    def test_it_runs_first_in_chaos_sortie_and_story_only(self):
+    def test_it_runs_first_in_chaos_sortie_and_story_and_leaves_other_modes_alone(self):
         """Story has no stop handler to sit in front of, so it goes ahead of whatever Story's list starts with. Any other mode is left alone."""
         modes = Modes(
             utils_chaos=[named("handle_remote"), named("handle_auto_stop"), named("handle_save_target_member")],

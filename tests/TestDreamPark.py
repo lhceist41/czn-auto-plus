@@ -2,9 +2,9 @@
 
 The screens are the boxes OCR read off the Global client's park, as the bot sees them once the catalog has mapped them,
 and the colour tests run on crops of the same captures. What the visit must never do: press a row whose price does not
-read as a plain park number, go on after a price reading as Crystals or money, press a ride twice without its level
-rising, press the grey Rank Up left on the next card, press Rules of Good Order's 确认, or stop Daily when the event is
-gone.
+read as a plain park number, go on after a price reading as Crystals or money, press a ride again once two presses
+left its level where it was, press the grey Rank Up left on the next card, press Rules of Good Order's 确认, or stop
+Daily when the event is gone.
 """
 
 import sys
@@ -489,14 +489,12 @@ class Park(Daily):
 class TestNumbers(unittest.TestCase):
 
     def test_park_numbers_read_with_their_suffix(self):
-        """1"""
         for text, value in (("6.81K", 6_810), ("871", 871), ("11.91K", 11_910), ("139.01K", 139_010), ("385.00K", 385_000), ("1.23M", 1_230_000),
                             ("1,234.5K", 1_234_500), (" 22 ", 22)):
             with self.subTest(text=text):
                 self.assertAlmostEqual(value, dream_park.parse_number(text))
 
     def test_anything_but_a_plain_park_number_does_not_read(self):
-        """1"""
         for text in ("$4.99", "30 Crystals", "", "强化", "4.6SK", "₩1,200", "6.37K Crystal", "+201", "Lv.29/50"):
             with self.subTest(text=text):
                 self.assertIsNone(dream_park.parse_number(text))
@@ -518,7 +516,6 @@ class TestNumbers(unittest.TestCase):
 class TestEmotions(unittest.TestCase):
 
     def test_the_operate_header_splits_however_ocr_runs_it_together(self):
-        """2"""
         cases = {
             "three clean boxes": (FACILITIES, ((61, 34, 29), 36)),
             "run together": (FACILITIES_FLUNG, ((61, 34, 29), 36)),
@@ -548,7 +545,6 @@ class TestEmotions(unittest.TestCase):
         self.assertIsNone(dream_park.split_header("61/3634/3629/36201"))
 
     def test_the_manage_panel_reads_each_emotion_from_its_own_box(self):
-        """2"""
         self.assertEqual(((61, 34, 29), 36), dream_park.manage_emotions(Task().show(MANAGE_RANK5)))
         self.assertEqual(((61, 36, 36), 36), dream_park.manage_emotions(Task().show(MANAGE)))
         self.assertEqual(((61, 36, 36), 43), dream_park.manage_emotions(Task().show(MANAGE_RANK6)))
@@ -575,19 +571,16 @@ class TestRows(unittest.TestCase):
                           ("Roller Coaster", 25, "Thrill", "upgrade", 3_070)], self.rows(FACILITIES))
 
     def test_rank_one_rows_read_with_the_bullet_as_zero_and_lv_in_capitals(self):
-        """3"""
         self.assertEqual([("Merry-Go-Round", 7, "Comfort", "upgrade", 34), ("Tagada", 2, "Happiness", "upgrade", 24),
                           ("Roller Coaster", 8, "Thrill", "upgrade", 69)], self.rows(FACILITIES_RANK1))
         self.assertEqual([("Merry-Go-Round", 7, "Comfort", "upgrade", 34), ("Tagada", 8, "Happiness", "upgrade", 69),
                           ("Roller Coaster", 8, "Thrill", "upgrade", 69)], self.rows(FACILITIES_RANK1_LATER))
 
     def test_an_unbuilt_ride_reads_as_a_build_at_level_zero(self):
-        """3"""
         self.assertEqual(("Top Spin", 0, "Thrill", "build", 55_440), self.rows(FACILITIES_TOP_SPIN_BUILD)[-1])
         self.assertEqual(("Top Spin", 1, "Thrill", "upgrade", 22), self.rows(FACILITIES_TOP_SPIN_BUILT)[-1])
 
     def test_locked_rides_and_a_button_without_its_name_are_no_rows(self):
-        """3"""
         self.assertEqual([], self.rows(FACILITIES_LOCKED))
         self.assertEqual([], self.rows(FACILITIES_FLUNG))
         self.assertEqual([("Roller Coaster", 25, "Thrill", "upgrade", 3_070), ("Top Spin", 18, "Thrill", "upgrade", 2_190),
@@ -636,12 +629,11 @@ class TestChoice(unittest.TestCase):
         self.assertEqual(("Roller Coaster", "upgrade"), self.choose(FACILITIES_DONE))
 
     def test_a_row_whose_price_does_not_read_is_never_chosen(self):
-        """8"""
         self.assertEqual("no Happiness ride with a readable price in view", self.choose(edited(FACILITIES, ("6.37K", "6.3?K"))))
-        build = dream_park.Ride("Top Spin", 0, "Thrill", "build", None, 10, None)
+        build = dream_park.Ride("Top Spin", 0, "Thrill", "build", None, 10)
         self.assertEqual((build, None), dream_park.choose([build], None, 20))
         self.assertEqual("no ride with a readable price in view", dream_park.choose(
-            [dream_park.Ride("Tagada", 3, "Happiness", "upgrade", None, None, None)], ((7, 7, 7), 7), 1_000)[1])
+            [dream_park.Ride("Tagada", 3, "Happiness", "upgrade", None, None)], ((7, 7, 7), 7), 1_000)[1])
 
     def test_unread_profit_or_emotions_choose_nothing(self):
         self.assertEqual("the profit did not read", self.choose(edited(FACILITIES, ("99.21K", None))))
@@ -649,21 +641,19 @@ class TestChoice(unittest.TestCase):
         self.assertEqual((None, "the emotions did not read"), dream_park.choose(dream_park.facility_rows(task), None, 9_820))
 
     def test_a_ride_at_its_level_cap_is_never_chosen(self):
-        capped = [dream_park.Ride("Merry-Go-Round", 50, "Comfort", "upgrade", None, 10, None)]
+        capped = [dream_park.Ride("Merry-Go-Round", 50, "Comfort", "upgrade", None, 10)]
         self.assertEqual((None, "no ride with a readable price in view"), dream_park.choose(capped, ((61, 61, 61), 57), 1_000))
 
 
 class TestRankUp(Park):
 
     def test_rank_up_is_found_on_whichever_card_it_is_drawn(self):
-        """5"""
         for screen, x in ((RANK_UNEARNED, 0.152), (RANK3_READY, 0.402), (RANK4_READY, 0.507), (RANK_READY, 0.502), (RANK_AFTER, 0.503)):
             with self.subTest(x=x):
                 box = dream_park.rank_up_button(Task().show(screen))
                 self.assertAlmostEqual(x, daily.centre_of(box, WIDTH, HEIGHT)[0], delta=0.002)
 
     def test_only_the_blue_pill_is_live(self):
-        """5"""
         for screen, frame, live in ((RANK3_READY, LIVE_RANK3, True), (RANK_READY, LIVE_RANK6, True), (RANK_UNEARNED, GREY_RANK1, False),
                                     (RANK_AFTER, GREY_AFTER, False), (RANK_READY, None, False)):
             with self.subTest(live=live, frame=frame is not None):
@@ -671,7 +661,6 @@ class TestRankUp(Park):
                 self.assertEqual(live, dream_park.rank_up_live(frame, box, WIDTH, HEIGHT))
 
     def test_a_live_rank_up_is_pressed_and_a_grey_one_closes_the_screen(self):
-        """5"""
         self.show(RANK_READY, LIVE_RANK6)
         self.assertPressed(daily.RANK_UP)
         self.fresh()
@@ -702,7 +691,6 @@ class TestRankUp(Park):
         self.assertStopped("Rank Up was pressed 2 times")
 
     def test_the_result_is_closed_on_its_caption_and_counted(self):
-        """6"""
         self.show(RANK_READY, LIVE_RANK6)
         self.tick()
         self.show(RANK_RESULT)
@@ -733,7 +721,6 @@ class TestManageAndFacilities(Park):
         self.assertEqual(89 * 27_000, self.park()["stretch"])
 
     def test_the_rules_of_good_order_get_cancel_never_confirm(self):
-        """6"""
         for cancel in ("取消", "Cancel"):
             with self.subTest(cancel=cancel):
                 self.fresh()
@@ -755,7 +742,6 @@ class TestManageAndFacilities(Park):
         self.assertParkNothingForbidden()
 
     def test_two_presses_without_a_level_rise_stop(self):
-        """8"""
         self.park()["phase"] = daily.TO_OPERATE
         self.task.show(FACILITIES)
         for _ in range(2 * daily.UPGRADE_WAIT + 1):
@@ -776,7 +762,6 @@ class TestManageAndFacilities(Park):
         self.assertGreater(len(self.task.clicks), 2)
 
     def test_a_price_reading_as_crystals_stops_daily(self):
-        """8"""
         self.park()["phase"] = daily.TO_OPERATE
         self.show(edited(FACILITIES, ("6.37K", "30 Crystals")))
         self.assertEqual([], self.task.clicks)
@@ -999,7 +984,6 @@ class TestManageAndFacilities(Park):
                 self.assertEqual([], [box.name for box in side if daily.refused(box.name)])
 
     def test_a_garbled_header_falls_back_to_the_manage_read_until_the_first_upgrade(self):
-        """2"""
         self.park()["phase"], self.park()["emotions"] = daily.TO_OPERATE, ((8, 7, 2), 7)
         self.show(FACILITIES_RANK1)
         self.assertEqual(1, len(self.task.clicks))
@@ -1082,7 +1066,6 @@ class TestManageAndFacilities(Park):
 class TestAchievements(Park):
 
     def test_the_ready_ring_is_found_and_grey_rows_are_not(self):
-        """7"""
         self.assertEqual([(0.722, ROWS[0])], [(x, round(y, 3)) for x, y in dream_park.ready_claims(Task().show(CHRONICLES_READY), FIRST_READY)])
         self.assertEqual([], dream_park.ready_claims(Task().show(CHRONICLES_READY), NONE_READY))
         self.assertEqual([], dream_park.ready_claims(Task().show(CHRONICLES), NONE_READY))
@@ -1100,7 +1083,6 @@ class TestAchievements(Park):
         self.assertPressed(daily.MANAGEMENT_TAB)
 
     def test_a_ready_ring_is_pressed_items_obtained_closed_and_the_claim_counted(self):
-        """7"""
         self.settled(CHRONICLES_READY, FIRST_READY)
         self.assertPressed(daily.CLAIM)
         self.tick()
@@ -1110,7 +1092,6 @@ class TestAchievements(Park):
         self.assertParkNothingForbidden()
 
     def test_both_tabs_are_checked_then_the_page_is_left_with_no_grey_row_pressed(self):
-        """7"""
         self.run_screens([(CHRONICLES, NONE_READY)] * (daily.SETTLE + 1) + [(MANAGEMENT, NONE_READY)] * (daily.NAV_WAIT + 1))
         self.assertPressed(daily.MANAGEMENT_TAB, daily.ACHIEVEMENTS_LEAVE)
         self.assertTrue(self.park()["claims_done"])
@@ -1127,7 +1108,6 @@ class TestAchievements(Park):
 class TestEventGone(Park):
 
     def test_an_event_list_without_dream_park_ends_the_step_without_a_stop(self):
-        """8"""
         self.run_screens([EVENT_LIST_WITHOUT_PARK] * (daily.SETTLE + 1) + [LOBBY])
         self.assertPressed(daily.EVENT_LEAVE)
         self.assertStopped("Daily finished: mail claimed; Dream Park is not running")

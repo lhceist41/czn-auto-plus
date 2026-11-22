@@ -16,7 +16,7 @@ import numpy as np
 from ok import Logger
 
 from src.en.handlers import insert_before, register
-from src.en.notify import announce
+from src.en.runs import forgetting, stop
 from src.en.screen import centre_of, frame_of, in_region, text_in_region
 from src.en.story import find_icon, grey, tap
 
@@ -234,21 +234,6 @@ def missions_read(task):
     return [mission for _, mission in cards]
 
 
-def stop(task, message):
-    """Announce why Story stops and stop it, with nothing pressed.
-
-    Args:
-        task: Story mode.
-        message: The line to show.
-
-    Returns:
-        True, which claims the frame.
-    """
-    announce(task, message)
-    task.disable()
-    return True
-
-
 def stop_off_normal(task, tab):
     """Stop Story on a list or detail whose tab does not read NORMAL, with nothing pressed.
 
@@ -383,8 +368,12 @@ def handle_mission_list(task):
     return True
 
 
-def held_off_normal(task):
+def handle_list_off_normal(task):
     """Hold Story on the list or a mission's detail whose tab does not read NORMAL, and stop it once that reading holds.
+
+    Keeps Story's own arrow tap off the list unless its NORMAL tab is selected. `handle_mission_list` takes only a pass
+    where OCR reads the list's title and NORMAL caption. Any other pass reaches `handle_enter_story_or_battle`, whose
+    template matches the arrow even on a list still fading in, and it taps at once.
 
     Args:
         task: Story mode, whose `all_texts` and `frame` hold the current screen.
@@ -407,21 +396,6 @@ def held_off_normal(task):
     return stop_off_normal(task, tab)
 
 
-def handle_list_off_normal(task):
-    """Keep Story's own arrow tap off the list unless its NORMAL tab is selected.
-
-    `handle_mission_list` takes only a pass where OCR reads the list's title and NORMAL caption. Any other pass reaches
-    `handle_enter_story_or_battle`, whose template matches the arrow even on a list still fading in, and it taps at once.
-
-    Args:
-        task: Story mode, whose `all_texts` and `frame` hold the current screen.
-
-    Returns:
-        True when Story was held or stopped, which claims the frame.
-    """
-    return held_off_normal(task)
-
-
 def handle_detail_off_normal(task):
     """Keep Story's Enter off a mission's detail unless its NORMAL tab is selected, since Enter starts the mission.
 
@@ -433,24 +407,7 @@ def handle_detail_off_normal(task):
     """
     if text_in_region(task, DETAIL_ENTER, ENTER_REGION) is None:
         return False
-    return held_off_normal(task)
-
-
-def forgetting_missions(disable):
-    """Wrap `disable` so a Story stopped for any reason starts its next run with no mission counted.
-
-    Args:
-        disable: The unbound `disable` being replaced.
-
-    Returns:
-        The replacement.
-    """
-    def disable_forgetting_missions(self):
-        for name in MARKS:
-            vars(self).pop(name, None)
-        return disable(self)
-
-    return disable_forgetting_missions
+    return handle_list_off_normal(task)
 
 
 def install():
@@ -476,6 +433,7 @@ def apply():
         logger.warning("could not import BaseTask, Story will not play Battle Missions")
         _patched = True
         return
-    BaseTask.disable = forgetting_missions(BaseTask.disable)
+    # A Story stopped for any reason starts its next run with no mission counted.
+    BaseTask.disable = forgetting(MARKS, BaseTask.disable)
     register(install)
     _patched = True

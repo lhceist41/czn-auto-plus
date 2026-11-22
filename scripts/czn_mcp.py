@@ -23,7 +23,8 @@ from mcp.server.mcpserver.exceptions import ToolError
 
 # Where `src/en/remote.py` listens.
 URL = "http://127.0.0.1:47821"
-# Seconds to wait for a reply. Above the remote's own 15 s wait for the page loop, so its clearer error arrives first.
+# Seconds to wait for a reply. Above the longest the remote waits on an action (15 s for the page loop, then 10 s for an
+# action already started), so its clearer error arrives first.
 TIMEOUT = 30
 # Most bytes of a refused request's text to show. The port's own refusals are one short line.
 REFUSAL_LIMIT = 4096

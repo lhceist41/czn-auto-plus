@@ -15,6 +15,7 @@ from src.en.etched_memory import ENTER_MEMORY_END
 from src.en.handlers import insert_before, loaded, register, wrap
 from src.en.notify import announce
 from src.en.reobserve import REOBSERVE, SAVE_LIMIT_KEY
+from src.en.runs import forgetting, stop
 from src.en.screen import in_region, text_in_region
 from src.en.story import TEAM_SLOTS, filled_slots, team_formation
 from src.en.stuck import CACHE
@@ -175,14 +176,10 @@ def handle_story_chaos_stage(task):
         return False
     stage = stage_shown(task)
     if vars(task).get(RETURNED) == stage:
-        announce(task, SAME_STAGE)
-        task.disable()
-        return True
+        return stop(task, SAME_STAGE)
     chaos = mode_named(task, CHAOS_MODE)
     if chaos is None:
-        announce(task, NO_CHAOS)
-        task.disable()
-        return True
+        return stop(task, NO_CHAOS)
     task.log_info("Chaos stage Team Formation, handing the run to Chaos mode")
     # Story first: two modes enabled at once take turns on the same screen, and Chaos's own start leaves Story running.
     task.disable()
@@ -234,25 +231,6 @@ def relayed_settings(read):
     return _get_config_value
 
 
-def forgetting_relay(disable):
-    """Wrap `disable` so a mode stopped for any reason no longer counts as playing a relayed run.
-
-    It also forgets the stage a run came back from, so a Story the player starts again may hand that stage over once more.
-
-    Args:
-        disable: The unbound `disable` being replaced.
-
-    Returns:
-        The replacement.
-    """
-    def disable_forgetting_relay(self):
-        for name in MARKS:
-            vars(self).pop(name, None)
-        return disable(self)
-
-    return disable_forgetting_relay
-
-
 def install():
     """Put the hand-over in Story's list, the hand-back at the head of Chaos's, and the relayed settings on the readers."""
     # The stuck stop is in place by now: `stuck_stop.apply` registers its install before this one (`src/globals.py`).
@@ -276,6 +254,8 @@ def apply():
         logger.warning("could not import BaseTask, Story will not hand Chaos stages to Chaos mode")
         _patched = True
         return
-    BaseTask.disable = forgetting_relay(BaseTask.disable)
+    # A mode stopped for any reason no longer counts as playing a relayed run, and forgets the stage a run came back
+    # from, so a Story the player starts again may hand that stage over once more.
+    BaseTask.disable = forgetting(MARKS, BaseTask.disable)
     register(install)
     _patched = True

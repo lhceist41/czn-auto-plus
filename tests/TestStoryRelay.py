@@ -23,6 +23,7 @@ import utils  # noqa: E402
 from ok.task.TaskExecutor import TaskExecutor  # noqa: E402
 
 from src.en import handlers, loot_cards, reobserve, shell, story, story_relay, stuck, stuck_stop, zero_system  # noqa: E402
+from src.en.runs import forgetting  # noqa: E402
 from tests.fakes import HEIGHT, WIDTH, FakeBox  # noqa: E402
 
 INSTALLS = 3
@@ -184,7 +185,7 @@ class Mode:
         self.journal.append(("disable", self.name))
 
     # As `apply` wraps `BaseTask.disable` in the app.
-    disable = story_relay.forgetting_relay(_disable)
+    disable = forgetting(story_relay.MARKS, _disable)
 
     def log_info(self, message, notify=False):
         self.logged.append(message)

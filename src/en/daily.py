@@ -21,7 +21,7 @@ from ok import Logger, TriggerTask
 
 from src.en import dream_park
 from src.en.handlers import loaded
-from src.en.notify import announce
+from src.en.runs import stop
 from src.en.screen import centre_of, colour_share, frame_of, in_region, patch_of, text_in_region
 from src.en.spend_guard import ACCOUNT, DELETION, MONEY, PURCHASE, RESCUE_HEADER, RESCUE_PHRASES, cleaned, folded, handle_rescue_screen, marker_in
 from src.en.story import find_icon, grey, tap
@@ -270,12 +270,12 @@ def new_park():
         offline stretch earns, the Rank target whose Rank Up was found grey or could not be checked, the target the
         Operate header sent the visit to the Manage panel for and every one it has sent it there for, when Rank Up was
         pressed, the press whose level rise is awaited and what it was, presses without a rise per ride, whether the
-        park and its achievements were visited, when a claim ring was pressed and how many claims in a row opened
-        nothing, the counts for the finish line and why the upgrades ended.
+        achievements were visited, when a claim ring was pressed and how many claims in a row opened nothing, the
+        counts for the finish line and why the upgrades ended.
     """
     return {"started": None, "phase": TO_MANAGE, "screen": None, "screen_since": None, "pressed": {}, "emotions": None, "emotions_at": 0,
             "stretch": None, "rank_checked": None, "rank_wanted": None, "rank_sent": set(), "rank_pressed": None, "pending": None, "no_rise": Counter(),
-            "visited": False, "claims_done": False, "tab_pressed": False, "claim_pressed": None, "claim_misses": 0, "ranks": [], "rank_ups": 0,
+            "claims_done": False, "claim_pressed": None, "claim_misses": 0, "ranks": [], "rank_ups": 0,
             "upgrades": 0, "builds": [], "claims": 0, "note": None, "result": None}
 
 
@@ -290,21 +290,6 @@ def pending_step(task):
     """
     steps = run_state(task)["steps"]
     return next((step for step in STEPS if steps[step.name] == PENDING), None)
-
-
-def stop(task, message):
-    """Announce why Daily stops and stop it, pressing nothing more.
-
-    Args:
-        task: The Daily task.
-        message: The line to show.
-
-    Returns:
-        True, which claims the frame.
-    """
-    announce(task, message)
-    task.disable()
-    return True
 
 
 def recognised(task):
@@ -707,7 +692,7 @@ def handle_daily_manage_panel(task):
             return press_once(task, PARK_RANK)
     elif wanted is not None:
         # The header said every emotion reached this target, but the panel does not read them, so Rank Up cannot be
-        # checked. Counting the target as tried stops Facilities sending the visit straight back here.
+        # checked. Counting the target as tried keeps a later reading of the panel at that target from opening the Rank.
         park["rank_checked"] = wanted
     park["phase"] = TO_OPERATE
     return press_once(task, PARK_OPERATE)
@@ -746,7 +731,7 @@ def ride_risen(task, rows):
 def leave_facilities(task, note):
     """Stop upgrading for this visit and close the Facilities list."""
     park = park_state(task)
-    park["phase"], park["note"], park["visited"] = TO_LEAVE, note, True
+    park["phase"], park["note"] = TO_LEAVE, note
     return press_once(task, PANEL_CLOSE)
 
 
@@ -829,15 +814,14 @@ def handle_daily_park_achievements(task):
         park["claim_misses"] += 1
         if park["claim_misses"] >= 2:
             return stop(task, "Stopped: two Dream Park achievement claims opened nothing. Check the game, then press Start again.")
-    if shown_for < SETTLE or (park["tab_pressed"] and now - park["pressed"][MANAGEMENT_TAB] < NAV_WAIT):
+    if shown_for < SETTLE or (MANAGEMENT_TAB in park["pressed"] and now - park["pressed"][MANAGEMENT_TAB] < NAV_WAIT):
         return True
     ready = dream_park.ready_claims(task, frame_of(task))
     if ready:
         x, y = ready[0][0] * task.width, ready[0][1] * task.height
         park["claim_pressed"] = now
         return press(task, CLAIM, Spot("claim ring", x - 1, y - 1, 2, 2))
-    if not park["tab_pressed"]:
-        park["tab_pressed"] = True
+    if MANAGEMENT_TAB not in park["pressed"]:
         return press_once(task, MANAGEMENT_TAB)
     park["claims_done"] = True
     return press_once(task, ACHIEVEMENTS_LEAVE)
@@ -857,7 +841,7 @@ def handle_daily_event_page(task):
             return True
         end_park(task, "Dream Park is not running")
         return press_once(task, PAGE_LEAVE)
-    if not park["visited"]:
+    if park["phase"] != TO_LEAVE:
         return press_once(task, ENTER_PARK, enter)
     achievements = showing(task, PARK_ACHIEVEMENTS_BUTTON)
     if not park["claims_done"] and achievements is not None:

@@ -13,7 +13,7 @@ from collections import namedtuple
 
 import numpy as np
 
-from src.en.screen import centre_of, colour_share, in_region, patch_of
+from src.en.screen import centre_of, colour_share, in_region, patch_of, text_in_region
 
 EMOTIONS = ("Thrill", "Comfort", "Happiness")
 
@@ -61,7 +61,7 @@ MAX_LEVEL = 50
 
 UPGRADE, BUILD = "upgrade", "build"
 # `price_column` holds every box right of `PRICE_X` from the name line to the button line, each checked before a press.
-Ride = namedtuple("Ride", "name level emotion action button price price_box price_column", defaults=((),))
+Ride = namedtuple("Ride", "name level emotion action button price price_column", defaults=((),))
 
 # `Rank Up` is drawn on the next Rank's card whether or not it is earned: a saturated blue pill (BGR 247, 136, 50) when it
 # is, a grey lavender one (217, 184, 175) when not, and it stays on the next, grey card after a rank up. The band takes
@@ -279,7 +279,7 @@ def facility_rows(task):
         price = parse_number(price_box.name) if price_box is not None else None
         column = tuple(other for other, ox, oy in boxes if ox >= PRICE_X and y - SAME_LINE <= oy <= button_y + SAME_LINE)
         rows.append(Ride(name.group(1).strip(), int(level.group(1)) if level else 0, emotion_of(emotion.group(1)), action, button_box, price,
-                         price_box, column))
+                         column))
     return rows
 
 
@@ -401,7 +401,4 @@ def event_entry(task):
     Returns:
         The box, or None when the event is not listed.
     """
-    for box in getattr(task, "all_texts", None) or []:
-        if EVENT_ENTRY in box.name.casefold().replace(" ", "") and in_region(box, EVENT_LIST_REGION, task.width, task.height):
-            return box
-    return None
+    return text_in_region(task, EVENT_ENTRY, EVENT_LIST_REGION)

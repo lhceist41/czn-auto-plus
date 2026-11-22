@@ -16,6 +16,7 @@ from typing import NamedTuple
 from src.en.handlers import insert_before, loaded, register, wrap
 from src.en.notify import announce
 from src.en.screen import in_region
+from src.en.stuck import CLOCK
 
 # Upstream's own band for the centred Confirm, copied from `handle_center_confirm`. It leaves out the top bar, where
 # the mode screens count Aether and Sortie counts Reason.
@@ -268,7 +269,7 @@ def guarding_taps(original, utils):
             return original(task)
         # Run in the original's place, so the stuck clock `src/en/notify.py` reads keeps up with this screen.
         if utils.is_frame_stuck(task, stuck_threshold_seconds=STUCK_SECONDS):
-            clock = getattr(task, "_last_change_time", None)
+            clock = getattr(task, CLOCK, None)
             if getattr(task, LOGGED, None) != clock:
                 setattr(task, LOGGED, clock)
                 task.log_info("not tapping at random on a screen that can spend or discard")

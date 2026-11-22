@@ -23,6 +23,7 @@ import utils  # noqa: E402
 import utils_story  # noqa: E402
 
 from src.en import battle_missions, story  # noqa: E402
+from src.en.runs import forgetting  # noqa: E402
 from tests.fakes import HEIGHT, WIDTH, FakeBox  # noqa: E402
 
 IMAGES = REPO_ROOT / "tests" / "images"
@@ -316,7 +317,7 @@ class StoryMode:
         self.enabled = False
 
     # As `apply` wraps `BaseTask.disable` in the app.
-    disable = battle_missions.forgetting_missions(_disable)
+    disable = forgetting(battle_missions.MARKS, _disable)
 
     def log_info(self, message, notify=False):
         self.logged.append(message)

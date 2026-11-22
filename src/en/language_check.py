@@ -13,7 +13,7 @@ from ok import Logger
 
 from src.en import game_language
 from src.en.handlers import HANDLER_LIST, insert_before, loaded, register, standing_in
-from src.en.notify import announce
+from src.en.runs import forgetting, stop
 
 logger = Logger.get_logger(__name__)
 
@@ -189,27 +189,7 @@ def check_game_language(task):
         logger.info(f"the game shows {client}, which Game Language {setting} reads")
         return False
     tally.stopped = True
-    announce(task, message)
-    task.disable()
-    return True
-
-
-def forgetting(enable):
-    """Wrap `enable` so each run checks the language afresh.
-
-    Args:
-        enable: The unbound `enable` being replaced.
-
-    Returns:
-        The replacement.
-    """
-    def enable_checking_afresh(self):
-        # Without asking whether the task is enabled: the Start button marks a mode enabled before the run loop calls
-        # `enable`, so the run that is starting looks like one already going.
-        vars(self).pop(TALLY, None)
-        return enable(self)
-
-    return enable_checking_afresh
+    return stop(task, message)
 
 
 def install():
@@ -234,6 +214,8 @@ def apply():
     except ImportError:
         logger.warning("could not import BaseTask, the Game Language check will carry over between runs")
     else:
-        BaseTask.enable = forgetting(BaseTask.enable)
+        # Each run checks the language afresh, without asking whether the task is enabled: the Start button marks a
+        # mode enabled before the run loop calls `enable`, so the run that is starting looks like one already going.
+        BaseTask.enable = forgetting((TALLY,), BaseTask.enable)
     register(install)
     _patched = True
