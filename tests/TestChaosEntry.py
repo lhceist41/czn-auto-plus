@@ -411,6 +411,34 @@ class TestPress(WalkCase):
                 self.assertEqual([], task.clicks)
                 self.assertStopped(task, "Chaos would have pressed")
 
+    def test_a_retreat_word_under_the_point_stops_without_a_tap(self):
+        for word in ("Escape", "Retreat", "Abandon", "Give Up"):
+            with self.subTest(word):
+                task = ChaosMode(LOBBY + [(word, 0.891, 0.442)])
+                self.assertTrue(chaos_entry.handle_chaos_lobby(task))
+                self.assertEqual([], task.clicks)
+                self.assertStopped(task, "Chaos would have pressed")
+
+    def test_a_press_landing_on_a_run_s_escape_stops_the_walk(self):
+        """At the Escape's point, on its box, or on an Enter read over it, on the resume prompt and on Chaos Info."""
+        # Imported here: that module imports this one.
+        from tests.TestSpendGuard import CHAOS_INFO
+        for screen, texts in (("resume prompt", RESUME), ("Chaos Info", CHAOS_INFO)):
+            escape = next(entry for entry in texts if entry[0] == "Escape")
+            for label, box in (("its point", None), ("the Escape box", FakeBox(*escape)), ("an Enter read over it", FakeBox("进入", *escape[1:]))):
+                with self.subTest(screen=screen, pressed=label):
+                    task = ChaosMode(texts)
+                    self.assertTrue(chaos_entry.press(task, chaos_entry.RESUME_ENTER, escape[1:], box))
+                    self.assertEqual([], task.clicks)
+                    self.assertStopped(task, "Chaos would have pressed 'Escape'")
+
+    def test_the_resume_prompt_s_own_enter_is_still_pressed_beside_a_refused_escape(self):
+        self.assertIsNotNone(daily.refused("Escape"))
+        task = ChaosMode(RESUME)
+        self.assertTrue(chaos_entry.handle_resume_prompt(task))
+        self.assertEqual([(0.637, 0.907)], task.clicks)
+        self.assertEqual(0, task.stops)
+
     def test_every_start_and_stop_forgets_the_walk(self):
         class Task:
             def enable(self):

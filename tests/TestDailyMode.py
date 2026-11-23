@@ -1088,6 +1088,37 @@ class TestRefusals(Daily):
                 self.assertEqual([], self.task.clicks)
                 self.assertStopped("would have pressed")
 
+    def test_a_retreat_word_under_a_press_stops_instead(self):
+        """The Escape that abandons an open run, and every other retreat word the spend guard knows, under the Menu point."""
+        for text in ("Escape", "Retreat", "逃脱", "脱逃", "Abandon", "Give Up"):
+            with self.subTest(text=text):
+                self.task = Task()
+                self.task.show(LOBBY + ((text, *POINTS[daily.MENU]),))
+                self.assertTrue(run_pass(self.task))
+                self.assertEqual([], self.task.clicks)
+                self.assertStopped("would have pressed")
+
+    def test_a_press_landing_on_a_run_s_escape_stops_daily(self):
+        """The Escape box pressed, or another box read over it, on the resume prompt and on Chaos Info."""
+        # Imported here: that module imports this one through TestChaosEntry.
+        from tests.TestSpendGuard import CHAOS_INFO, RESUME
+        for screen, texts in (("resume prompt", RESUME), ("Chaos Info", CHAOS_INFO)):
+            escape = next(box for box in texts if box[0] == "Escape")
+            for label, box in (("the Escape box", escape), ("an Enter read over it", ("进入", *escape[1:]))):
+                with self.subTest(screen=screen, pressed=label):
+                    self.task = Task()
+                    self.task.show(texts)
+                    self.assertTrue(daily.press(self.task, daily.RANK_UP, FakeBox(*box)))
+                    self.assertEqual([], self.task.clicks)
+                    self.assertStopped("would have pressed 'Escape'")
+
+    def test_a_press_beside_a_run_s_escape_is_still_made(self):
+        """The Rank button's point on Chaos Info lies just below its End and well left of its Escape."""
+        from tests.TestSpendGuard import CHAOS_INFO
+        self.assertTrue(daily.press(self.task.show(CHAOS_INFO), daily.PARK_RANK))
+        self.assertPressed(daily.PARK_RANK)
+        self.assertEqual(0, self.task.disabled)
+
     def test_a_text_button_reading_as_a_refused_word_is_not_pressed(self):
         self.assertTrue(daily.press(self.task, daily.CLAIM_ALL, FakeBox("Delete read mail", *NEVER["Delete read mail"])))
         self.assertEqual([], self.task.clicks)

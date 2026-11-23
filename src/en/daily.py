@@ -28,8 +28,8 @@ from src.en.handlers import loaded
 from src.en.runs import stop
 from src.en.screen import centre_of, colour_share, frame_of, in_region, patch_of, text_in_region
 from src.en.dialog_ticks import UNTICKED, box_state
-from src.en.spend_guard import (ACCOUNT, DELETION, MONEY, PURCHASE, RESCUE_HEADER, RESCUE_PHRASES, COMPACT_SKIP_DIALOG, cleaned, folded,
-                                handle_rescue_screen, marker_in, shown)
+from src.en.spend_guard import (ACCOUNT, DELETION, MONEY, PURCHASE, RESCUE_HEADER, RESCUE_PHRASES, RETREAT, COMPACT_SKIP_DIALOG, cleaned,
+                                folded, handle_rescue_screen, marker_in, shown)
 from src.en.story import AFTER_TAP, SKIP_IMAGE, SKIP_MATCH, find_icon, grey, tap
 
 logger = Logger.get_logger(__name__)
@@ -149,8 +149,9 @@ TAP_LIMITS = {BANNER_CLOSE: 3, NOTICE_CLOSE: 3, MENU: 3, ENVELOPE: 3, MENU_CLOSE
 TOWARD_MAIL = (MENU, ENVELOPE)
 
 # What `press` refuses whatever it was asked to press: mail deletion, the Shop, a purchase, Crystals or any account
-# currency, a real price, and Rescue. Read off the box under the point, folded as the spend guard folds it.
-REFUSED_GROUPS = (ACCOUNT, PURCHASE, DELETION, MONEY)
+# currency, a real price, Rescue, and a retreat word such as the Escape that abandons an open run. Read off the box under
+# the point, folded as the spend guard folds it.
+REFUSED_GROUPS = (ACCOUNT, PURCHASE, DELETION, MONEY, RETREAT)
 SHOP = ("shop", "商店")
 
 # Each screen as `(left, top, right, bottom)` screen fractions around where its captions read on the Global client.
