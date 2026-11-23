@@ -65,7 +65,7 @@ _patched = False
 
 
 def remember_team(task, utils):
-    """Read the team off the Combatants screen and keep it for the rest of the run.
+    """Read the team off the Combatants screen and keep it until the next layer's read.
 
     The bot visits this screen once a layer, and upstream's capture of the save-target's portrait already reads
     all three names to find them - it just throws the other two away. Reading them again here costs nothing,

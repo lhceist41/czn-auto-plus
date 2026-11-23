@@ -1,6 +1,6 @@
-"""Choose the card an Epiphany goes on in Sortie, and the variant it takes in either mode.
+"""Choose the card an Epiphany goes on in Sortie and Chaos, and the variant it takes in either mode.
 
-Upstream sparks only the cards on the user's Epiphany list and presses Skip when none is offered, which Sortie's empty default does at every
+Upstream sparks only the cards on the user's Epiphany list and presses Skip when none is offered, which the empty default does at every
 Epiphany. Its variant pick knows nothing of Divine Epiphanies or the build preset's pins, and with no listed variant offered it picks at random.
 It also reads the variants while they deal in, so it picks from a partial offer or, finding none yet, leaves the screen to Skip.
 """
@@ -18,8 +18,6 @@ from src.en.screen import text_in_region
 
 logger = Logger.get_logger(__name__)
 
-# The mode this chooses in. Chaos leaves the choice to the build preset's pins and the user's list.
-SORTIE_MODE = "SortieMode"
 # The prompts that spark an Epiphany, as upstream's `select_card` names them.
 ACTIONS = ("闪光", "灵光")
 # The variant lines that give or save AP: "Gain # AP", "# AP next turn" and "Reduce Cost of this card by #". Most are Divine Epiphany lines
@@ -62,32 +60,61 @@ class Offer:
 def sparked(name):
     """Say whether the last deck read found a card already carrying an Epiphany.
 
-    The prompt's own card text runs its lines together too badly to match, so this goes by the All Piles read.
+    The prompt's own card text runs its lines together too badly to match, so this goes by the All Piles read. Any copy counts, since
+    upstream taps a card by its name and cannot tell the copies apart.
 
     Args:
         name: A card name as the prompt read it.
 
     Returns:
-        True when the deck holds a version other than the base. False for a card the deck read missed.
+        True when a copy in the deck holds a version other than the base. False for a card the deck read missed.
     """
     name = cards.canonical(name)
-    return name in cards.DECK and cards.DECK[name] != DESCRIPTIONS.get(name)
+    return any(text != DESCRIPTIONS.get(name) for text in cards.COPIES.get(name, ()))
+
+
+def tapped_for(target, name):
+    """Say whether upstream's list match taps a card for a listed name.
+
+    Upstream taps the first card on the page whose name, stripped, holds the listed name or is held in it, so "Anchor" can tap "Anchor Shot".
+
+    Args:
+        target: A name on the list `select_card` is given.
+        name: A card's name as read.
+
+    Returns:
+        True when either name, stripped, contains the other.
+    """
+    target, name = target.strip(), name.strip()
+    return target in name or name in target
 
 
 def ranked(offered):
-    """Order the cards on one page by which an Epiphany should go on first.
+    """Order the cards on one page that an Epiphany may go on, best first.
+
+    A card already carrying an Epiphany is left out, since a new one replaces it, Divine or not, and so is a card whose name upstream's
+    match would also tap such a card for.
 
     Args:
         offered: The cards `recognize_cards_in_deck` found, which `pins` has already narrowed to the pinned ones when there are any.
 
     Returns:
-        Their names as read, best first, in the order offered where nothing tells them apart.
+        Their names as read, strongest first, in the order offered where nothing tells them apart. Empty when no card is safe, and before
+        the task's first deck read.
     """
-    return [card["name"] for card in sorted(offered, key=lambda card: (sparked(card["name"]), -cards.strength(cards.features(card["name"]))))]
+    # A real deck is never empty, so an empty one is a deck not read yet, which cannot tell which cards carry an Epiphany.
+    if not cards.COPIES:
+        return []
+    carrying = [card["name"] for card in offered if sparked(card["name"])]
+    fresh = [card for card in offered if not sparked(card["name"]) and not any(tapped_for(card["name"], name) for name in carrying)]
+    return [card["name"] for card in sorted(fresh, key=lambda card: -cards.strength(cards.features(card["name"])))]
 
 
 def choosing(select_card, utils):
-    """Wrap `select_card` so a Sortie Epiphany is always spent, on the user's listed card when one is offered.
+    """Wrap `select_card` so a Sortie or Chaos Epiphany goes on the user's listed card, or else on the strongest card without one.
+
+    Only the modes that read the deck every layer choose, since the ranking leaves out every card that read found with an Epiphany. A page
+    with no other card adds no name, so upstream reads on and presses Skip when no page matches.
 
     Args:
         select_card: The function to wrap, upstream's or another patch's.
@@ -97,7 +124,7 @@ def choosing(select_card, utils):
         The wrapped function.
     """
     def wrapped(task, card_names, count=1, action=""):
-        if action not in ACTIONS or type(task).__name__ != SORTIE_MODE:
+        if action not in ACTIONS or type(task).__name__ not in piles.DECK_MODES:
             return select_card(task, card_names, count=count, action=action)
         names = list(card_names or [])
         configured = len(names)
@@ -106,7 +133,10 @@ def choosing(select_card, utils):
         def listing(*args, **kwargs):
             offered = original(*args, **kwargs)
             names[configured:] = ranked(offered)
-            logger.info(f"Epiphany goes on the first of {names[configured:]} unless a listed card is offered")
+            if names[configured:]:
+                logger.info(f"Epiphany goes on the first of {names[configured:]} unless a listed card is offered")
+            else:
+                logger.info("no card read here is known to be free of an Epiphany, so only a listed card takes it")
             return offered
 
         with standing_in(utils, recognize_cards_in_deck=listing):
@@ -260,7 +290,7 @@ def choosing_variant(handler, utils):
 
 
 def install(utils):
-    """Choose a card for every Sortie Epiphany, and the variant for every Epiphany.
+    """Choose a card for every Sortie and Chaos Epiphany, and the variant for every Epiphany.
 
     Args:
         utils: The loaded `utils` module, or None when it is not importable yet.
@@ -271,7 +301,7 @@ def install(utils):
 
 
 def apply():
-    """Spend every Sortie Epiphany rather than skip it, and take the best variant on offer."""
+    """Spend a Sortie or Chaos Epiphany on a card without one rather than skip it, and take the best variant on offer."""
     global _patched
     if _patched:
         return
