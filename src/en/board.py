@@ -142,6 +142,15 @@ RETICLE_RADIUS = (0.059, 0.078)
 # Canny's upper edge threshold and the accumulator votes a ring needs. Across 847 captures the rings found were real ones or scenery.
 RETICLE_EDGES = 120
 RETICLE_VOTES = 40
+# The reticle's outer ring is drawn white whoever plays the card, while the scenery that passes for one (a spider's body, a crab's
+# bubbles, a round rock) is not. Within this far of the ring found, as a share of the frame height, a white pixel counts for its angle.
+RETICLE_STROKE = 0.004
+RETICLE_WHITE_VALUE = 180
+RETICLE_WHITE_SATURATION = 60
+RETICLE_ANGLES = 72
+# Across 416 saved frames, every ring over an enemy with a card raised was white at 0.528 or more of its angles and every scenery ring
+# in a fight at 0.33 or less.
+RETICLE_WHITE_ENOUGH = 0.45
 # The hint the game shows bottom left while a card is raised, the ESC key over "Cancel Selection", cut from a 1080p frame and matched on its
 # edges, since its white text sits on a dark outline over a light scene and a dark one alike.
 CARD_RAISED_IMAGE = Path(__file__).with_name("images") / "card_raised.png"
@@ -705,7 +714,7 @@ def reticle_x(frame):
         frame: The frame to read, taken after the card's key was pressed.
 
     Returns:
-        The ring's x, which lines up with its enemy's HP number. None for no ring, or several, as an all-enemy card or scenery draws.
+        The ring's x, which lines up with its enemy's HP number. None for no white ring, or several, as an all-enemy card draws.
     """
     patch = patch_of(frame, RETICLE_BAND)
     if patch is None or patch.size == 0:
@@ -714,6 +723,48 @@ def reticle_x(frame):
     grey = cv2.medianBlur(cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY), 3)
     rings = cv2.HoughCircles(grey, cv2.HOUGH_GRADIENT, dp=1, minDist=height * RETICLE_RADIUS[1], param1=RETICLE_EDGES, param2=RETICLE_VOTES,
                              minRadius=round(height * RETICLE_RADIUS[0]), maxRadius=round(height * RETICLE_RADIUS[1]))
-    if rings is None or len(rings[0]) != 1:
+    stroke = max(1, round(height * RETICLE_STROKE))
+    rings = [] if rings is None else [ring for ring in rings[0] if drawn_white(patch, ring, stroke)]
+    if len(rings) != 1:
         return None
-    return RETICLE_BAND[0] + float(rings[0][0][0]) / width
+    return RETICLE_BAND[0] + float(rings[0][0]) / width
+
+
+def aimed_at(reticle, xs):
+    """Say which enemy a reticle sits over, by the HP number it lines up with.
+
+    The number stands within `HEALTH_NUMBER` right of the enemy's marker: measured about 0.07 for most enemies and 0.10 for a boss's
+    wider bar.
+
+    Args:
+        reticle: The ring's x, from `reticle_x`.
+        xs: Where each enemy's marker stands, as `Foe.x` holds it.
+
+    Returns:
+        The x of that enemy, the nearest when two would do, or None when the ring is over none of them.
+    """
+    middle = (HEALTH_NUMBER[0] + HEALTH_NUMBER[2]) / 2
+    under = [x for x in xs if x + HEALTH_NUMBER[0] <= reticle <= x + HEALTH_NUMBER[2]]
+    return min(under, key=lambda x: abs(reticle - x - middle), default=None)
+
+
+def drawn_white(patch, ring, stroke):
+    """Say whether a ring Hough found is drawn in white along most of its length, as the reticle's outer ring is.
+
+    Args:
+        patch: The pixels it was found in, in BGR.
+        ring: Its centre across and down the patch and its radius, in pixels.
+        stroke: How far from the ring a white pixel still counts, in pixels.
+
+    Returns:
+        True when enough of its angles have a white pixel that close.
+    """
+    centre_x, centre_y, radius = ring
+    hsv = hsv_of(patch)
+    white = (hsv[..., 2] >= RETICLE_WHITE_VALUE) & (hsv[..., 1] <= RETICLE_WHITE_SATURATION)
+    height, width = white.shape
+    angles = np.linspace(0, 2 * np.pi, RETICLE_ANGLES, endpoint=False)[:, None]
+    reach = radius + np.arange(-stroke, stroke + 1)[None, :]
+    columns = np.clip(np.round(centre_x + reach * np.cos(angles)).astype(int), 0, width - 1)
+    rows = np.clip(np.round(centre_y + reach * np.sin(angles)).astype(int), 0, height - 1)
+    return float(white[rows, columns].any(axis=1).mean()) >= RETICLE_WHITE_ENOUGH

@@ -698,6 +698,45 @@ class TestInstalling(unittest.TestCase):
                 utils_sortie._try_all_card_keys(task, 1)
                 self.assertEqual(task.keys, keys)
 
+    def test_a_planned_kill_is_tabbed_onto_its_target_and_not_the_boss(self):
+        # The enemy to kill stands at 0.747, its ring about 0.07 further right. The game raises the card on the leftmost enemy.
+        tab, enter = battle.TAB_KEY, battle.CONFIRM_KEY
+        foes = (0.552, 0.747)
+        for case, card, rings, keys, said in (
+                ("moved", ATTACK, [0.62, 0.82], ["1", tab, enter], "pressing TAB to move it to the enemy it can kill, marked at 0.747"),
+                ("already there", ATTACK, [0.82], ["1", enter], None),
+                ("taunt", ATTACK, [0.62, 0.62], ["1", tab, enter],
+                 "TAB did not bring the reticle to the enemy it can kill, marked at 0.747, so the card goes to the enemy at 0.620"),
+                ("no reticle", ATTACK, [None], ["1", enter], "no reticle read over an enemy"),
+                ("a ring over no enemy", ATTACK, [0.33], ["1", enter], "no reticle read over an enemy"),
+                ("no target", SHIELD, [0.62, 0.82], ["1", enter], None)):
+            reads = iter(rings)
+            bosses = []
+            with self.subTest(case), upstream(hand(card)) as (_, task), \
+                    standing_in(board, boss_x=lambda _: bosses.append(1) or 0.9, reticle_x=lambda _: next(reads)):
+                self.assertTrue(battle.play_key(task, "1", card, 0.747, foes))
+                self.assertEqual(keys, task.keys)
+                self.assertEqual([], bosses)
+                if said:
+                    self.assertTrue(any(said in line for line in task.logged), task.logged)
+                else:
+                    self.assertFalse(any("TAB" in line or "reticle" in line for line in task.logged), task.logged)
+
+    def test_a_ring_over_an_enemy_not_read_is_tabbed_past_to_the_kill(self):
+        # Two enemies counted, one read: the 30 at 0.566. The game raises the card on the other, at the left, ring at 0.40 over no enemy
+        # read. With every enemy read, such a ring is scenery and the card stays where it was raised.
+        tab, enter = battle.TAB_KEY, battle.CONFIRM_KEY
+        for case, unread, rings, keys, said in (
+                ("one not read", True, [0.40, 0.636], ["1", tab, enter],
+                 "the reticle is over an enemy not read at 0.400, pressing TAB to move it to the enemy it can kill, marked at 0.566"),
+                ("one not read, a ring TAB never moves", True, [0.40, 0.40], ["1", tab, enter], "TAB did not bring the reticle"),
+                ("every enemy read", False, [0.40, 0.636], ["1", enter], "no reticle read over an enemy")):
+            reads = iter(rings)
+            with self.subTest(case), upstream(hand(ATTACK)) as (_, task), standing_in(board, reticle_x=lambda _: next(reads)):
+                self.assertTrue(battle.play_key(task, "1", ATTACK, 0.566, (0.566,), unread))
+                self.assertEqual(keys, task.keys)
+                self.assertTrue(any(said in line for line in task.logged), task.logged)
+
     def test_a_hand_of_curses_ends_the_turn(self):
         with upstream(hand(AILMENT)) as (utils_sortie, task):
             battle.install()

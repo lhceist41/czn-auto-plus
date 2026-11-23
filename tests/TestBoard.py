@@ -42,6 +42,8 @@ SUMMONED_AT = (820, 80)
 SUMMONED_HEALTH = (("1179", 0.725, 0.108), ("253", 0.535, 0.444), ("206", 0.910, 0.444))
 # A raised attack card's reticle in each of its two colours, cut with the enemy behind it, and the x of that enemy's HP number.
 RETICLES = (("reticle_white", (894, 395), 0.522), ("reticle_cyan", (1128, 402), 0.642))
+# Round scenery Hough takes for a reticle with no card raised: a rock creature's body and a spider's, cut where each stood.
+RETICLE_SCENERY = (("reticle_scenery_rock", (1080, 421)), ("reticle_scenery_spider", (1468, 452)))
 # The hint a raised card shows for Enter and ESC, cut over a light scene from another frame than the hint it is matched against.
 CARD_RAISED_AT = (0, 930)
 # The two Weakness badges on the Sortie boss select screen, Shadow Collector's Passion and Cold, Sweet Dream's Void.
@@ -302,6 +304,29 @@ class TestRealEnemies(unittest.TestCase):
                 self.assertAlmostEqual(board.reticle_x(pasted(name, *at)), health, delta=0.01)
         # The same enemies with no card raised.
         self.assertIsNone(board.reticle_x(pasted("summoned_minions", *SUMMONED_AT)))
+
+    def test_round_scenery_is_no_reticle(self):
+        for name, at in RETICLE_SCENERY:
+            with self.subTest(name):
+                self.assertIsNone(board.reticle_x(pasted(name, *at)))
+        # Beside a real reticle it no longer makes two rings, so the card can still be aimed.
+        name, at, health = RETICLES[0]
+        frame = pasted(name, *at)
+        scenery, (left, top) = RETICLE_SCENERY[1]
+        patch = fixture(scenery)
+        frame[top:top + patch.shape[0], left:left + patch.shape[1]] = patch
+        self.assertAlmostEqual(board.reticle_x(frame), health, delta=0.01)
+
+    def test_a_reticle_is_over_the_enemy_whose_health_it_lines_up_with(self):
+        # Rings and markers measured on saved frames: four common enemies, a boss whose wider bar puts its HP further right, and a ring
+        # an Ego drew over the team.
+        markers = (0.428, 0.563, 0.694, 0.825)
+        for ring, enemy in zip((0.501, 0.633, 0.764, 0.895), markers):
+            with self.subTest(ring=ring):
+                self.assertEqual(enemy, board.aimed_at(ring, markers))
+        self.assertEqual(0.664, board.aimed_at(0.763, (0.664,)))
+        self.assertIsNone(board.aimed_at(0.324, (0.687, 0.818)))
+        self.assertIsNone(board.aimed_at(0.6, ()))
 
     def test_a_raised_card_is_told_by_its_key_hint(self):
         self.assertTrue(board.card_raised(pasted("card_raised_hint", *CARD_RAISED_AT)))

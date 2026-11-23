@@ -6,11 +6,14 @@ the hits it plans on.
 """
 
 import json
+import random
 import sys
 import tempfile
+import time
 import unittest
 from collections import deque
 from contextlib import contextmanager
+from functools import lru_cache
 from pathlib import Path
 from unittest import mock
 
@@ -66,6 +69,43 @@ def played(chosen):
         The card names.
     """
     return [card["name"] for card in chosen]
+
+
+@lru_cache(maxsize=None)
+def full_search(hits_left, lefts, unread):
+    """Search every order and enemy for hits on one enemy, with no bound, to check `cards.kill_search` against.
+
+    Args:
+        hits_left: As `cards.kill_search` takes them.
+        lefts: As `cards.kill_search` takes them.
+        unread: As `cards.kill_search` takes it.
+
+    Returns:
+        What `cards.kill_search` returns.
+    """
+    alive = [index for index, left in enumerate(lefts) if left is None or left > 0]
+    known = sum(lefts[index] is not None for index in alive)
+    outcome = (0, 0, tuple((hit, None) for hit in hits_left))
+    for place, hit in enumerate(hits_left):
+        if known == 0 or outcome[:2] == (known, 0):
+            break
+        if hit in hits_left[:place]:
+            continue
+        one, aims = hit
+        rest = hits_left[:place] + hits_left[place + 1:]
+        if aims:
+            targets = [target for target in alive if lefts[target] is not None]
+        else:
+            targets = alive if len(alive) + unread == 1 and lefts[alive[0]] is not None else []
+        for target in targets or [None]:
+            after = lefts if target is None else lefts[:target] + (lefts[target] - one,) + lefts[target + 1:]
+            kills_after, moved, order = full_search(rest, after, unread)
+            kills_now = target is not None and after[target] <= 0
+            moved_now = aims and target is not None and (unread > 0 or target != alive[0])
+            result = (kills_now + kills_after, moved - moved_now, ((hit, target if aims else None), *order))
+            if result[:2] > outcome[:2]:
+                outcome = result
+    return outcome
 
 
 @contextmanager
@@ -130,20 +170,115 @@ class TestKillFirst(unittest.TestCase):
             chosen = cards.plan(hand(*BUFFS_AT_8_HP), cards.Board(foes=one(8), invulnerable=True))
             self.assertFalse(any(card.get("kills") for card in chosen))
 
-    def test_a_hit_on_one_enemy_only_counts_where_the_game_could_aim_it(self):
-        # Strike kills the enemy on 30 only if the game aims it there, so it plans no kill. Drone Bombing hits both, and does.
-        two = (Foe(0.55, 30, None, None, True), Foe(0.75, 300, None, None, True))
-        with hits(CALIBRATED):
-            self.assertFalse(any(card.get("kills") for card in cards.plan(hand("High-Power Scope", "Strike"), cards.Board(foes=two, enemies=2))))
-            chosen = cards.plan(hand("High-Power Scope", "Strike", "Drone Bombing"), cards.Board(foes=two, enemies=2))
-            self.assertEqual("Drone Bombing", chosen[0]["name"])
-            self.assertTrue(chosen[0].get("kills"))
+    def test_a_hit_on_one_enemy_kills_where_it_is_aimed(self):
+        # Strike is raised on the enemy on 30 at the left and kills it there. On the right it is moved there. Fan of Daggers hits random
+        # enemies, so it only kills the 30 once the 300 is gone. Drone Bombing hits both, and kills the 30 wherever it stands.
+        left = (Foe(0.55, 30, None, None, True), Foe(0.75, 300, None, None, True))
+        right = (Foe(0.55, 300, None, None, True), Foe(0.75, 30, None, None, True))
+        with hits({**CALIBRATED, "Hugo": MEI_LIN_HITS}):
+            for name, foes, target in (("left", left, 0.55), ("right", right, 0.75)):
+                with self.subTest(name):
+                    chosen = cards.plan(hand("High-Power Scope", "Strike"), cards.Board(foes=foes, enemies=2))
+                    self.assertEqual(("Strike", True, target), (chosen[0]["name"], chosen[0].get("kills"), chosen[0].get("target")))
+                    self.assertFalse(any(card.get("kills") for card in cards.plan(hand("High-Power Scope", "Fan of Daggers"),
+                                                                                  cards.Board(foes=foes, enemies=2))))
+                    chosen = cards.plan(hand("High-Power Scope", "Drone Bombing"), cards.Board(foes=foes, enemies=2))
+                    self.assertEqual(("Drone Bombing", True, None), (chosen[0]["name"], chosen[0].get("kills"), chosen[0].get("target")))
 
-    def test_an_enemy_one_reader_missed_keeps_a_hit_on_one_enemy_from_counting(self):
-        # The counter count says two enemies and only one was read: Strike could go to the one not read.
-        with hits(CALIBRATED):
-            chosen = cards.plan(hand("High-Power Scope", "Strike"), cards.Board(foes=one(30), enemies=2))
+    def test_an_enemy_one_reader_missed_keeps_a_random_hit_from_counting(self):
+        # The counter count says two enemies and only one was read: a random hit could go to the one not read. So could an aimed one,
+        # raised there, so its kill counts as moved and play TABs past that enemy's ring.
+        with hits({**CALIBRATED, "Hugo": MEI_LIN_HITS}):
+            chosen = cards.plan(hand("High-Power Scope", "Fan of Daggers"), cards.Board(foes=one(30), enemies=2))
             self.assertFalse(any(card.get("kills") for card in chosen))
+            chosen = cards.plan(hand("High-Power Scope", "Strike"), cards.Board(foes=one(30), enemies=2))
+            self.assertEqual(("Strike", 0.566), (chosen[0]["name"], chosen[0].get("target")))
+            self.assertEqual((1, 1, [(0, 0.566)]), cards.kill_plan([(100, 0, True)], cards.Board(foes=one(30), enemies=2)))
+            # Drone Bombing's spread needs no aim, so for one point it is preferred to Strike, which might be raised on the other enemy.
+            chosen = cards.plan(hand("Strike", "Drone Bombing"), cards.Board(action_points=1, foes=one(30), enemies=2))
+            self.assertEqual(("Drone Bombing", True), (chosen[0]["name"], chosen[0].get("kills")))
+
+    def test_a_splash_card_kills_only_with_what_lands_on_its_target(self):
+        # Armor-Piercing Rounds and Cold Shot do 140% to the enemy aimed at and 70% to another the game picks. No combatant owns them, so
+        # the hits are set for no one: 100 per 100% printed kills a 130 with the 140 and not a 170, which only all 210 would.
+        with hits({**CALIBRATED, None: MEI_LIN_HITS}):
+            for name in ("Armor-Piercing Rounds", "Cold Shot"):
+                for health, kills in ((130, True), (170, False)):
+                    with self.subTest(name=name, health=health):
+                        chosen = cards.plan(hand(name), cards.Board(foes=one(health)))
+                        self.assertEqual((name, kills), (chosen[0]["name"], bool(chosen[0].get("kills"))))
+
+    def test_a_spread_that_kills_every_enemy_read_leaves_the_one_not_read_standing(self):
+        # Flashbang hits one enemy and all of them. Its spread kills the only enemy read, and the one not read still stands somewhere.
+        self.assertEqual((1, 0, []), cards.kill_plan([(50, 30, True), (40, 30, True)], cards.Board(foes=one(20), enemies=2)))
+
+    def test_the_bounds_keep_what_the_full_search_finds(self):
+        # Boards with a boss, an enemy two hits finish, one not read, an HP not known, and random hits, against the search with no bound.
+        chance = random.Random(20261123)
+        for case in range(400):
+            count = chance.randint(1, 4)
+            lefts = [chance.randint(10, 400) for _ in range(count)]
+            if chance.random() < 0.3:
+                lefts[chance.randrange(count)] = chance.randint(2000, 5000)
+            hits_left = tuple((chance.choice((chance.randint(30, 300), 72, 100)), chance.random() < 0.85) for _ in range(chance.randint(1, 6)))
+            if chance.random() < 0.3 and len(hits_left) > 1:
+                top = sorted(one for one, _ in hits_left)[-2:]
+                lefts[chance.randrange(count)] = chance.randint(top[1] + 1, sum(top))
+            lefts = tuple(None if chance.random() < 0.1 else left for left in lefts)
+            unread = int(chance.random() < 0.25)
+            with self.subTest(hits=hits_left, lefts=lefts, unread=unread):
+                self.assertEqual(full_search(hits_left, lefts, unread), cards.kill_search(hits_left, lefts, unread))
+
+    def test_a_boss_board_plans_in_well_under_a_tenth_of_a_second(self):
+        # Seven attacks of one point that each do something different against a boss on 4000 and three minions, the board whose search
+        # grew with every distinct hit. The best of three runs from empty caches keeps a busy moment on the machine from failing it.
+        names = ("Anchor", "Azure Flame", "Blaster Swing", "Break Armor", "Bright Flame", "Chain Fire", "Dagger Throw")
+        figures = dict(zip(names, (101, 113, 127, 139, 151, 163, 177)))
+        fixed = [{"name": name, "cost": 1} for name in figures]
+        foes = (Foe(0.30, 250, 1, None, True, True), Foe(0.50, 4000, 1, None, True, True), Foe(0.70, 300, 1, None, True, True),
+                Foe(0.85, 280, 1, None, True, True))
+        state = cards.Board(action_points=7, foes=foes, enemies=4)
+        with mock.patch.object(cards, "features", lambda name: cards.Features(100, 0, 0, 0, 0)), \
+                mock.patch.object(cards, "expected_damage", lambda name, share: (figures[name], 0)), \
+                mock.patch.object(cards, "aimed", lambda name: True), mock.patch.object(cards, "phase", lambda name, board: 0):
+            [cards.price(card) for card in fixed]
+            took = []
+            for _ in range(3):
+                cards.searched.cache_clear()
+                cards.at_best.cache_clear()
+                started = time.perf_counter()
+                chosen = cards.lethal(fixed, state)
+                took.append(time.perf_counter() - started)
+        self.assertLess(min(took), 0.1)
+        self.assertEqual([(names[0], 0.3), (names[1], 0.85), (names[3], 0.7), (names[4], 0.3), (names[5], 0.7), (names[6], 0.85)],
+                         [(card["name"], target) for card, target in chosen])
+
+    def test_two_hits_finish_one_enemy_in_order_and_the_next_starts_on_the_one_after(self):
+        # Strike's 100 and Engagement Fire's 72 take the 150 at the left together, raised there. Neither kills the 200 alone.
+        foes = (Foe(0.45, 150, None, None, True), Foe(0.62, 200, None, None, True))
+        with hits(CALIBRATED):
+            chosen = cards.plan(hand("Strike", "Engagement Fire"), cards.Board(foes=foes, enemies=2))
+            self.assertEqual([(True, 0.45), (True, 0.45)], [(card.get("kills"), card.get("target")) for card in chosen])
+        # Against a 100 on the right, 72 and 108 finish the 150 first, and the 100 is then raised on: two kills with no TAB.
+        foes = (Foe(0.45, 150, None, None, True), Foe(0.62, 100, None, None, True))
+        killed, moved, order = cards.kill_plan([(100, 0, True), (72, 0, True), (108, 0, True)], cards.Board(foes=foes, enemies=2))
+        self.assertEqual((2, 0), (killed, moved))
+        self.assertEqual([0.45, 0.45, 0.62], [target for _, target in order])
+        self.assertEqual(2, order[-1][0])
+
+    def test_a_kill_that_needs_no_tab_is_preferred(self):
+        # One attack kills either enemy alone, so it is planned on the leftmost, where the game raises it.
+        foes = (Foe(0.45, 50, None, None, True), Foe(0.62, 50, None, None, True))
+        self.assertEqual((1, 0, [(0, 0.45)]), cards.kill_plan([(100, 0, True)], cards.Board(foes=foes, enemies=2)))
+        # Two needed on the right one alone: both moved, and counted as such.
+        foes = (Foe(0.45, 500, None, None, True), Foe(0.62, 150, None, None, True))
+        self.assertEqual((1, 2), cards.kill_plan([(100, 0, True), (72, 0, True)], cards.Board(foes=foes, enemies=2))[:2])
+        # One point, two cards that each kill one enemy: Engagement Fire's 72 only the 50 on the right, Strike's 100 the 100 at the
+        # left as well. Strike is played where it is raised.
+        foes = (Foe(0.45, 100, None, None, True), Foe(0.62, 50, None, None, True))
+        with hits(CALIBRATED):
+            chosen = cards.plan(hand("Engagement Fire", "Strike"), cards.Board(action_points=1, foes=foes, enemies=2))
+            self.assertEqual(("Strike", True, 0.45), (chosen[0]["name"], chosen[0].get("kills"), chosen[0].get("target")))
 
     def test_once_one_enemy_is_left_every_hit_lands_on_it(self):
         # Drone Bombing's 86 to both kills the enemy on 50, and Strike's 100 finishes the 180 one: 94 left after the spread.
@@ -348,6 +483,33 @@ class TestHitsInBattle(unittest.TestCase):
         self.assertEqual(SELENA_HITS, list(cards.HITS["Selena"]))
         self.assertTrue(any(line.startswith("playing Target Spotted") and line.endswith("to kill an enemy") for line in task.logged))
 
+    def test_a_kill_on_the_enemy_at_the_right_is_tabbed_there(self):
+        # Strike kills the 30 on the right, not the 300 the game raises it on, so one TAB moves the ring from 0.62 to 0.82 first.
+        self.file.parent.mkdir(parents=True)
+        self.file.write_text(json.dumps(CALIBRATED), encoding="utf-8")
+        foes = (Foe(0.55, 300, 4, None, True, True), Foe(0.75, 30, 4, None, True, True))
+        rings = iter([0.62, 0.82])
+        with upstream(hand("High-Power Scope", "Strike")) as (utils_sortie, task), mock.patch.object(board, "enemies", lambda task: foes), \
+                mock.patch.object(board, "reticle_x", lambda frame: next(rings)):
+            battle.install()
+            utils_sortie._try_all_card_keys(task, 2)
+        self.assertEqual(["2", battle.TAB_KEY, battle.CONFIRM_KEY], task.keys)
+        self.assertTrue(any(line.startswith("playing Strike") and line.endswith("to kill an enemy") for line in task.logged))
+        self.assertTrue(any("pressing TAB to move it to the enemy it can kill, marked at 0.750" in line for line in task.logged))
+
+    def test_a_kill_with_an_enemy_not_read_tabs_past_its_ring(self):
+        # Two counters and one enemy read, the 30. The card is raised on the other enemy, ring at 0.40, and one TAB brings it to 0.636.
+        self.file.parent.mkdir(parents=True)
+        self.file.write_text(json.dumps(CALIBRATED), encoding="utf-8")
+        rings = iter([0.40, 0.636])
+        with upstream(hand("High-Power Scope", "Strike")) as (utils_sortie, task), mock.patch.object(board, "enemies", lambda task: one(30)), \
+                mock.patch.object(board, "enemy_counters", lambda frame: [(0.40, 0.2), (0.566, 0.2)]), \
+                mock.patch.object(board, "reticle_x", lambda frame: next(rings)):
+            battle.install()
+            utils_sortie._try_all_card_keys(task, 2)
+        self.assertEqual(["2", battle.TAB_KEY, battle.CONFIRM_KEY], task.keys)
+        self.assertTrue(any("over an enemy not read at 0.400, pressing TAB" in line for line in task.logged))
+
     def test_a_hand_edited_file_gives_only_the_hits_a_plan_can_count_on(self):
         self.file.parent.mkdir(parents=True)
         self.file.write_text(EDITED_HITS, encoding="utf-8")
@@ -426,6 +588,8 @@ class TestReadingSureHealth(unittest.TestCase):
         both, crop_alone = read("178", "178"), read("17", None)
         self.assertEqual([(178, True, True)], [(foe.health, foe.sure, foe.agreed) for foe in both])
         self.assertEqual([(17, True, False)], [(foe.health, foe.sure, foe.agreed) for foe in crop_alone])
+        # Two readers that each read a number but not the same one have not agreed.
+        self.assertEqual([(17, False, False)], [(foe.health, foe.sure, foe.agreed) for foe in read("17", "178")])
         with hits({}):
             self.assertIsNone(cards.note_hit("Strike", both, crop_alone))
             self.assertEqual({}, cards.HITS)
@@ -459,9 +623,29 @@ class TestKillsFromTheBoardRead(unittest.TestCase):
             chosen = cards.plan(hand(*LOW_FOUR_HAND), state)
             self.assertEqual("Water Arrow", chosen[0]["name"])
             self.assertTrue(chosen[0].get("kills"))
-            # With the 3 HP enemy unsure, Water Arrow could land on it or not: no kill is planned.
+            # With the 3 HP enemy unsure, Water Arrow is still raised on the 14 at the left and kills it there.
             unsure = state._replace(foes=(*LOW_FOUR[:2], LOW_FOUR[2]._replace(sure=False), LOW_FOUR[3]))
-            self.assertFalse(any(card.get("kills") for card in cards.plan(hand(*LOW_FOUR_HAND), unsure)))
+            chosen = cards.plan(hand(*LOW_FOUR_HAND), unsure)
+            self.assertEqual(("Water Arrow", True, LOW_FOUR[0].x), (chosen[0]["name"], chosen[0].get("kills"), chosen[0].get("target")))
+            # Where the unsure one is the only enemy in reach, no kill is planned.
+            reach = state._replace(foes=(LOW_FOUR[0]._replace(health=140), LOW_FOUR[2]._replace(sure=False)), enemies=2)
+            self.assertFalse(any(card.get("kills") for card in cards.plan(hand(*LOW_FOUR_HAND), reach)))
+
+    def test_the_leftmost_enemy_on_21_is_killed_with_the_first_card(self):
+        # Engagement Fire's sure 81 was short of the 154 on the right, so the old rule planned no kill and Spirit of the Aromata went
+        # first. The game raises the card on the 21 at the left, which it kills.
+        held = ("Water Arrow", "Blessing of Waves", "Engagement Fire", "Flame Dragon Guardian", "Spirit of the Aromata")
+        foes = (Foe(0.552, 21, 7, None, True, True), Foe(0.747, 154, 4, None, True, True))
+        state = cards.Board(action_points=5, hand=held, played=("Source of Water",), battle=("Source of Water",), enemies=2, health=0.87,
+                            foes=foes, team=1.0)
+        with hits({"Mei Lin": [105, 100], "Selena": [101, 81, 81, 81], "Mika": [39]}):
+            self.assertEqual((81.0, 0.0), cards.expected_damage("Engagement Fire", cards.SURE_HIT))
+            chosen = cards.plan(hand(*held), state)
+            self.assertEqual(("Engagement Fire", True, 0.552), (chosen[0]["name"], chosen[0].get("kills"), chosen[0].get("target")))
+            # With the two enemies the other way round, the card is moved onto the 21.
+            swapped = state._replace(foes=(foes[1]._replace(x=0.552), foes[0]._replace(x=0.747)))
+            chosen = cards.plan(hand(*held), swapped)
+            self.assertEqual(("Engagement Fire", True, 0.747), (chosen[0]["name"], chosen[0].get("kills"), chosen[0].get("target")))
 
 
 if __name__ == "__main__":

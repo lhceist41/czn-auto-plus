@@ -25,6 +25,12 @@ import utils as real_utils  # noqa: E402
 from tests.fakes import FakeBox  # noqa: E402
 
 FIXTURE = REPO_ROOT / "tests" / "fights" / "recorded.jsonl"
+# The plans in the fixture where the picker it was recorded with missed a sure kill on the leftmost of two enemies, where the game raises a
+# card, and today's picker plays Engagement Fire for it: fight, turn, time, the recorded plan and today's.
+KILLS_NOW_PLANNED = (("17a45db1adc6", 3, 0.11, ("High-Power Scope", "Engagement Fire"), ("Engagement Fire", "High-Power Scope")),
+                     ("17a45db1adc6", 3, 0.11, ("Engagement Fire",), ("Engagement Fire",)),
+                     ("994677b1a053", 1, 0.02, ("High-Power Scope", "Engagement Fire"), ("Engagement Fire", "High-Power Scope")),
+                     ("994677b1a053", 1, 0.03, ("Engagement Fire",), ("Engagement Fire",)))
 Foe = board.Foe
 # The card reward's title, which only comes up after a won fight.
 REWARD = "卡牌奖励"
@@ -38,6 +44,19 @@ TWO_TURNS = [
     {"hand": [ATTACK, SHIELD, BIG_ATTACK], "points": 3, "team": (406, 406)},
     {"hand": [ATTACK, ATTACK, SHIELD], "points": 3, "team": (350, 406)},
 ]
+
+
+def changed(report):
+    """Find the plans a replay gets back different, less the kills today's picker plans on purpose where the fixture's did not.
+
+    Args:
+        report: What `replay_fights.replay` returned.
+
+    Returns:
+        The other differences, as the report holds them.
+    """
+    return [diff for diff in report["differ"] if (diff["fight"], diff["turn"], diff["t"], tuple(diff["recorded"]), tuple(diff["now"]))
+            not in KILLS_NOW_PLANNED or diff["recorded_kills"] or diff["now_kills"] != [0]]
 
 
 def two_foes():
@@ -480,15 +499,16 @@ class TestHealthSource(unittest.TestCase):
 class TestReplay(Recording):
     """The replay rebuilds each recorded board and gets the recorded plan back."""
 
-    def test_the_fixture_replays_exactly(self):
+    def test_the_fixture_replays_exactly_but_for_the_kills_now_planned_on_the_leftmost_enemy(self):
         records, skipped = replay_fights.read_lines([FIXTURE])
         report = replay_fights.replay(records)
         self.assertEqual(0, skipped)
         self.assertEqual(0, report["broken"])
-        self.assertEqual([], report["differ"])
+        self.assertEqual([], changed(report))
+        self.assertEqual(len(KILLS_NOW_PLANNED), len(report["differ"]))
         self.assertEqual(sum(line["kind"] == "plan" for line in records), report["plans"])
         self.assertGreaterEqual(report["plans"], 30)
-        self.assertEqual(report["calls"], report["same"])
+        self.assertEqual(report["calls"], report["same"] + len(KILLS_NOW_PLANNED))
         self.assertGreater(report["recorded"]["kill available"], 0)
         self.assertEqual(sum(line["kind"] == "end" for line in records), report["fights_ended"])
 
@@ -506,23 +526,23 @@ class TestReplay(Recording):
         line = next(line for line in records if line["kind"] == "plan" and len(line["plans"][0]["plan"]) > 1)
         line["plans"][0]["plan"].reverse()
         report = replay_fights.replay(records)
-        self.assertEqual(1, len(report["differ"]))
-        self.assertEqual(line["fight"], report["differ"][0]["fight"])
+        self.assertEqual(1, len(changed(report)))
+        self.assertEqual(line["fight"], changed(report)[0]["fight"])
 
     def test_a_changed_kill_is_reported(self):
         records, _ = replay_fights.read_lines([FIXTURE])
         line = next(line for line in records if line["kind"] == "plan" and line["plans"][0]["kills"])
         line["plans"][0]["kills"] = []
         report = replay_fights.replay(records)
-        self.assertEqual(1, len(report["differ"]))
-        self.assertEqual([], report["differ"][0]["recorded_kills"])
+        self.assertEqual(1, len(changed(report)))
+        self.assertEqual([], changed(report)[0]["recorded_kills"])
 
     def test_a_replay_without_the_recorded_hits_differs(self):
         # The hits are what a kill is planned on, so a replay that dropped them could not have reproduced the kills.
         records, _ = replay_fights.read_lines([FIXTURE])
         for line in records:
             line.pop("hits", None)
-        self.assertTrue(replay_fights.replay(records)["differ"])
+        self.assertTrue(changed(replay_fights.replay(records)))
 
     def test_unreadable_lines_are_skipped_and_counted(self):
         text = FIXTURE.read_text(encoding="utf-8")
@@ -533,7 +553,7 @@ class TestReplay(Recording):
         report = replay_fights.replay(records)
         self.assertEqual(3, skipped)
         self.assertEqual(1, report["broken"])
-        self.assertEqual([], report["differ"])
+        self.assertEqual([], changed(report))
         self.assertIn("3 unreadable line(s) skipped, 1 plan line(s) that could not be rebuilt", replay_fights.summary(report, skipped, 5)[0])
 
     def test_a_card_text_from_another_fight_is_not_replayed(self):
@@ -574,7 +594,7 @@ class TestReplay(Recording):
         report = replay_fights.replay(records)
         self.assertEqual(2, skipped)
         self.assertEqual(1, report["broken"])
-        self.assertEqual([], report["differ"])
+        self.assertEqual([], changed(report))
         for hits, deck in (({}, [1, 2]), ({"Selena": 5}, {})):
             with self.assertRaises(TypeError), replay_fights.as_recorded(hits, deck):
                 pass

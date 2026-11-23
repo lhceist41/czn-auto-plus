@@ -7,12 +7,13 @@ hoping. This module replaces the hoping.
 """
 
 import re
+from bisect import bisect_left, bisect_right
 from collections import Counter, deque, namedtuple
 from difflib import SequenceMatcher
 from functools import lru_cache
-from itertools import combinations
+from itertools import accumulate, combinations
 
-from src.en.game_battle import CARD_CATEGORY, CARD_COST, CARD_EXHAUSTS, CARD_OWNER, COMBATANT_ATTRIBUTE, X_COST
+from src.en.game_battle import CARD_CATEGORY, CARD_COST, CARD_EXHAUSTS, CARD_OWNER, CARD_TARGET, COMBATANT_ATTRIBUTE, X_COST
 from src.en.game_quality import COMBATANT_ROLE
 from src.en import kits
 from src.en.game_text import DESCRIPTIONS
@@ -95,6 +96,14 @@ HIT_MEMORY = 50
 SAME_ENEMY = 0.03
 # Where in a turn the cards that kill go: after a chance to escape or the glowing card, before everything a fight that ends never needs.
 PHASE_KILL = PHASE_UPGRADE - 0.5
+# How many states of the search for a sure kill's order to remember, and of its bounds. Ten attacks against four tough enemies, planned
+# at 3, 6 and 10 AP, left about 1,600 of each.
+SEARCHED_STATES = 1 << 16
+# What `kill_search` puts for the HP left of an enemy that every hit left together cannot kill.
+UNKILLABLE = float("inf")
+# The data's targets for a card that hits one enemy the player picks. The game raises it on the leftmost enemy standing and a TAB moves
+# it on. Every other card that hits one enemy picks a random one.
+AIMED = frozenset({"TARGET_SELECTED_MONSTER", "TARGET_SELECTED_WITH_SPLASH", "TARGET_SELECTED_MONSTER_AUTO_RANDOM"})
 # What a card lit up for an Epiphany is worth beyond what it does this turn. The upgrade is permanent and the
 # run is long, so it comfortably outweighs one turn of anything.
 EPIPHANY_BONUS = 1000
@@ -119,6 +128,8 @@ HEAL_OR_POINTS_LINE = re.compile(r"\bHeal\b|\bRecover \d+% of Max HP\b|\bAP\b")
 # A line of damage that lands on every enemy, as in Vulture Ejection's "120% Defense-Based Damage to all enemies". The data's own target
 # misses some, Diagonal Slash among them. "To random enemies" spreads its hits instead, so that stays one target's worth.
 ALL_ENEMIES = re.compile(r"\bto all enemies\b")
+# The line of a card that hits the enemy picked and some of another, as "70% Damage to another enemy" under "140% Damage".
+OTHER_ENEMY = re.compile(r"\bto another enemy\b")
 # A card that makes the next attack hit harder, or the target take more - "Add 1 Hit(s) to the next Attack Card", "+X% Damage
 # Amount to the next Bullet card", "2 Vulnerable". Played after the attacks, as its category alone left it, it lands on nothing.
 PRIME = re.compile(r"(?:Damage Amount|Hit\(s\)|Proc)[^|\n]*?\bnext\b[^|\n]*?\b(?:Attack|Bullet|Bind) Card"
@@ -908,36 +919,195 @@ def fight_turns(board):
     return sum(foe.health for foe in board.foes) / most if most else None
 
 
-def kills(picked, board):
-    """Count the enemies a set of attacks kills for sure, wherever the game aims each one.
-
-    Damage to all enemies is counted first, since the set plays it first. Hits on one enemy go where the game aims them, so with
-    several enemies left one only counts when it would kill the toughest of them, and is taken to kill the weakest. Once one enemy
-    is left every hit lands on it.
+def aimed(name):
+    """Say whether a card hits one enemy the player picks, so the bot can move it onto the enemy it means to kill.
 
     Args:
-        picked: Pairs of HP figures, to one enemy and to all, as `expected_damage` gives them at `SURE_HIT`.
-        board: The `Board`, whose enemies with a sure HP read are counted. An enemy without one, or not read at all, cannot be killed for sure.
+        name: The card name, in any spelling.
+
+    Returns:
+        True for a card whose target is in `AIMED`.
+    """
+    return CARD_TARGET.get(base_name(canonical(name))) in AIMED
+
+
+def on_target(name):
+    """Say what share of a card's damage to one enemy lands on the enemy it hits, the rest going "to another enemy".
+
+    The game picks that other enemy, so no kill is planned on that part.
+
+    Args:
+        name: The card name, in any spelling.
+
+    Returns:
+        The share, 1 for a card with no such line.
+    """
+    doing = features(name)
+    single = doing.damage - doing.spread
+    text = RETAIN_LINE.sub("", text_of(canonical(name)))
+    other = sum(damage_in(line) for line in text.splitlines() if OTHER_ENEMY.search(line))
+    return max(0, single - other) / single if single > 0 else 1
+
+
+def kill_plan(picked, board):
+    """Work out the order and the enemies that let a set of attacks kill the most enemies for sure.
+
+    Damage to all enemies is counted first, since the set plays it first, and so is the part on one enemy of a card that also hits all.
+    An aimed hit goes to the enemy the plan picks, which costs a TAB at play time unless it is the leftmost one standing, where the game
+    raises the card. Any other hit on one enemy lands on a random one, so it only counts once one enemy is left. Two hits can finish one
+    enemy, and a hit that kills the leftmost enemy moves the next aimed hit's start along.
+
+    Args:
+        picked: Per attack, its HP figures to one enemy and to all, as `expected_damage` gives them at `SURE_HIT`, and whether it is aimed.
+        board: The `Board`, whose enemies with a sure HP read can be killed. An enemy without one, or not read at all, still stands
+            and still draws a random hit.
+
+    Returns:
+        The enemies killed, how many aimed hits need moving off the leftmost enemy, and per attack in `picked` that hits only one
+        enemy, in the order to play them, its index and the x of the enemy it is aimed at, None when it is not aimed at one.
+    """
+    spread = sum(every for _, every, _ in picked)
+    lefts = [foe.health - spread if foe.sure and foe.health is not None else None for foe in board.foes]
+    standing = [foe for foe, left in zip(board.foes, lefts) if left is None or left > 0]
+    killed = len(board.foes) - len(standing)
+    lefts = [left for left in lefts if left is None or left > 0]
+    # Enemies counted but not read stand somewhere unknown, so they only ever take a random hit.
+    unread = max(0, board.enemies - len(board.foes))
+    for one, every, _ in picked:
+        alive = [index for index, left in enumerate(lefts) if left is None or left > 0]
+        if every and one and alive and len(alive) + unread == 1 and lefts[alive[0]] is not None:
+            lefts[alive[0]] -= one
+            killed += lefts[alive[0]] <= 0
+    single = [index for index, (one, every, _) in enumerate(picked) if one and not every]
+    count, moved, order = kill_search(tuple(picked[index][0::2] for index in single), tuple(lefts), unread)
+    # Back from what each hit does to the cards, each value to the first card left that does it, so cards that tie keep their order.
+    unplaced = list(single)
+    placed = []
+    for hit, target in order:
+        index = next(index for index in unplaced if picked[index][0::2] == hit)
+        unplaced.remove(index)
+        placed.append((index, None if target is None else standing[target].x))
+    return killed + count, -moved, placed
+
+
+def kill_search(hits, lefts, unread):
+    """Find the order and the enemies for hits on one enemy that kill the most, then need the fewest moved off the leftmost enemy.
+
+    Searched by what each hit does rather than which card does it, so two Strikes left are one state however they came about, and the
+    sets `lethal` tries share their states.
+
+    Args:
+        hits: Per hit still to play, its HP figure and whether it is aimed, in the order to prefer where nothing else decides.
+        lefts: Per enemy standing, left to right, the HP it has left, None when not known, 0 or less once killed.
+        unread: How many more enemies stand somewhere unknown.
+
+    Returns:
+        The enemies killed, how many hits are moved as a negative, and per hit in the order to play it, the hit and the index in
+        `lefts` of the enemy it is aimed at, None when it is not aimed at one.
+    """
+    return searched(hits, settled(hits, lefts), unread)
+
+
+def settled(hits, lefts):
+    """Put one figure for every HP left that makes no difference to what some hits can do, so `searched` holds those states once.
+
+    Args:
+        hits: As `kill_search` takes them.
+        lefts: As `kill_search` takes them.
+
+    Returns:
+        The HP left per enemy, 0 for any enemy killed and `UNKILLABLE` for any with more than every hit together does.
+    """
+    reach = sum(one for one, _ in hits)
+    return tuple(left if left is None or 0 < left <= reach else 0 if left <= 0 else UNKILLABLE for left in lefts)
+
+
+@lru_cache(maxsize=SEARCHED_STATES)
+def searched(hits, lefts, unread):
+    """Search `kill_search`'s orders, with every enemy's HP left as it gives them.
+
+    Args:
+        hits: As `kill_search` takes them.
+        lefts: As `kill_search` takes them, 0 once killed and `UNKILLABLE` above what every hit left could do.
+        unread: As `kill_search` takes it.
+
+    Returns:
+        What `kill_search` returns.
+    """
+    alive = [index for index, left in enumerate(lefts) if left is None or left > 0]
+    best = at_best(hits, lefts, unread)
+    outcome = (0, 0, tuple((hit, None) for hit in hits))
+    for place, hit in enumerate(hits):
+        if best[0] == 0 or outcome[:2] == best:
+            break
+        if hit in hits[:place]:
+            continue
+        one, aims = hit
+        rest = hits[:place] + hits[place + 1:]
+        if aims:
+            targets = [target for target in alive if lefts[target] is not None]
+            # A hit on an enemy that every hit left together cannot kill does no better than the same hit on the first enemy tried,
+            # which is never moved further, so only that one is kept.
+            reach = one + sum(other for other, _ in rest)
+            targets = targets[:1] + [target for target in targets[1:] if lefts[target] <= reach]
+        else:
+            targets = alive if len(alive) + unread == 1 and lefts[alive[0]] is not None else []
+        for target in targets or [None]:
+            after = settled(rest, lefts if target is None else lefts[:target] + (lefts[target] - one,) + lefts[target + 1:])
+            kills_now = target is not None and after[target] <= 0
+            # With an enemy not read, the card may be raised on it, so no aimed hit lands where it is raised for sure.
+            moved_now = aims and target is not None and (unread > 0 or target != alive[0])
+            # Only a result above the best so far replaces it, so a branch that cannot beat it even at its best is skipped.
+            most, fewest = at_best(rest, after, unread)
+            if (kills_now + most, fewest - moved_now) <= outcome[:2]:
+                continue
+            kills_after, moved, order = searched(rest, after, unread)
+            result = (kills_now + kills_after, moved - moved_now, ((hit, target if aims else None), *order))
+            if result[:2] > outcome[:2]:
+                outcome = result
+    return outcome
+
+
+@lru_cache(maxsize=SEARCHED_STATES)
+def at_best(hits, lefts, unread):
+    """Bound what `kill_search` can find, so a branch that cannot beat the best so far is skipped.
+
+    Args:
+        hits: As `kill_search` takes them.
+        lefts: As `kill_search` takes them.
+        unread: As `kill_search` takes it.
+
+    Returns:
+        A pair no order of the hits beats: the most enemies they could kill between them, each needing at least what it has left, the
+        ones with least left first; and, as a negative, the fewest hits moved off the leftmost enemy in killing that many. An enemy
+        killed while one to its left still stands is never the leftmost, so every hit on it is moved.
+    """
+    total = sum(one for one, _ in hits)
+    standing = [left for left in lefts if left is None or left > 0]
+    most = bisect_right(list(accumulate(sorted(left for left in standing if left is not None))), total)
+    budget, free = total, 0
+    for left in standing if unread == 0 else []:
+        if left is None or budget < left or free == most:
+            break
+        budget -= left
+        free += 1
+    # Each of the others killed takes as many moved hits as the fewest aimed hits that finish it. The leftmost is never one of them.
+    reaches = list(accumulate(sorted((one for one, aims in hits if aims), reverse=True)))
+    needs = sorted(bisect_left(reaches, left) + 1 for left in standing[1 if unread == 0 else 0:] if left is not None)
+    return most, -sum(needs[:most - free])
+
+
+def kills(picked, board):
+    """Count the enemies a set of attacks kills for sure, as `kill_plan` aims them.
+
+    Args:
+        picked: Per attack, its HP figures to one enemy and to all and whether it is aimed, as `kill_plan` takes them.
+        board: The `Board` they would be played into.
 
     Returns:
         The number of enemies.
     """
-    count = max(len(board.foes), board.enemies)
-    known = [foe.health for foe in board.foes if foe.sure and foe.health is not None]
-    spread = sum(every for _, every in picked)
-    alive = sorted(health - spread for health in known if health > spread)
-    killed = len(known) - len(alive)
-    if count > len(known):
-        # A hit on one enemy could land on the one whose HP is not known.
-        return killed
-    single = sorted((one for one, _ in picked if one), reverse=True)
-    while single and alive:
-        if len(alive) == 1:
-            return killed + (sum(single) >= alive[0])
-        if single.pop(0) >= alive[-1]:
-            killed += 1
-            alive.pop(0)
-    return killed
+    return kill_plan(picked, board)[0]
 
 
 def lethal(fixed, board):
@@ -952,24 +1122,35 @@ def lethal(fixed, board):
         board: The `Board` they would be played into.
 
     Returns:
-        The cards, in the order to play them: damage to all enemies first while several are left, then the turn's usual order. Empty
-        when no set kills anything.
+        Pairs of a card and the x of the enemy it is aimed at, None for a card not aimed at one, in the order to play them: damage to
+        all enemies first while several are left, then the hits on one enemy in the order `kill_plan` lands them, the turn's usual
+        order where that makes no difference. Empty when no set kills anything.
     """
     if board.invulnerable or not any(foe.sure for foe in board.foes):
         return []
     attacks = [(card, expected_damage(card["name"], SURE_HIT)) for card in fixed if features(card["name"]).damage]
-    attacks = [(card, estimate) for card, estimate in attacks if estimate]
-    best, best_key = (), (0,)
+    attacks = [(card, (estimate[0] * on_target(card["name"]), estimate[1], aimed(card["name"]))) for card, estimate in attacks if estimate]
+    best, best_key, best_order = (), (0,), []
+    healths = list(accumulate(sorted(foe.health for foe in board.foes if foe.sure and foe.health is not None)))
     for size in range(1, len(attacks) + 1):
         for picked in combinations(attacks, size):
             spent = sum(price(card) for card, _ in picked)
             if spent > board.action_points:
                 continue
-            key = (kills([estimate for _, estimate in picked], board), -spent, -size)
+            # A set that could not beat the best so far even killing every enemy its damage could reach is not searched.
+            most = bisect_right(healths, sum(one + every * len(board.foes) for _, (one, every, _) in picked))
+            if not most or (most, -spent, -size, 0) <= best_key:
+                continue
+            picked = sorted(picked, key=lambda pair: phase(pair[0]["name"], board))
+            killed, moved, order = kill_plan([estimate for _, estimate in picked], board)
+            # A kill that needs no TAB is preferred to one that does, since a Taunt or an unread reticle leaves a card where it was raised.
+            key = (killed, -spent, -size, -moved)
             if key[0] and key > best_key:
-                best, best_key = picked, key
-    several = max(len(board.foes), board.enemies) > 1
-    return [card for card, estimate in sorted(best, key=lambda pair: (several and not pair[1][1], phase(pair[0]["name"], board)))]
+                best, best_key, best_order = picked, key, order
+    if max(len(board.foes), board.enemies) <= 1:
+        return [(card, None) for card, _ in best]
+    first = [(card, None) for card, (_, every, _) in best if every]
+    return first + [(best[index][0], target) for index, target in best_order]
 
 
 def wasted(name, board):
@@ -1118,7 +1299,7 @@ def plan(hand, board):
 
     Returns:
         The hand cards to play, in order, costing no more than the Action Points available. A card that is part of a sure kill
-        carries `kills`.
+        carries `kills`, and `target`, the x of the enemy it is aimed at or None.
     """
     if not board.hand:
         board = board._replace(hand=tuple(canonical(card["name"]) for card in hand))
@@ -1128,9 +1309,9 @@ def plan(hand, board):
     budget = board.action_points
     ranked = sorted(playable, key=lambda held: buying_order(held, board))
     kill = lethal([card for card in ranked if price(card) != X_COST], board)
-    ranked = [card for card in ranked if not any(card is killing for killing in kill)]
-    budget -= sum(price(card) for card in kill)
-    kill = [{**card, "kills": True} for card in kill]
+    ranked = [card for card in ranked if not any(card is killing for killing, _ in kill)]
+    budget -= sum(price(card) for card, _ in kill)
+    kill = [{**card, "kills": True, "target": target} for card, target in kill]
     fixed = [card for card in ranked if price(card) != X_COST]
     # An Upgrade pays off every turn left in the battle, so its first copy is bought first and the rest of the hand shares what is left,
     # unless the fight looks to be over before it could pay.

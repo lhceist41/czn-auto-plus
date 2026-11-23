@@ -218,15 +218,16 @@ class TestActedEnemyRead(unittest.TestCase):
     def test_a_bare_x_beside_a_minion_is_read(self):
         self.assertEqual([(38, None)], read("acted_minion"))
 
-    def test_an_x_whose_number_does_not_read_still_counts_and_keeps_a_single_hit_from_killing(self):
+    def test_an_x_whose_number_does_not_read_still_counts_and_keeps_a_random_hit_from_killing(self):
         # Two enemies on a turn's first frame, the left one's HP unread. Counted as one, a 110 hit looked like a kill on the 102,
-        # while the game aims at the leftmost enemy.
+        # while the game raises a card on the leftmost enemy and sends a random hit to either.
         task = CropTask(["acted_four_1", "acted_four_2"], reads={"acted_four_1": ([], [])})
         foes = board.enemies(task)
         self.assertEqual([(None, None, False), (102, None, True)], [(foe.health, foe.counter, foe.sure) for foe in foes])
-        self.assertEqual(0, cards.kills([(110, 0)], cards.Board(foes=foes, enemies=len(foes))))
-        # A hit on every enemy still kills the one whose HP did read.
-        self.assertEqual(1, cards.kills([(0, 110)], cards.Board(foes=foes, enemies=len(foes))))
+        self.assertEqual(0, cards.kills([(110, 0, False)], cards.Board(foes=foes, enemies=len(foes))))
+        # Aimed past the unread one, it kills the 102, and so does a hit on every enemy.
+        self.assertEqual(1, cards.kills([(110, 0, True)], cards.Board(foes=foes, enemies=len(foes))))
+        self.assertEqual(1, cards.kills([(0, 110, False)], cards.Board(foes=foes, enemies=len(foes))))
 
     def test_magenta_counters_alone_are_found_as_before(self):
         task = CropTask(["enemy_card_art", "enemy_eight", "enemy_infinity"])

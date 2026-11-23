@@ -20,9 +20,7 @@ import numpy as np
 from ok import Logger
 
 from src.en import board, cards, ego, fight_log, kits, observe, story, tested
-from src.en.game_battle import CARD_TARGET
 from src.en.handlers import StandIn, insert_before, loaded, register, replace, standing_in
-from src.en.kits.kit import base_name
 from src.en.notify import announce
 from src.en.overrides import SMART_CARD_PLAY
 from src.en.quality import fold, one_edit_apart
@@ -56,8 +54,6 @@ CONFIRM_KEY = "enter"
 # The key that moves a raised attack card's reticle to the next enemy. Clicking an enemy does not, and an enemy with Taunt holds it.
 TAB_KEY = "tab"
 AFTER_TAB = 0.5
-# The data's targets for a card that hits one enemy the player picks, which a TAB can move.
-AIMED = frozenset({"TARGET_SELECTED_MONSTER", "TARGET_SELECTED_WITH_SPLASH", "TARGET_SELECTED_MONSTER_AUTO_RANDOM"})
 # How far a reticle can sit from its enemy's HP number, against 0.002 in both captures. Enemies stand at least 0.1 apart.
 RETICLE_SLACK = 0.03
 # TAB presses for one card, more than a lap of the 4 enemies a fight has shown, so a ring misread every frame cannot hold the card up.
@@ -500,7 +496,7 @@ class Turn:
         self.attempted = None
 
 
-def play_key(task, key, name=None):
+def play_key(task, key, name=None, target=None, foes=(), unread=False):
     """Play the card on a key, with upstream's own timings so both paths feel the same to the game.
 
     The game answers the key itself with its "Not enough AP." toast, so a card it refuses is left there rather than confirmed and waited on.
@@ -508,42 +504,61 @@ def play_key(task, key, name=None):
     Args:
         task: The running task.
         key: The hotkey of the card to play.
-        name: The card's canonical name, so one that hits a picked enemy is aimed at the boss. None for a key pressed blind.
+        name: The card's canonical name, so one that hits a picked enemy is aimed. None for a key pressed blind.
+        target: Where the enemy a planned kill is aimed at stands, as `Foe.x`. None to aim at the boss.
+        foes: Where every enemy read stands, to tell which one the reticle is over.
+        unread: Whether more enemies were counted than read, so a reticle over no enemy read may be on one of those.
 
     Returns:
         False when the game refused the card for want of Action Points, True when it was confirmed.
     """
+    aims = bool(name) and cards.aimed(name)
     # Read before the key, while `all_texts` still holds the HP numbers of the frame the card was chosen on.
-    boss = board.boss_x(task) if name and CARD_TARGET.get(base_name(name)) in AIMED else None
+    boss = board.boss_x(task) if aims and target is None else None
     task.send_key(key)
     if toast_within(task, AFTER_KEY):
         # Waited out, since the next frame would read a toast still up as a spent turn.
         toast_within(task, TOAST_FADE, up=False)
         return False
-    if boss is not None:
-        aim(task, boss)
+    if aims and target is not None:
+        aim(task, lambda on: board.aimed_at(on, foes) == target, f"the enemy it can kill, marked at {target:.3f}",
+            lambda on: board.aimed_at(on, foes) is not None, unread)
+    elif boss is not None:
+        aim(task, lambda on: abs(on - boss) <= RETICLE_SLACK, f"the boss at {boss:.3f}")
     confirm(task)
     return True
 
 
-def aim(task, boss):
-    """Press TAB until a raised card's reticle sits over the boss, so it is not spent on minions the boss summons again each turn.
+def aim(task, there, what, over_enemy=None, unread=False):
+    """Press TAB until a raised card's reticle sits over the enemy it is meant for.
+
+    That is the boss, so the card is not spent on minions the boss summons again each turn, or the enemy a planned kill needs.
 
     Args:
         task: The running task, with an aimed card raised.
-        boss: The x of the boss's HP number, from `board.boss_x`.
+        there: Says whether a reticle at a given x is over that enemy.
+        what: That enemy, for the log.
+        over_enemy: Says whether a reticle at a given x is over any enemy read, so a ring elsewhere is taken as unread. None to trust
+            every ring.
+        unread: Whether some enemies were counted but not read, so a ring over no enemy read may sit on one of those and is TABbed past.
     """
     seen = []
     for _ in range(MAX_TABS):
         on = board.reticle_x(frame_of(task))
-        if on is None or abs(on - boss) <= RETICLE_SLACK:
+        elsewhere = on is not None and over_enemy is not None and not over_enemy(on)
+        if on is None or elsewhere and not unread:
+            if over_enemy is not None:
+                task.log_info(f"no reticle read over an enemy, so the card goes where the game raised it, not for sure to {what}")
+            return
+        if there(on):
             return
         if any(abs(on - was) <= RETICLE_SLACK for was in seen):
-            # A Taunt holds the reticle where it is, and a full lap means the boss was never one of the stops.
-            task.log_info(f"TAB did not bring the reticle to the boss at {boss:.3f}, so the card goes to the enemy at {on:.3f}")
+            # A Taunt holds the reticle where it is, and a full lap means the enemy was never one of the stops.
+            task.log_info(f"TAB did not bring the reticle to {what}, so the card goes to the enemy at {on:.3f}")
             return
         seen.append(on)
-        task.log_info(f"the reticle is on the enemy at {on:.3f}, pressing TAB to move it to the boss at {boss:.3f}")
+        where = "over an enemy not read" if elsewhere else "on the enemy"
+        task.log_info(f"the reticle is {where} at {on:.3f}, pressing TAB to move it to {what}")
         task.send_key(TAB_KEY)
         task.sleep(AFTER_TAB)
 
@@ -1551,7 +1566,7 @@ def install():
         turn.attempted_foes = state.foes
         turn.draws_at_press = draws_shown(task)
         tested.played(name)
-        if not play_key(task, card["key"], name):
+        if not play_key(task, card["key"], name, card.get("target"), tuple(foe.x for foe in state.foes), state.enemies > len(state.foes)):
             # Live, each unaffordable key waited out its Enter, a few seconds a card. The toast already says it stays in hand.
             task.log_info(f"not enough AP for {name}, moving on")
             turn.refused.add(name)
