@@ -158,6 +158,8 @@ The app only reads the compiled `.mo` files, so run `python scripts/compile_i18n
 
 This fork has no releases yet.
 
+What changed so far, newest first: [CHANGELOG.md](CHANGELOG.md).
+
 ## Credits
 
 * [steve1316/ok-czn-english](https://github.com/steve1316/ok-czn-english) - the project CZN Auto+ is built on
