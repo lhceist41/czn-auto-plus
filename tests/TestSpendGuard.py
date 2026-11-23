@@ -778,6 +778,65 @@ class TestCompactSkip(unittest.TestCase):
         self.assertIn(spend_guard.COMPACT_SKIP_DIALOG, [dialog for dialog, _ in dialog_ticks.TICKS])
 
 
+# The Card Reward skip dialog as OCR read it off the Global client, with the offered cards' text still readable under
+# its buttons, one of them a card that builds Crystallization.
+CARD_REWARD_SKIP = [
+    ("543 /543", 0.211, 0.036), ("194", 0.763, 0.050), ("Q", 0.959, 0.079), ("卡牌奖励", 0.501, 0.130), ("请选择1张获得的卡牌", 0.892, 0.133),
+    ("Tap and hold the card to view its details.", 0.499, 0.208), ("Rewards cannot be obtained if you choose to skip.", 0.500, 0.413),
+    ("Are you sure you want to skip it?", 0.501, 0.454), ("ESC", 0.215, 0.594), ("取消", 0.348, 0.632), ("进入", 0.535, 0.593),
+    ("•", 0.531, 0.631), ("确认", 0.667, 0.631), ("Damage", 0.275, 0.712), ("50% Damage× 3", 0.505, 0.708),
+    ("2 Crystallization", 0.276, 0.746), ("Create2 Overload in", 0.732, 0.710), ("Draw Pile", 0.735, 0.745), ("D", 0.035, 0.890),
+    ("F1", 0.652, 0.891), ("跳过", 0.747, 0.930), ("进入", 0.835, 0.892), ("Avg. Sig. Card Cost", 0.147, 0.927), ("0.7", 0.261, 0.928),
+    ("确认", 0.906, 0.931),
+]
+# Card text holding the currency's name inside another word, from `game_text.py` and `game_data.py`.
+CARD_LINES = ("2 Crystallization", "4 Crystallization", "3 Crystallization", "2Crystallization", "Crystallization", "Foggy Crystal Ball",
+              "Harmonization: Foggy Crystal Ball", "Foggy CrystalBall")
+# Crystals as a price or a refill, the paid Rescue dialog's line and the Lobby's top-up banner among them, and prices OCR
+# runs on into the next word or count.
+CRYSTAL_SPENDS = ("Spend 1600 Crystals to make the purchase?", "Not enough Aether. Refill with Crystals?", "Use 300 Crystal?",
+                  "Crystal x100", "Crystalx100", "300Crystals", "Crystal Bonuses", "CRYSTALS")
+
+
+class TestCardText(unittest.TestCase):
+    """A card's text that only holds the currency's name is no spend, and every Crystal price still is."""
+
+    def test_the_card_reward_skip_dialog_is_confirmed_over_a_crystallization_card(self):
+        task = FakeTask(CARD_REWARD_SKIP, node_status={})
+        self.assertIsNone(spend_guard.risky_confirm(task))
+        self.assertIs(True, confirm(task))
+        self.assertEqual(["确认"], task.clicked)
+        self.assertFalse(task.disabled)
+        self.assertEqual([], task.notifications)
+
+    def test_card_text_is_no_spend_on_a_dialog_or_for_a_blind_tap(self):
+        for line in CARD_LINES:
+            with self.subTest(line=line):
+                task = dialog("Are you sure you want to skip it?", line, node_status={})
+                self.assertIsNone(spend_guard.risky_confirm(task))
+                self.assertFalse(spend_guard.spends_or_discards(FakeTask([(line, 0.5, 0.5)])))
+
+    def test_a_crystal_spend_still_stops_over_the_same_card(self):
+        for line in CRYSTAL_SPENDS:
+            with self.subTest(line=line):
+                task = FakeTask([*CARD_REWARD_SKIP, (line, 0.5, 0.36)], node_status={})
+                self.assertIs(True, confirm(task))
+                self.assertTrue(task.disabled)
+                self.assertEqual(["取消"], task.clicked)
+                self.assertIn(spend_guard.ACCOUNT, task.notifications[0])
+
+    def test_a_crystal_spend_blocks_the_blind_tap(self):
+        for line in CRYSTAL_SPENDS:
+            with self.subTest(line=line):
+                self.assertTrue(spend_guard.spends_or_discards(FakeTask([("2 Crystallization", 0.3, 0.7), (line, 0.5, 0.5)])))
+
+    def test_a_card_word_only_spares_the_marker_it_starts_with(self):
+        """Crystallization in one line and a Crystal price in the next still read as a spend, joined or apart."""
+        texts = spend_guard.read_texts([FakeBox("2 Crystallization", 0.3, 0.4), FakeBox("30 Crystals", 0.3, 0.5)])
+        self.assertEqual("crystal", spend_guard.marker_in(texts, spend_guard.ACCOUNT))
+        self.assertEqual("crystal", spend_guard.marker_in(["2crystallization30crystals"], spend_guard.ACCOUNT))
+
+
 class TestInstall(unittest.TestCase):
 
     def test_the_guard_is_applied_before_notify(self):

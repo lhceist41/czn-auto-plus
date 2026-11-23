@@ -1012,6 +1012,15 @@ class TestRefusals(Daily):
                 self.assertEqual([], self.task.clicks)
                 self.assertStopped("would have pressed")
 
+    def test_card_text_holding_the_currency_name_is_not_refused(self):
+        """The backstop reads the spend guard's markers, so a card word is no Crystal there either."""
+        for text in ("2 Crystallization", "Foggy Crystal Ball"):
+            with self.subTest(text=text):
+                self.assertIsNone(daily.refused(text))
+        for text in ("30 Crystals", "Crystalx100", "6.37K Crystal"):
+            with self.subTest(text=text):
+                self.assertEqual("crystal", daily.refused(text))
+
     def test_a_rescue_phrase_is_refused_by_the_backstop_too(self):
         """On a whole screen the Rescue stop sees it first, so the backstop is checked on its own."""
         for text in ("Rescue 10 time(s)", "Selective Rescue", "Free Rescue", "Rescue"):

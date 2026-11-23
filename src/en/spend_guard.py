@@ -51,6 +51,9 @@ UNCAPTURED = {
     RETREAT: ("Abandon", "Give Up"),
     IN_RUN: ("Discard", "Dismantle"),
 }
+# Card words that start with a marker without being it. A card behind the Card Reward skip dialog reads
+# "2 Crystallization", and Foggy Crystal Ball is a card. A marker counts wherever one of these does not start at it.
+NOT_MARKERS = {"Crystal": ("Crystalliz", "Crystal Ball")}
 # A price in a real currency, the symbol or code on either side of the number, read off folded text.
 CURRENCY = r"(?:us\$|\$|€|£|₩|¥|krw|usd|jpy|cny)"
 MONEY_PRICE = re.compile(rf"{CURRENCY}\s?\d|\d\s?{CURRENCY}")
@@ -171,6 +174,23 @@ WORDS = {group: tuple(folded(word) for word in MARKERS.get(group, ()) + UNCAPTUR
          for group in (ACCOUNT, PURCHASE, DELETION, RETREAT, IN_RUN)}
 
 
+def marker_pattern(marker):
+    """Build the pattern a marker is read with.
+
+    Args:
+        marker: A marker as listed above.
+
+    Returns:
+        The folded marker, compiled so that it never matches where one of its `NOT_MARKERS` starts.
+    """
+    word = folded(marker)
+    tails = "|".join(re.escape(folded(longer)[len(word):]) for longer in NOT_MARKERS.get(marker, ()))
+    return re.compile(re.escape(word) + (f"(?!{tails})" if tails else ""))
+
+
+PATTERNS = {folded(marker): marker_pattern(marker) for table in (MARKERS, UNCAPTURED) for words in table.values() for marker in words}
+
+
 def read_texts(boxes):
     """Fold each box's text, and add the lot joined in reading order.
 
@@ -203,7 +223,7 @@ def marker_in(texts, group):
                 return price.group()
             continue
         for word in WORDS[group]:
-            if word in text:
+            if PATTERNS[word].search(text):
                 return word
     return None
 
