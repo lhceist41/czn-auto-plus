@@ -19,7 +19,7 @@ class Globals(QObject):
         from src.ui.SponsorDialog import install_sponsor_dialog
         from src.en import (  # noqa: E501
             battle, battle_missions, boss, claims, cursor, dashboard, deck, desire, devices, dialog_ticks, dialogue, dice, draft, enter, epiphany, equipment, etched_memory, events, forms, frame_log, game_language, heal, humanize,
-            kept_forms, language_check, log_text, loot_cards, meditation, memory_limit, monitors, navigation, obtain, observe, ocr_text, overrides, persona, picker, piles, pins, reobserve, remote, rest, rewards, sections,
+            kept_forms, language_check, log_text, loot_cards, meditation, memory_limit, monitors, move_on, navigation, obtain, observe, ocr_text, overrides, persona, picker, piles, pins, reobserve, remote, rest, rewards, sections,
             reason, route, shell, shop, shutdown, skip_tutorial, spend_guard, story, story_relay, summary, task_list, templates, notify, stuck, stuck_stop, upload, zero_system,
         )
         from src.en import daily
@@ -88,6 +88,7 @@ class Globals(QObject):
         rest.apply()
         meditation.apply()
         obtain.apply()
+        move_on.apply()
         memory_limit.apply()
         summary.apply()
         shutdown.apply()
