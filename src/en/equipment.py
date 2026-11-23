@@ -830,21 +830,27 @@ def on_spree(task, credit):
     """Open, hold or close this shop visit's equipment spree.
 
     Args:
-        task: The running task. The spree is kept on it, keyed by the run and the node the shop is on.
+        task: The running task. The spree is kept on it, keyed by the run and the node the shop is on, and by the run's
+            `node_status` itself when it has one.
         credit: The credits the shop screen shows now.
 
     Returns:
         True while the spree is open.
     """
-    status = getattr(task, "node_status", None) or {}
-    visit = (getattr(task, "start_time", None), status.get("pass_final_boss_count"), status.get("node_count"))
+    status = getattr(task, "node_status", None)
+    place = status or {}
+    visit = (getattr(task, "start_time", None), place.get("pass_final_boss_count"), place.get("node_count"))
+    # Every run of a task keeps its start time and can reach a shop on the same floor and node, but upstream builds each run
+    # a new status, so only the status itself tells the next run's visit from this one.
+    run = status if isinstance(status, dict) else None
     if credit <= SPREE_END:
         setattr(task, SPREE, None)
         return False
-    if getattr(task, SPREE, None) == visit:
+    spree = getattr(task, SPREE, None)
+    if spree is not None and spree[0] == visit and spree[1] is run:
         return True
     if credit >= SPREE_START:
-        setattr(task, SPREE, visit)
+        setattr(task, SPREE, (visit, run))
         return True
     return False
 

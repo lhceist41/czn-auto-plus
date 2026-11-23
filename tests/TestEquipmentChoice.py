@@ -831,6 +831,43 @@ class TestBuyingOnSpree(unittest.TestCase):
         self.credit = SPREE_START - 1
         self.assertEqual([], offered(0))
 
+    def test_the_next_run_at_the_same_shop_opens_no_spree_below_the_start(self):
+        # Every run of a task keeps one start time, so a shop on the same floor and node gives the same place. Entering the next
+        # run builds a new status without counting a run whose result page went unread.
+        task, offered = self.builder(SPREE_START)
+        offered(0)
+        self.credit = SPREE_START - 1
+        self.assertEqual(["Crimson Sword"], offered(0))
+        upstream.reset_mission_status(task)
+        task.node_status["node_count"] = 4
+        self.assertEqual([], offered(0))
+        self.credit = SPREE_START
+        self.assertEqual(["Crimson Sword"], offered(0))
+
+    def test_the_next_run_with_a_status_just_like_the_last_opens_no_spree_below_the_start(self):
+        # The next run's status can match the last one key for key at a shop on the same floor and node; it is still another run.
+        task, offered = self.builder(SPREE_START)
+        offered(0)
+        task.node_status = dict(task.node_status)
+        self.credit = SPREE_START - 1
+        self.assertEqual([], offered(0))
+
+    def test_a_spree_holds_while_upstream_changes_the_status_in_place(self):
+        task, offered = self.builder(SPREE_START)
+        offered(0)
+        task.node_status["shop"] = False
+        self.credit = SPREE_END + 1
+        self.assertEqual(["Crimson Sword"], offered(0))
+
+    def test_a_spree_holds_for_a_visit_in_a_mode_with_no_status(self):
+        for status in (None, {}):
+            with self.subTest(status=status):
+                task, offered = self.builder(SPREE_START)
+                task.node_status = status
+                offered(0)
+                self.credit = SPREE_START - 1
+                self.assertEqual(["Crimson Sword"], offered(0))
+
     def test_other_lists_and_empty_lists_pass_through(self):
         task, _ = self.builder(0)
         generated = buying_on_spree(lambda task_, key, farmed="": ["Shock"], lambda: None)
