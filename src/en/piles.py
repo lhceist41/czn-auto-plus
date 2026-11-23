@@ -1,4 +1,4 @@
-"""Read the deck off the All Piles view once a Sortie layer, and follow every card gained, removed, copied or sparked after it.
+"""Read the deck off the All Piles view once a Sortie or Chaos layer, and follow every card gained, removed, copied or sparked after it.
 
 A card in hand shows only its name, and the data holds a card's base text beside every Epiphany it could take, so the picker valued an
 Epiphany card by its base text. Upstream never opens the view. This reads it on the information page trip that reads the team.
@@ -55,8 +55,8 @@ COVERED_RUN = 4
 USED = "|"
 # Holds in `node_status` that this layer's deck has been read. Upstream rebuilds `node_status` as a layer starts.
 READ = "_en_piles_read"
-# Only Sortie reads the deck, though Chaos runs the same capture.
-SORTIE_MODE = "SortieMode"
+# The modes whose layers open the information page, which `navigation.handle_open_team` sees to.
+DECK_MODES = ("SortieMode", "ChaosMode")
 TAG = "reads the deck before closing"
 # What tapping a card does to the deck on each screen upstream picks cards on: the module holding the function, which it also reads the
 # cards through, the function, the change, and the column a pick is tapped in when that is not on the card. `select_card` serves several
@@ -244,7 +244,7 @@ def read_deck(task, utils):
     """Open All Piles from the information page and read the deck.
 
     Args:
-        task: The running Sortie task, on the information page.
+        task: The running task, on the information page.
         utils: The loaded `utils` module, for upstream's tap and scroll.
     """
     utils._move_and_click(task, *PILES_TAB)
@@ -263,7 +263,7 @@ def read_deck(task, utils):
 
 
 def reading_the_deck(handler, utils_chaos):
-    """Read the deck once a Sortie layer, between upstream's team capture and the tap that closes the page.
+    """Read the deck once a Sortie or Chaos layer, between upstream's team capture and the tap that closes the page.
 
     All Piles draws its X where the information page does, so the one close tap shuts both, with no tap back to the Combatants tab.
 
@@ -276,7 +276,7 @@ def reading_the_deck(handler, utils_chaos):
     """
     def wrapped(task):
         utils = loaded("utils")
-        if utils is None or type(task).__name__ != SORTIE_MODE or task.node_status.get(READ):
+        if utils is None or type(task).__name__ not in DECK_MODES or task.node_status.get(READ):
             return handler(task)
         original = utils_chaos._move_and_click
 
@@ -348,7 +348,7 @@ def following(handler, module, change, column=None):
     """
     def wrapped(task, *args, **kwargs):
         kind = change or SELECT_ACTIONS.get(kwargs.get("action", ""))
-        if kind is None or type(task).__name__ != SORTIE_MODE:
+        if kind is None or type(task).__name__ not in DECK_MODES:
             return handler(task, *args, **kwargs)
         shown, offer, visit = [], [], object()
 
@@ -392,7 +392,7 @@ def following(handler, module, change, column=None):
 
 
 def apply():
-    """Read the deck on Sortie's information page trip, just before the page closes, and follow each change to it after."""
+    """Read the deck on each Sortie or Chaos layer's information page trip, just before the page closes, and follow each change to it after."""
     global _patched
     if _patched:
         return

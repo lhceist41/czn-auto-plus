@@ -18,6 +18,7 @@ from src.en.handlers import insert_before, loaded, register, replace, standing_i
 from src.en.navigation import team_pending
 from src.en.game_quality import MONSTER_CARDS
 from src.en.overrides import FARMED_COMBATANT
+from src.en.runs import forgetting
 from src.en.shop import TAKE_MONSTER_REWARDS
 from src.en.screen import combatant_names, same_line
 
@@ -66,7 +67,7 @@ _patched = False
 def remember_team(task, utils):
     """Read the team off the Combatants screen and keep it for the rest of the run.
 
-    The bot already visits this screen once per run to capture the save-target's portrait, and already reads
+    The bot visits this screen once a layer, and upstream's capture of the save-target's portrait already reads
     all three names to find them - it just throws the other two away. Reading them again here costs nothing,
     because the OCR pass the handler made is still the current one when it returns.
 
@@ -104,6 +105,27 @@ def show_team(task, names):
         logger.info(f"team is {names}, covering {quality.named(classes)}")
     else:
         logger.info(f"team {names} matched no known combatant, so cards will not be class filtered")
+
+
+def starting_unread(enable):
+    """Wrap `BaseTask.enable` so a mode starts with no team or deck read, rather than the last task's.
+
+    The deck lives in `cards` for the whole process, and the team on the mode, which outlives its runs. Until this task's first trip reads
+    them, a run would take another run's party for its own and value its cards by another deck.
+
+    Args:
+        enable: The framework's `enable`.
+
+    Returns:
+        The replacement.
+    """
+    forgetting_the_team = forgetting((PARTY, TEAM_NAMES, TEAM), enable)
+
+    def starting(self):
+        cards.use_deck({})
+        return forgetting_the_team(self)
+
+    return starting
 
 
 def hold_the_combatants_row(task):
@@ -409,5 +431,12 @@ def apply():
 
             replace("handle_archive_target_member", patched_archive_target_member)
 
+    try:
+        from ok.task.task import BaseTask
+    except ImportError:
+        logger.warning("could not import BaseTask, a mode will start with the last task's team and deck")
+    else:
+        # The class's own, which every mode's `enable` reaches through `super`, however the Start button gets there.
+        BaseTask.enable = starting_unread(BaseTask.enable)
     register(install)
     _patched = True

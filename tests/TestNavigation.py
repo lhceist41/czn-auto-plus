@@ -1,5 +1,6 @@
-"""Check that a run starting on the Combatants tab reads it instead of tapping its way back to it, that Sortie goes there once a run, and
-that the deck read off All Piles on the way values each card by its Epiphany, and that a Sortie Epiphany goes on the card that read found without one."""
+"""Check that a run starting on the Combatants tab reads it instead of tapping its way back to it, that Sortie and Chaos go there once a
+layer, that the deck read off All Piles on the way values each card by its Epiphany, that a mode starts with no team or deck read, and that
+a Sortie Epiphany goes on the card that read found without one."""
 
 import sys
 import types
@@ -13,8 +14,10 @@ sys.path.insert(0, str(REPO_ROOT))
 from src.en import battle, cards, epiphany, navigation, piles, rewards  # noqa: E402
 from src.en.handlers import standing_in  # noqa: E402
 from src.en.battle import PARTY, TURN  # noqa: E402
+from src.en.dashboard import TEAM_NAMES  # noqa: E402
 from src.en.game_text import DESCRIPTIONS, EPIPHANIES  # noqa: E402
 from tests.fakes import HEIGHT, WIDTH, FakeBox  # noqa: E402
+from tests.TestStuckStop import Modes, named, names  # noqa: E402
 
 TARGET = "Arabella"
 # What the log shows on the Combatants tab, at the three points upstream reads names from.
@@ -329,8 +332,8 @@ class TestSortieTeamTrip(unittest.TestCase):
         # Live, the read opened All Piles first and needed a tap back to the Combatants tab before the team could be read.
         utils_chaos = install(ON_THE_TAB)
         capture = piles.reading_the_deck(upstream_capture(utils_chaos), utils_chaos)
-        sortie, chaos = type("SortieMode", (FakeTask,), {})(), FakeTask()
-        for task in (sortie, chaos):
+        sortie, chaos, story = (type(mode, (FakeTask,), {})() for mode in ("SortieMode", "ChaosMode", "StoryMode"))
+        for task in (sortie, chaos, story):
             task.node_status, task.all_texts = {}, ["Owen"]
 
         def read_deck(task, utils):
@@ -338,11 +341,167 @@ class TestSortieTeamTrip(unittest.TestCase):
             task.all_texts = ["All Piles"]
 
         with standing_in(piles, read_deck=read_deck):
-            for task in (sortie, sortie, chaos):
+            for task in (sortie, sortie, chaos, chaos, story):
                 capture(task)
-        self.assertEqual([navigation.COMBATANTS_TAB, "deck", CLOSE_PAGE] + [navigation.COMBATANTS_TAB, CLOSE_PAGE], sortie.clicks)
-        self.assertEqual(["Owen"], sortie.all_texts, "the team read after the capture takes its names from the Combatants pass")
-        self.assertNotIn("deck", chaos.clicks)
+        for task in (sortie, chaos):
+            with self.subTest(mode=type(task).__name__):
+                self.assertEqual([navigation.COMBATANTS_TAB, "deck", CLOSE_PAGE] + [navigation.COMBATANTS_TAB, CLOSE_PAGE], task.clicks)
+                self.assertEqual(["Owen"], task.all_texts, "the team read after the capture takes its names from the Combatants pass")
+        self.assertNotIn("deck", story.clicks)
+        # Upstream rebuilds `node_status` as a layer starts, so the next layer's trip reads the deck again.
+        chaos.node_status, chaos.clicks = {}, []
+        with standing_in(piles, read_deck=read_deck):
+            capture(chaos)
+        self.assertEqual([navigation.COMBATANTS_TAB, "deck", CLOSE_PAGE], chaos.clicks)
+
+
+    def test_a_pick_changes_the_deck_in_chaos_too(self):
+        # The pickers Chaos shares with Sortie keep the deck read current until the next layer reads it again.
+        base = DESCRIPTIONS["Experienced Strike"]
+        module = types.SimpleNamespace(recognize_cards=lambda task: [{"name": "Experienced Strike", "description": base, "x": 0.3, "y": 0.4}])
+
+        def take_one(task):
+            card = module.recognize_cards(task)[0]
+            task.click(card["x"], card["y"])
+
+        self.addCleanup(cards.use_deck, {})
+        for mode, held in (("ChaosMode", 2), ("StoryMode", 1)):
+            with self.subTest(mode=mode):
+                cards.use_deck({"Experienced Strike": [base]})
+                piles.following(take_one, module, piles.GAINED)(type(mode, (), {"click": lambda self, x, y: None})())
+                self.assertEqual(held, cards.COPIES["Experienced Strike"][base])
+
+
+class TestChaosTeamTrip(unittest.TestCase):
+    """Chaos opens the page once a layer: upstream's own trip on a task's first layer, the fork's on every later one, never both."""
+
+    def setUp(self):
+        install(ON_THE_TAB)
+        self.utils = sys.modules["utils"]
+        self.utils._get_current_hp_percent = lambda task: 100
+        self.utils._move_and_click = lambda task, x, y: task.clicks.append((x, y))
+        task = type("ChaosMode", (FakeTask,), {})()
+        task.sleep = lambda seconds: None
+        task.info_set = lambda key, value: None
+        task.node_status, task.all_texts = {}, []
+        task.width, task.height = WIDTH, HEIGHT
+        self.task = task
+        self.clock = [0.0]
+        patcher = mock.patch.object(navigation.time, "monotonic", lambda: self.clock[0])
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def tearDown(self):
+        for name in ("utils", "utils_chaos"):
+            sys.modules.pop(name, None)
+
+    def read_the_page(self):
+        """Stand in for the archive handler on the page just opened: the deck read marks the layer and the team read names the party."""
+        self.task.node_status[piles.READ] = True
+        rewards.remember_team(self.task, self.utils)
+
+    def test_the_layer_upstream_opened_gets_no_second_trip(self):
+        # A task's first layer: upstream's `handle_save_target_member` tapped, and the page was read and closed.
+        self.read_the_page()
+        for _ in range(navigation.TEAM_TRIES + 1):
+            self.assertFalse(navigation.handle_open_team(self.task))
+            self.clock[0] += navigation.TEAM_RETRY_SECONDS
+        self.assertEqual([], self.task.clicks)
+
+    def test_a_layer_whose_page_named_nobody_is_not_opened_again(self):
+        # The page was read, so a second trip would read no deck, and the next layer reads the team again.
+        self.task.node_status[piles.READ] = True
+        self.assertFalse(navigation.handle_open_team(self.task))
+        self.task.node_status = {}
+        self.assertTrue(navigation.handle_open_team(self.task))
+        self.task.node_status[piles.READ] = True
+        self.clock[0] += navigation.TEAM_RETRY_SECONDS
+        self.assertFalse(navigation.handle_open_team(self.task))
+        self.assertFalse(navigation.team_pending(self.task), "Obtain Card must not wait on a team no trip will read")
+        self.assertEqual([navigation.TEAM_PORTRAITS], self.task.clicks)
+
+    def test_ours_tapping_first_still_makes_one_trip(self):
+        # Should a frame reach the fork's tap before upstream's, the page that opens is read once and nobody taps again.
+        self.assertTrue(navigation.handle_open_team(self.task))
+        self.read_the_page()
+        self.clock[0] += navigation.TEAM_RETRY_SECONDS
+        self.assertFalse(navigation.handle_open_team(self.task))
+        self.assertEqual([navigation.TEAM_PORTRAITS], self.task.clicks)
+
+    def test_each_later_layer_taps_through_once(self):
+        self.read_the_page()
+        # Upstream rebuilds `node_status` for the next layer and keeps its own "portrait saved" flag, so its trip does not come again.
+        self.task.node_status = {"save_target_member": True}
+        self.assertTrue(navigation.handle_open_team(self.task))
+        self.assertEqual(frozenset(), getattr(self.task, PARTY), "the next layer's party is read afresh")
+        self.read_the_page()
+        self.clock[0] += navigation.TEAM_RETRY_SECONDS
+        self.assertFalse(navigation.handle_open_team(self.task))
+        self.assertEqual([navigation.TEAM_PORTRAITS], self.task.clicks)
+
+    def test_the_trip_goes_in_both_lists_after_upstreams_own(self):
+        installs = []
+        modes = Modes(
+            utils_chaos=[named("handle_auto_stop"), named("handle_save_target_member"), named("handle_route_selection"),
+                         named("handle_archive_target_member")],
+            utils_sortie=[named("handle_auto_stop"), named("handle_route_selection"), named("handle_archive_target_member")],
+            utils_story=[named("handle_route_selection")],
+        )
+        with modes as loaded, mock.patch.object(navigation, "_patched", False), mock.patch.object(navigation, "register", installs.append):
+            module = loaded["utils_chaos"]
+            for handler in module.PAGE_HANDLERS[1:]:
+                setattr(module, handler.__name__, handler)
+            navigation.apply()
+            installs[0]()
+        chaos = names(loaded["utils_chaos"])
+        self.assertEqual(chaos.index("handle_route_selection") - 1, chaos.index("handle_open_team"))
+        # navigation.py stands upstream's handler in under its own name, so it is found by the end of that name.
+        upstream = next(index for index, name in enumerate(chaos) if name.endswith("handle_save_target_member"))
+        self.assertLess(upstream, chaos.index("handle_open_team"))
+        self.assertEqual(["handle_auto_stop", "handle_open_team", "handle_route_selection", "handle_archive_target_member"],
+                         names(loaded["utils_sortie"]))
+        self.assertNotIn("handle_open_team", names(loaded["utils_story"]))
+
+
+class TestStartingUnread(unittest.TestCase):
+    """A mode starts with no team or deck, so nothing an earlier task read is taken for this one's."""
+
+    def tearDown(self):
+        cards.use_deck({})
+
+    @staticmethod
+    def read_task():
+        """Build a mode carrying an earlier task's reads, and fill the deck the same way."""
+        cards.use_deck({"Experienced Strike": {SHIELD_GAIN}}, {"Experienced Strike": 1})
+        task = FakeTask()
+        setattr(task, PARTY, frozenset({"Yuki"}))
+        setattr(task, TEAM_NAMES, ["Yuki"])
+        setattr(task, rewards.TEAM, {"Striker"})
+        return task
+
+    def assert_unread(self, task):
+        self.assertEqual(({}, {}, {}), (cards.COPIES, cards.DECK, cards.RETRIEVES))
+        for name in (PARTY, TEAM_NAMES, rewards.TEAM):
+            self.assertFalse(hasattr(task, name), name)
+
+    def test_a_mode_starts_with_no_team_or_deck(self):
+        started = []
+        task = self.read_task()
+        rewards.starting_unread(started.append)(task)
+        self.assertEqual([task], started)
+        self.assert_unread(task)
+
+    def test_every_start_goes_through_it(self):
+        from ok.task.task import BaseTask
+
+        started = []
+        with mock.patch.object(BaseTask, "enable", started.append), mock.patch.object(rewards, "_patched", False), \
+                mock.patch.object(rewards, "register"):
+            rewards.apply()
+            task = self.read_task()
+            BaseTask.enable(task)
+        self.assertEqual([task], started)
+        self.assert_unread(task)
 
 
 class TestDeckRead(unittest.TestCase):

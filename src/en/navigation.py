@@ -1,9 +1,10 @@
-"""Take Sortie to the Combatants screen once a run, and skip the trip when a run already starts there.
+"""Take Sortie and Chaos to the Combatants screen once a layer, and skip the trip when a run already starts there.
 
 Capturing the target combatant's portrait takes two handlers, and both tap their way to a page that may already
 be open. `handle_save_target_member` taps the menu icon and waits two seconds, guarded only by a "have I done
 this yet" flag, and `handle_archive_target_member` then taps the 3-person icon and the Combatants tab before
-reading anything, which on a run started there shuts the page and reopens it. Sortie never makes the trip at all.
+reading anything, which on a run started there shuts the page and reopens it. Upstream makes the trip once a task
+in Chaos, since that flag outlives every layer and run, and never in Sortie.
 """
 
 import contextlib
@@ -13,6 +14,7 @@ import time
 
 from ok import Logger
 
+from src.en import piles
 from src.en.battle import CANCEL, CANCEL_REGION, PARTY, TEAM_WANTED, TURN
 from src.en.handlers import insert_before, loaded, register, replace, standing_in, wrap
 from src.en.game_data import COMBATANTS
@@ -33,7 +35,7 @@ COMBATANTS_TAB = (0.201, 0.056)
 ROSTER_NAME = re.compile(r"\b(?:" + "|".join(re.escape(name) for name in COMBATANTS) + r")\b")
 # Where the map draws the team's portraits. Tapping one opens the information page - the tap Chaos makes in `handle_save_target_member`.
 TEAM_PORTRAITS = (0.182, 0.081)
-# Holds in `node_status` how many taps Sortie has made towards the team and when the last one was, so a page that never opens costs a few
+# Holds in `node_status` how many taps the mode has made towards the team and when the last one was, so a page that never opens costs a few
 # tries rather than every frame. Upstream rebuilds `node_status` when a run or a layer starts, which is what clears it.
 TEAM_TAPPED = "_en_team_tapped"
 TEAM_TRIES = 5
@@ -41,8 +43,8 @@ TEAM_TRIES = 5
 TEAM_RETRY_SECONDS = 5
 # Where a battle's hand counter reads, like "04/10". The map has none, and a restart mid-battle tapped the portraits over the end turn prompt.
 HAND_COUNTER_REGION = (0.45, 0.94, 0.56, 1.0)
-# The handler Sortie's trip runs ahead of, the same place Chaos lists its own.
-SORTIE_ANCHOR = "handle_route_selection"
+# The handler the trip runs ahead of in both modes. Chaos lists upstream's own trip above it.
+TRIP_ANCHOR = "handle_route_selection"
 
 _patched = False
 
@@ -172,33 +174,34 @@ def reading_in_place(original):
 
 
 def team_pending(task):
-    """Say whether Sortie has started tapping towards the team, has tries left, and has not read it yet.
+    """Say whether the mode has started tapping towards the team, has tries left, and has not read it yet.
 
     Args:
-        task: The running Sortie task.
+        task: The running Sortie or Chaos task.
 
     Returns:
         True while a retry of `handle_open_team` is still due.
     """
     tries, _ = task.node_status.get(TEAM_TAPPED, (0, 0.0))
-    return 0 < tries < TEAM_TRIES and not getattr(task, PARTY, None)
+    return 0 < tries < TEAM_TRIES and not getattr(task, PARTY, None) and not task.node_status.get(piles.READ)
 
 
 def handle_open_team(task):
-    """Open the information page as a Sortie run or layer starts, or on the first battle frame after a restart, so the team is read.
+    """Open the information page as a Sortie or Chaos layer starts, or on the first battle frame after a restart, so the team is read.
 
-    `handle_archive_target_member` then reads the names and closes the page, as it does for Chaos. A tap that reads no team is tried again
-    after `TEAM_RETRY_SECONDS`, up to `TEAM_TRIES` times.
+    `handle_archive_target_member` then reads the names and closes the page. A tap that opens no page is tried again after
+    `TEAM_RETRY_SECONDS`, up to `TEAM_TRIES` times. A layer whose page has been read gets no tap, which leaves a Chaos task's first layer
+    to upstream's own trip.
 
     Args:
-        task: The running Sortie task.
+        task: The running Sortie or Chaos task.
 
     Returns:
         True when the tap was made this frame.
     """
     utils = loaded("utils")
     tries, last = task.node_status.get(TEAM_TAPPED, (0, 0.0))
-    if utils is None or tries >= TEAM_TRIES or (tries and getattr(task, PARTY, None)):
+    if utils is None or tries >= TEAM_TRIES or (tries and getattr(task, PARTY, None)) or task.node_status.get(piles.READ):
         return False
     now = time.monotonic()
     if tries and now - last < TEAM_RETRY_SECONDS:
@@ -224,7 +227,7 @@ def handle_open_team(task):
 
 
 def apply():
-    """Take Sortie to the team once a run, and stop the bot navigating to a screen it is already on."""
+    """Take Sortie and Chaos to the team once a layer, and stop the bot navigating to a screen it is already on."""
     global _patched
     if _patched:
         return
@@ -238,8 +241,8 @@ def apply():
         # Composed through `wrap` rather than `replace` because the install runs once per task load and the
         # wrapper carries the handler's own name, which `replace` matches on and would stack a layer per load.
         wrap(utils_chaos, "handle_archive_target_member", reading_in_place, "reading in place")
-        # Sortie's list alone, since Chaos makes this trip already.
-        insert_before(SORTIE_ANCHOR, handle_open_team, only=("utils_sortie",))
+        # Chaos too: upstream's trip comes once a task, so every later layer would play on the first layer's deck.
+        insert_before(TRIP_ANCHOR, handle_open_team, only=("utils_sortie", "utils_chaos"))
 
         original = utils_chaos.handle_save_target_member
         if getattr(original, "_en_skips_when_present", False):

@@ -74,7 +74,7 @@ ANCHORS_IN_LISTS = {
     "handle_negotiation": ("utils_chaos", "utils_sortie"),
     "handle_rest_sortie": ("utils_sortie",),
     "handle_return_to_draw_pile": ("utils_sortie",),
-    "handle_route_selection": ("utils_sortie",),
+    "handle_route_selection": ("utils_chaos", "utils_sortie"),
     "handle_save_target_member": ("utils_chaos",),
     "handle_season_chaos_initial_page": ("utils_chaos",),
     "handle_shop": ("utils_chaos", "utils_sortie"),
@@ -120,6 +120,11 @@ class TestUpstreamManifest(unittest.TestCase):
             with self.subTest(mode=module_name):
                 registered = [handler.__name__ for handler in MODULES[module_name].PAGE_HANDLERS]
                 self.assertLess(registered.index("handle_confirm"), registered.index("handle_event_task"))
+
+    def test_chaos_still_takes_its_own_team_trip_ahead_of_the_forks(self):
+        # navigation.py puts the per-layer trip just ahead of `handle_route_selection`, so upstream's first trip of a task comes first.
+        registered = [handler.__name__ for handler in MODULES["utils_chaos"].PAGE_HANDLERS]
+        self.assertLess(registered.index("handle_save_target_member"), registered.index("handle_route_selection"))
 
     def test_the_framework_still_offers_the_hooks_every_install_rides(self):
         # `handlers.register` applies every list edit from `after_init`, and `load_config` carries the run-start
