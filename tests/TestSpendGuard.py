@@ -24,8 +24,10 @@ import utils_chaos  # noqa: E402
 import utils_sortie  # noqa: E402
 import utils_story  # noqa: E402
 
-from src.en import dialog_ticks, handlers, notify, reason, spend_guard  # noqa: E402
+from src.en import dialog_ticks, enter, handlers, notify, reason, spend_guard  # noqa: E402
 from src.en.handlers import WRAPS  # noqa: E402
+from src.en.stuck import CLOCK  # noqa: E402
+from tests.TestChaosEntry import DETAIL, FORMATION  # noqa: E402
 from tests.fakes import HEIGHT, WIDTH, FakeBox  # noqa: E402
 
 CONFIRM_AT = (0.6, 0.77)
@@ -54,11 +56,12 @@ class FakeTask:
         self._last_change_time = time.time() - frozen_for
         self.searched = []
         self.clicked = []
+        self.clicked_at = []
         self.logged = []
         self.notifications = []
         self.disabled = False
 
-    def find_one(self, feature_name, box=None):
+    def find_one(self, feature_name, box=None, threshold=None):
         self.searched.append((feature_name, box))
         return object() if self.icon and feature_name == spend_guard.PRICE_ICON else None
 
@@ -67,6 +70,7 @@ class FakeTask:
 
     def click_box(self, box):
         self.clicked.append(box.name)
+        self.clicked_at.append(((box.x + box.width / 2) / self.width, (box.y + box.height / 2) / self.height))
 
     def log_info(self, message, notify=False):
         self.logged.append(message)
@@ -76,6 +80,13 @@ class FakeTask:
 
     def disable(self):
         self.disabled = True
+
+    def sleep(self, seconds):
+        pass
+
+
+class StoryMode(FakeTask):
+    """Story, where `src/en/enter.py` leaves upstream's Enter as it is."""
 
 
 def dialog(*lines, cancel="取消", **kwargs):
@@ -920,7 +931,204 @@ class TestRewardSkipDialog(unittest.TestCase):
                         self.assertIn(group, task.notifications[0])
 
 
+# The prompt a Chaos run still open raises on the way in, as OCR read it through the catalog.
+# Escape abandons the run.
+RESUME_LINE = ("Do you wish'to enter the stage in progress?", 0.501, 0.828)
+RESUME = [("53%", 0.501, 0.508), ("9/17", 0.500, 0.563), ("卡厄思显现", 0.501, 0.677), ("The Blue Pot", 0.502, 0.728), RESUME_LINE,
+          ("取消", 0.369, 0.907), ("进入", 0.637, 0.907), ("Escape", 0.898, 0.910)]
+ESCAPE = (0.898, 0.910)
+# Chaos Info, the battle menu Q opens, as OCR read it. Its Escape abandons the run.
+CHAOS_INFO = [("© Chaos Info", 0.168, 0.051), ("Q Outskirts", 0.640, 0.050), ("16/17", 0.778, 0.051), ("275", 0.879, 0.050),
+              ("Loot", 0.668, 0.164), ("The Blue Pot", 0.258, 0.262), ("Chaos Sizel Small", 0.267, 0.300), ("600", 0.693, 0.301),
+              ("Difficulty", 0.217, 0.382), ("Phase 1", 0.537, 0.382), ("• Save Data Storage Limit 10Opt", 0.251, 0.466),
+              ("The loot you have acquired can be taken back to the ship upon return.", 0.811, 0.818), ("End", 0.820, 0.890),
+              ("Escape", 0.936, 0.928)]
+# Sortie's Stage Info, which Esc opens in battle, as a live run read it. Its Escape leaves the stage.
+STAGE_INFO = [("© Stage Info", 0.165, 0.050), ("X", 0.959, 0.050), ("Loot", 0.669, 0.164), ("0", 0.934, 0.163),
+              ("Combatant Promotion Materials", 0.331, 0.261), ("- Ranger", 0.489, 0.264), ("Combatants", 0.245, 0.300),
+              ("Difficulty", 0.217, 0.382), ("Stage 2", 0.536, 0.383), ("Current turn count", 0.252, 0.450), ("4", 0.536, 0.449),
+              ("No loot acquired.", 0.810, 0.547), ("?", 0.049, 0.806),
+              ("The loot you have acquired can be taken back to the ship upon return.", 0.812, 0.818), ("End", 0.842, 0.890),
+              ("Escape", 0.935, 0.929)]
+# Battle Prep's confirmation, whose Enter sits beside its Cancel, away from the round button.
+BATTLE_PREP = [("Battle Prep Confirmation", 0.501, 0.169), ("Recommended Lv.10", 0.500, 0.244),
+               ("Please check to see if you've met the recommended level.", 0.500, 0.302),
+               ("Please check if you've included Partners in your formation.", 0.501, 0.334), ("LV.10", 0.293, 0.405), ("Tressa", 0.362, 0.406),
+               ("Assign Partner|", 0.773, 0.406), ("LV.10", 0.293, 0.489), ("Owen", 0.355, 0.492), ("Assign Partner", 0.772, 0.491),
+               ("D", 0.847, 0.490), ("Do not show again today", 0.521, 0.721), ("X", 0.210, 0.830), ("取消", 0.347, 0.830), ("进入", 0.666, 0.831)]
+
+
+def changed(texts, drop=(), add=()):
+    """Copy a screen with some boxes left unread and others read in.
+
+    Args:
+        texts: `(name, x, y)` triples.
+        drop: Names of boxes OCR missed.
+        add: `(name, x, y)` triples OCR read as well.
+
+    Returns:
+        The new triples.
+    """
+    return [box for box in texts if box[0] not in drop] + list(add)
+
+
+@contextlib.contextmanager
+def guarded_enter():
+    """Put `src/en/enter.py`'s change and the guard over upstream's own Enter, as the app applies them, three times over.
+
+    A copy of `utils` carries the wrappers, so the real module keeps its handler.
+
+    Yields:
+        The installed `handle_enter`.
+    """
+    saved = [(entries, list(entries)) for _, entries in handlers.each_list()]
+    copy = types.ModuleType(utils.__name__)
+    copy.__dict__.update(vars(utils))
+    mode = types.ModuleType("fake_mode_for_escape_enter_test")
+    mode.PAGE_HANDLERS = [copy.handle_enter]
+    sys.modules[mode.__name__] = mode
+    try:
+        for _ in range(INSTALLS):
+            enter.install(copy)
+            spend_guard.install(copy)
+        yield mode.PAGE_HANDLERS[0]
+    finally:
+        sys.modules.pop(mode.__name__, None)
+        for entries, before in saved:
+            entries[:] = before
+
+
+def run_enter(task):
+    """Show a screen to the installed Enter.
+
+    Args:
+        task: The running task.
+
+    Returns:
+        The handler's answer.
+    """
+    with guarded_enter() as handle_enter:
+        return handle_enter(task)
+
+
+def pressed_at(task):
+    """Give where each pressed box sits.
+
+    Args:
+        task: The running task, with `clicked_at` recorded.
+
+    Returns:
+        `(x, y)` screen fractions, rounded to three places.
+    """
+    return [(round(x, 3), round(y, 3)) for x, y in task.clicked_at]
+
+
+class TestEscape(unittest.TestCase):
+    """The Global client's Escape, which abandons a run: on the resume prompt, on Chaos Info and on Sortie's Stage Info."""
+
+    def run_stuck(self, task):
+        stand_in = fake_utils()
+        return spend_guard.guarding_taps(stand_in.handle_stuck_log, stand_in)(task)
+
+    def test_a_screen_carrying_escape_gets_no_blind_tap(self):
+        for name, texts in (("resume prompt", RESUME), ("Chaos Info", CHAOS_INFO), ("Stage Info", STAGE_INFO)):
+            with self.subTest(screen=name):
+                task = FakeTask(texts, frozen_for=15)
+                self.assertIs(False, self.run_stuck(task))
+                self.assertEqual([], task.clicked)
+
+    def test_a_dialog_that_would_escape_is_cancelled_unless_the_run_asked(self):
+        task = dialog("Escape", "Do you want to escape from this run?", node_status={})
+        self.assertIs(True, confirm(task))
+        self.assertTrue(task.disabled)
+        self.assertEqual(["取消"], task.clicked)
+        self.assertIn(spend_guard.RETREAT, task.notifications[0])
+        asked = dialog("Escape", node_status={spend_guard.RETREAT_ASKED: True})
+        self.assertIs(True, confirm(asked))
+        self.assertEqual(["确认"], asked.clicked)
+        self.assertFalse(asked.disabled)
+
+    def test_words_that_only_look_like_escape_stay_harmless(self):
+        """Escapism is a card a hand can hold, and Esc a key hint the battle overlays print beside their Cancel."""
+        for name, texts in (("Escapism card", [("Escapism", 0.5, 0.75), ("Has a low chance for unexpected results to occur on use.", 0.5, 0.8)]),
+                            ("Esc key hint", [("Esc", 0.05, 0.316), ("取消", 0.084, 0.316)])):
+            with self.subTest(screen=name):
+                task = FakeTask(texts, frozen_for=15)
+                self.run_stuck(task)
+                self.assertEqual(["blind tap"], task.clicked)
+        task = dialog("End your turn?", "Escapism", node_status={})
+        self.assertIs(True, confirm(task))
+        self.assertEqual(["确认"], task.clicked)
+
+    def test_the_prompt_as_read_leaves_its_enter_alone(self):
+        """The prompt's own Enter is the one press that resumes the run."""
+        self.assertIsNone(spend_guard.escape_at_enter(FakeTask(RESUME)))
+        task = StoryMode(RESUME)
+        self.assertIs(True, run_enter(task))
+        self.assertEqual([(0.637, 0.907)], pressed_at(task))
+
+    def test_an_escape_read_as_enter_without_the_line_is_never_pressed(self):
+        """A pass that misses the prompt's line leaves only upstream's Enter, which presses an Enter in the round button's corner.
+
+        At the measured x 0.898 the Enter change already leaves it, outside Story.
+        """
+        for x in (0.902, ESCAPE[0]):
+            misread = [("进入", x, ESCAPE[1])]
+            for name, texts in (
+                    ("read as Enter", changed(RESUME, drop=(RESUME_LINE[0], "Escape"), add=misread)),
+                    ("read as Enter over the Escape box", changed(RESUME, drop=(RESUME_LINE[0],), add=misread)),
+                    ("read as Enter, the real Enter missed", changed(RESUME, drop=(RESUME_LINE[0], "Escape", "进入"), add=misread)),
+                    ("read as Enter, Cancel missed", changed(RESUME, drop=(RESUME_LINE[0], "Escape", "取消"), add=misread))):
+                for mode in (FakeTask, StoryMode):
+                    if mode is StoryMode and x < spend_guard.ROUND_BUTTON[0] and name != "read as Enter over the Escape box":
+                        continue
+                    with self.subTest(x=x, variant=name, mode=mode.__name__):
+                        task = mode(texts)
+                        self.assertIs(False, run_enter(task))
+                        self.assertEqual([], task.clicked)
+                        declined = x >= spend_guard.ROUND_BUTTON[0] or name == "read as Enter over the Escape box"
+                        self.assertEqual(int(declined), sum("may be the run's Escape" in line for line in task.logged))
+
+    def test_the_round_button_is_still_pressed(self):
+        for name, texts, spot in (("Blue Pot detail", DETAIL, (0.935, 0.899)), ("Formation", FORMATION, (0.945, 0.913))):
+            with self.subTest(screen=name):
+                task = FakeTask(texts)
+                self.assertIs(True, run_enter(task))
+                self.assertEqual([spot], pressed_at(task))
+                self.assertEqual([], [line for line in task.logged if "Escape" in line])
+
+    def test_an_enter_beside_its_cancel_away_from_the_round_button_is_still_pressed_in_story(self):
+        task = StoryMode(BATTLE_PREP)
+        self.assertIs(True, run_enter(task))
+        self.assertEqual([(0.666, 0.831)], pressed_at(task))
+
+    def test_a_declined_enter_is_logged_once_per_freeze(self):
+        task = FakeTask(changed(RESUME, drop=(RESUME_LINE[0], "Escape"), add=[("进入", 0.902, ESCAPE[1])]))
+        with guarded_enter() as handle_enter:
+            for clock in (1, 1, 1, 2):
+                setattr(task, CLOCK, clock)
+                self.assertIs(False, handle_enter(task))
+        self.assertEqual(2, sum("may be the run's Escape" in line for line in task.logged))
+        self.assertEqual([], task.clicked)
+
+    def test_the_round_button_corner_is_still_the_enter_changes(self):
+        self.assertEqual(enter.BUTTON, spend_guard.ROUND_BUTTON)
+        self.assertEqual(enter.ENTER, spend_guard.ENTER)
+
+
 class TestInstall(unittest.TestCase):
+
+    def test_the_enter_guard_sits_over_the_enter_change_once(self):
+        """`src/en/enter.py` shows upstream the round button's box alone, so a guard inside it would never read the Escape box."""
+        source = (REPO_ROOT / "src" / "globals.py").read_text(encoding="utf-8")
+        applied = re.findall(r"^\s*(\w+)\.apply\(\)", source, re.M)
+        self.assertLess(applied.index("enter"), applied.index("spend_guard"))
+        with guarded_enter() as handle_enter:
+            tags = list(getattr(handle_enter, WRAPS))
+        self.assertEqual(1, tags.count(spend_guard.ENTER_TAG))
+        self.assertEqual(1, tags.count(enter.TAG))
+        self.assertLess(tags.index(enter.TAG), tags.index(spend_guard.ENTER_TAG))
+        self.assertEqual("handle_enter", handle_enter.__name__)
 
     def test_the_guard_is_applied_before_notify(self):
         """notify renames the stuck handler's list entry, after which the tap guard would find nothing to wrap, silently."""

@@ -5,7 +5,8 @@ button once a screen has sat still for ten seconds, and `handle_center_confirm` 
 dialog asks. Either can buy Aether with Crystals, pay real money, drop a stored save or abandon a run. The blind taps
 now decline on any screen that can spend or discard, and a centred Confirm on a dialog that spends outside the run,
 deletes or retreats unasked is cancelled once, announced, and the run stopped. A Rescue screen or dialog stops the run
-before the centred Confirm sees it, with no input: pulls and their records are the user's to choose.
+before the centred Confirm sees it, with no input: pulls and their records are the user's to choose. Upstream's Enter
+handler is kept off an Enter that may be a run's Escape, which abandons the run.
 
 In-run Credits stay allowed: the shop, card removal, Meditation and Extract all run on them.
 """
@@ -15,7 +16,7 @@ from typing import NamedTuple
 
 from src.en.handlers import insert_before, loaded, register, wrap
 from src.en.notify import announce
-from src.en.screen import in_region
+from src.en.screen import centre_of, in_region
 from src.en.stuck import CLOCK
 
 # Upstream's own band for the centred Confirm, copied from `handle_center_confirm`. It leaves out the top bar, where
@@ -25,6 +26,12 @@ CONFIRM_REGION = (0.009, 0.168, 0.977, 0.875)
 CANCEL_REGION = (0.1, 0.5, 0.9, 0.875)
 CONFIRM = "确认"
 CANCEL = ("取消", "cancel")
+ENTER = "进入"
+# The round action button, where `src/en/enter.py` keeps upstream's Enter outside Story. Of 44 Enter boxes read there
+# on saved captures, none shared its row with a Cancel or another Enter. The resume prompt's Cancel, Enter and Escape do.
+ROUND_BUTTON = (0.90, 0.85, 1.0, 1.0)
+# How far apart down the screen two boxes' centres can sit and still be one button row.
+ROW = 0.03
 
 # Each group reads as what the dialog would do, which is how the stop is announced.
 ACCOUNT = "spend account currency"
@@ -34,12 +41,14 @@ DELETION = "delete something nobody asked to delete"
 RETREAT = "retreat from a run nobody asked to leave"
 IN_RUN = "spend or discard within the run"
 
-# Words `ocr.po` maps, in both forms, and upstream's own literals.
+# Words `ocr.po` maps, in both forms, and upstream's own literals. "Escape" stays English: the Global client's button
+# that abandons a run, on the resume prompt and both battle menus. Card text reading Escape counts too, as the card
+# named Retreat does.
 MARKERS = {
     ACCOUNT: ("补充理性", "Charge Reason"),
     PURCHASE: ("购买", "Buy"),
     DELETION: ("记忆消除",),
-    RETREAT: ("逃脱", "脱逃", "Retreat"),
+    RETREAT: ("逃脱", "脱逃", "Retreat", "Escape"),
     IN_RUN: ("德朗商店", "Dellang Shop", "刷新", "Refresh", "提炼", "Extract", "以信用点接收", "Receive as Credits", "移除", "Remove",
              "存储数据收集完成", "Save Data collection complete"),
 }
@@ -81,6 +90,8 @@ RETREAT_ASKED = "is_escaped"
 STUCK_SECONDS = 10
 # Parked on the task: the stuck clock's value when a declined tap was last logged.
 LOGGED = "_en_spend_screen_logged"
+# The same for a declined Enter.
+ENTER_LOGGED = "_en_escape_enter_logged"
 
 
 class Dialog(NamedTuple):
@@ -125,6 +136,7 @@ REWARD_SKIP_AREA = (0.009, 0.33, 0.977, 0.57)
 
 TAPS_TAG = "no blind tap on a spend screen"
 CONFIRM_TAG = "no Confirm on an account spend"
+ENTER_TAG = "no Enter on a run's Escape"
 
 _patched = False
 
@@ -406,8 +418,75 @@ def guarding_confirm(original):
     return handle_center_confirm
 
 
+def covers(box, point, task):
+    """Say whether a tap at a point would land on a box.
+
+    Args:
+        box: The OCR box.
+        point: `(x, y)` screen fractions.
+        task: The running task, for the screen size.
+
+    Returns:
+        True when the point is inside the box.
+    """
+    x, y = point[0] * task.width, point[1] * task.height
+    return box.x <= x <= box.x + box.width and box.y <= y <= box.y + box.height
+
+
+def escape_at_enter(task):
+    """Find what says an Enter upstream could press may be a run's Escape.
+
+    The prompt to resume an open Chaos run reads Cancel, Enter and Escape in one row, Escape in the round button's
+    corner. Read there as Enter, alone or over the Escape box, it would be pressed as the round button.
+
+    Args:
+        task: The running task, whose `all_texts` holds the current OCR pass.
+
+    Returns:
+        The text that gave it away, a retreat word under an Enter or a Cancel or second Enter in the round button's
+        row, or None.
+    """
+    boxes = getattr(task, "all_texts", None) or []
+    for box in boxes:
+        if cleaned(box.name) != ENTER:
+            continue
+        point = centre_of(box, task.width, task.height)
+        round_button = in_region(box, ROUND_BUTTON, task.width, task.height)
+        for other in boxes:
+            if other is box:
+                continue
+            if marker_in([folded(other.name)], RETREAT) and covers(other, point, task):
+                return other.name
+            if (round_button and cleaned(other.name) in (ENTER, *CANCEL)
+                    and abs(centre_of(other, task.width, task.height)[1] - point[1]) <= ROW):
+                return other.name
+    return None
+
+
+def guarding_enter(original):
+    """Wrap upstream's Enter so it presses nothing that may be a run's Escape.
+
+    Args:
+        original: `handle_enter`, as currently installed.
+
+    Returns:
+        The wrapped handler.
+    """
+    def handle_enter(task):
+        reason = escape_at_enter(task)
+        if reason is None:
+            return original(task)
+        clock = getattr(task, CLOCK, None)
+        if getattr(task, ENTER_LOGGED, None) != clock:
+            setattr(task, ENTER_LOGGED, clock)
+            task.log_info(f"not pressing Enter: it may be the run's Escape (read {reason!r})")
+        return False
+
+    return handle_enter
+
+
 def install(utils):
-    """Wrap both of upstream's fallbacks wherever the run reaches them, and stop on Rescue ahead of the centred Confirm.
+    """Wrap both of upstream's fallbacks and its Enter wherever the run reaches them, and stop on Rescue ahead of the centred Confirm.
 
     Args:
         utils: The loaded `utils` module, or None when it is not importable yet.
@@ -416,12 +495,14 @@ def install(utils):
         return
     wrap(utils, "handle_stuck_log", lambda handler: guarding_taps(handler, utils), TAPS_TAG)
     wrap(utils, "handle_center_confirm", guarding_confirm, CONFIRM_TAG)
+    # Over `src/en/enter.py`'s wrapper, which shows upstream the round button's box alone.
+    wrap(utils, "handle_enter", guarding_enter, ENTER_TAG)
     # In Chaos and Sortie this is well ahead of their own Rescue header stop, which comes after the Confirm.
     insert_before("handle_center_confirm", handle_rescue_screen)
 
 
 def apply():
-    """Keep blind taps off spend screens, stop on Rescue, and stop at a centred Confirm that would spend, delete or retreat."""
+    """Keep blind taps off spend screens and Enter off a run's Escape, stop on Rescue, and stop at a risky centred Confirm."""
     global _patched
     if _patched:
         return
