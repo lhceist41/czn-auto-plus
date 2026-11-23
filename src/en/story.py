@@ -134,16 +134,17 @@ def battle_auto_off(frame):
     return auto_off(frame) or button_off(frame, BATTLE_AUTO_IMAGE, AUTO_REGION)
 
 
-def tap(task, point):
+def tap(task, point, after_tap=AFTER_TAP):
     """Hover a bar button and then tap it, as upstream taps every button.
 
     Args:
         task: The running task.
         point: The button's centre as `(x, y)` screen fractions, from `find_icon`.
+        after_tap: How long to wait after the tap before the screen is read again.
     """
     task.move_relative(*point)
     task.sleep(AFTER_HOVER)
-    task.click(*point, after_sleep=AFTER_TAP)
+    task.click(*point, after_sleep=after_tap)
 
 
 def handle_skip_story(task):

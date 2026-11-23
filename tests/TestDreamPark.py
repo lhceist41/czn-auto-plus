@@ -20,8 +20,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(REPO_ROOT / "ok_tasks"))
 
-from src.en import daily, dream_park, remote  # noqa: E402
-from tests.fakes import HEIGHT, WIDTH  # noqa: E402
+from src.en import daily, dream_park, remote, story  # noqa: E402
+from tests.fakes import HEIGHT, WIDTH, FakeBox  # noqa: E402
 from tests.TestDailyMode import EVENT_LIST, EVENT_LIST_WITHOUT_PARK, ITEMS, LOBBY, MENU, NEAR, POINTS, Daily, Task, placed, run_pass  # noqa: E402
 
 # Dream Park's event page, opened from the Event list.
@@ -1660,6 +1660,7 @@ class TestWholeVisit(Park):
         self.assertPressed(daily.MENU, daily.EVENT, daily.DREAM_PARK, daily.ENTER_PARK, daily.PARK_MANAGE, daily.PARK_OPERATE, daily.SKILL_TAB,
                            daily.SKILL_UPGRADE, daily.FACILITIES_TAB, daily.UPGRADE, daily.PANEL_CLOSE, daily.PARK_LEAVE, daily.PARK_ACHIEVEMENTS,
                            daily.MANAGEMENT_TAB, daily.ACHIEVEMENTS_LEAVE, daily.PAGE_LEAVE)
+        self.assertEqual([story.AFTER_TAP] * 9 + [0] + [story.AFTER_TAP] * 6, self.task.waits)
         self.assertParkNothingForbidden()
         self.assertStopped("Daily finished: mail claimed; Dream Park: 1 upgrade, bought AI Automation Lv.6, 0 achievement claims (upgrades "
                            "ended: the next upgrade, Tagada, costs more than the profit)")
@@ -1679,9 +1680,140 @@ class TestWholeVisit(Park):
         for (x, y), (expected_x, expected_y) in zip(self.task.clicks, expected):
             self.assertAlmostEqual(expected_x, x, delta=0.005)
             self.assertAlmostEqual(expected_y, y, delta=0.005)
+        self.assertEqual([story.AFTER_TAP] * 6 + [0, story.AFTER_TAP], self.task.waits)
         self.assertEqual(1, self.park()["rank_ups"])
         self.assertEqual([5, 6], self.park()["ranks"])
         self.assertParkNothingForbidden()
+
+
+class TestUpgradePace(Park):
+    """The wait after a ride's Upgrade press, which ends when its level reads risen, and the level check that keeps it from
+    pressing twice."""
+
+    # What a look at the pressed row's level zone costs, in the clock these tests move.
+    LOOK = 0.03
+
+    def setUp(self):
+        super().setUp()
+        self.park()["phase"] = daily.TO_OPERATE
+        self.tapped, self.returned = [], []
+        press = daily.press
+
+        def timed_press(*args, **kwargs):
+            result = press(*args, **kwargs)
+            self.returned.append(self.clock.now)
+            return result
+
+        patcher = mock.patch.object(daily, "press", timed_press)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def timed(self, reads=(), cost=LOOK):
+        """Let every wait and look move the clock, note when each tap lands, and script the looks.
+
+        Args:
+            reads: The level each look at the zone reads, in order: a text such as `Lv.30/50`, or None for a look that
+                reads nothing. Once they run out every look reads nothing.
+            cost: What each look costs.
+        """
+        task, click = self.task, self.task.click
+        reads = list(reads)
+
+        def timed_click(x, y, after_sleep=0):
+            click(x, y, after_sleep)
+            self.tapped.append(self.clock.now)
+            self.tick(after_sleep)
+
+        def look():
+            self.tick(cost)
+            text = reads.pop(0) if reads else None
+            return [] if text is None else [FakeBox(text, 0.933, 0.527)]
+
+        task.sleep, task.click, task.zone_read = self.tick, timed_click, look
+
+    def waited(self):
+        """How long the first press waited after its tap."""
+        return self.returned[0] - self.tapped[0]
+
+    def test_the_zone_holds_the_pressed_rows_level_and_nothing_else(self):
+        """Every Upgrade row of the live list: its zone holds its own `Lv.N/50`, not its rate line or the row above's price."""
+        task = Task().show(FACILITIES)
+        rows = dream_park.facility_rows(task)
+        self.assertEqual(3, len(rows))
+        for ride in rows:
+            with self.subTest(ride=ride.name):
+                button_y = daily.centre_of(ride.button, WIDTH, HEIGHT)[1]
+                inside = [box.name for box in task.all_texts if daily.in_region(box, daily.level_zone(button_y), WIDTH, HEIGHT)]
+                self.assertEqual([f"Lv.{ride.level}/50"], inside)
+
+    def test_the_wait_ends_on_the_look_that_reads_the_rise(self):
+        self.timed([None, "Lv.29/50", "Lv.30/50"])
+        self.show(FACILITIES)
+        self.assertPressed(daily.UPGRADE)
+        self.assertEqual(3, len(self.task.zones))
+        self.assertAlmostEqual(3 * (daily.LEVEL_POLL + self.LOOK), self.waited())
+        self.assertLess(self.waited(), story.AFTER_TAP)
+
+    def test_without_the_rise_the_wait_is_the_full_second_however_long_a_look_takes(self):
+        for look in (0.0, self.LOOK, 0.1, daily.LEVEL_POLL):
+            with self.subTest(look=look):
+                self.fresh()
+                self.park()["phase"] = daily.TO_OPERATE
+                self.tapped, self.returned = [], []
+                self.timed(["Lv.29/50"] * 20, look)
+                self.show(FACILITIES)
+                self.assertPressed(daily.UPGRADE)
+                self.assertGreater(len(self.task.zones), 1)
+                self.assertAlmostEqual(story.AFTER_TAP, self.waited())
+
+    def test_looks_that_read_nothing_end_the_wait_at_the_full_second(self):
+        self.timed()
+        self.show(FACILITIES)
+        self.assertPressed(daily.UPGRADE)
+        self.assertGreater(len(self.task.zones), 3)
+        self.assertAlmostEqual(story.AFTER_TAP, self.waited())
+
+    def test_a_lower_or_unreadable_level_in_the_zone_never_ends_the_wait(self):
+        self.timed(["Lv.28/50", "Lv.2/50", "Lv./50", "Lv.29/5O"] * 5)
+        self.show(FACILITIES)
+        self.assertAlmostEqual(story.AFTER_TAP, self.waited())
+
+    def test_a_build_keeps_the_full_wait_and_reads_no_zone(self):
+        self.timed(["Lv.1/50"] * 20)
+        self.show(FACILITIES_TOP_SPIN_BUILD)
+        self.assertPressed(daily.BUILD)
+        self.assertEqual([story.AFTER_TAP], self.task.waits)
+        self.assertEqual([], self.task.zones)
+
+    def test_a_rise_read_in_the_zone_never_presses_until_the_list_shows_it(self):
+        """The look reads the rise at once, but the list the next passes read still shows the old level: no second press
+        inside the window, then the retry the base makes, then the stop."""
+        self.timed(["Lv.30/50"] * 20)
+        self.show(FACILITIES)
+        pressed = self.park()["pending"][2]
+        looks = 0
+        while self.clock.now - pressed < daily.UPGRADE_WAIT:
+            self.assertTrue(self.show(FACILITIES))
+            self.assertPressed(daily.UPGRADE)
+            looks += 1
+            self.tick(0.1)
+        self.assertGreater(looks, 10)
+        while not self.task.disabled:
+            self.show(FACILITIES)
+            self.tick(0.1)
+        self.assertPressed(daily.UPGRADE, daily.UPGRADE)
+        self.assertGreaterEqual(self.tapped[1] - self.tapped[0], daily.UPGRADE_WAIT)
+        self.assertStopped("did not take two presses on Tagada")
+
+    def test_a_rise_lets_the_next_upgrade_go_on_the_first_look_at_the_list(self):
+        risen = edited(FACILITIES, ("Lv.29/50", "Lv.30/50"), ("29/36", "30/36"), ("99.21K", "93.72K"), ("6.37K", "7.64K"))
+        self.timed([None, "Lv.30/50"])
+        self.show(FACILITIES)
+        self.tick(0.1)
+        self.show(risen)
+        self.assertPressed(daily.UPGRADE, daily.UPGRADE)
+        self.assertLess(self.tapped[1] - self.tapped[0], story.AFTER_TAP)
+        self.assertEqual(0, self.park()["no_rise"]["Tagada"])
 
 
 class TestSkillRows(unittest.TestCase):

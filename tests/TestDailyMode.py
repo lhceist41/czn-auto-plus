@@ -31,7 +31,7 @@ import utils_story  # noqa: E402,F401
 from ok import TriggerTask  # noqa: E402
 from ok.device.interaction_methods.post_message import PostMessageInteraction  # noqa: E402
 
-from src.en import daily, handlers, skip_tutorial, spend_guard, stuck_stop  # noqa: E402
+from src.en import daily, handlers, skip_tutorial, spend_guard, story, stuck_stop  # noqa: E402
 from tests.fakes import HEIGHT, WIDTH, FakeBox  # noqa: E402
 
 START = 1_000.0
@@ -323,6 +323,9 @@ class Task:
         self.frame = None
         self.enabled = True
         self.clicks = []
+        self.waits = []
+        self.zones = []
+        self.zone_read = list
         self.swipes = []
         self.logged = []
         self.notifications = []
@@ -351,6 +354,12 @@ class Task:
 
     def click(self, x, y, after_sleep=0):
         self.clicks.append((x, y))
+        self.waits.append(after_sleep)
+
+    def ocr(self, x, y, to_x, to_y):
+        """Read a zone of the screen with `zone_read`, which reads nothing unless a test says otherwise."""
+        self.zones.append((x, y, to_x, to_y))
+        return self.zone_read()
 
     def swipe_relative(self, from_x, from_y, to_x, to_y, duration=0.5, settle_time=0):
         self.swipes.append((from_x, from_y, to_x, to_y, duration))
@@ -965,6 +974,16 @@ class TestStops(Daily):
                     daily.press(self.task, target, box)
                 self.assertEqual(limit, len(self.task.clicks))
                 self.assertStopped(f"{target} was pressed {limit} times")
+
+    def test_only_a_rides_upgrade_watches_its_level_instead_of_the_full_wait(self):
+        for target in daily.TAP_LIMITS:
+            with self.subTest(target=target):
+                self.task = Task()
+                box = FakeBox(target, *POINTS[target]) if daily.TARGETS[target] is None else None
+                daily.press(self.task, target, box, 7)
+                upgrade = target == daily.UPGRADE
+                self.assertEqual([0 if upgrade else story.AFTER_TAP], self.task.waits)
+                self.assertEqual(upgrade, bool(self.task.zones))
 
     def test_the_limits_are_as_designed(self):
         special = {daily.CLAIM_ALL: 2, daily.ATTENDANCE_CLAIM: 2, daily.WAKE: 2, daily.RANK_UP: 2, daily.UPGRADE: 200, daily.CLAIM: 30, daily.SKIP_TICK: 1,

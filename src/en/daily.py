@@ -13,6 +13,7 @@ upgraded while one level pays for itself by the next visit, and no other skill i
 Imported by ok-script before `ok_tasks/` is on `sys.path`, so upstream is reached only through `handlers.loaded`.
 """
 
+import math
 import re
 import time
 from collections import Counter, namedtuple
@@ -29,7 +30,7 @@ from src.en.screen import centre_of, colour_share, frame_of, in_region, patch_of
 from src.en.dialog_ticks import UNTICKED, box_state
 from src.en.spend_guard import (ACCOUNT, DELETION, MONEY, PURCHASE, RESCUE_HEADER, RESCUE_PHRASES, COMPACT_SKIP_DIALOG, cleaned, folded,
                                 handle_rescue_screen, marker_in, shown)
-from src.en.story import SKIP_IMAGE, SKIP_MATCH, find_icon, grey, tap
+from src.en.story import AFTER_TAP, SKIP_IMAGE, SKIP_MATCH, find_icon, grey, tap
 
 logger = Logger.get_logger(__name__)
 
@@ -258,6 +259,10 @@ PARK_SECONDS = 600
 NAV_WAIT = 3
 SETTLE = 2
 UPGRADE_WAIT = 2
+# How often a pressed ride's level is read while its press waits, and where it reads: `Lv.N/50` sits 0.106-0.108 above
+# the button at x 0.93, with the rate line 0.055 above the button and the row above's price 0.18 above it, both outside.
+LEVEL_POLL = 0.15
+LEVEL_ZONE = (0.86, 0.135, 0.08)
 RANK_WAIT = 5
 # Why the Skill tab was left when AI Automation stopped taking presses, which the finish line names.
 NO_SKILL_RISE = "AI Automation's level did not rise after two presses"
@@ -394,13 +399,52 @@ def boxes_at(task, point):
     return [box for box in getattr(task, "all_texts", None) or [] if box.x <= x <= box.x + box.width and box.y <= y <= box.y + box.height]
 
 
-def press(task, target, box=None):
+def level_zone(button_y):
+    """Give where a ride's level reads, from its Upgrade button's height.
+
+    Args:
+        button_y: The button's centre down the screen, as a fraction.
+
+    Returns:
+        The zone as `(left, top, right, bottom)` screen fractions.
+    """
+    left, above, below = LEVEL_ZONE
+    return left, button_y - above, 1.0, button_y - below
+
+
+def tap_upgrade(task, point, level):
+    """Press a ride's Upgrade, then wait until its level reads risen, never longer than any other press waits.
+
+    Only the row's own level is read, a small zone, so a look costs far less than a pass. What it reads never presses:
+    the next pass reads the whole list and `ride_risen` decides as before. Without a rise the wait is `AFTER_TAP`, as for
+    any other press.
+
+    Args:
+        task: The Daily task, whose sleep drops the frame so each look reads a new one.
+        point: The button's centre as `(x, y)` screen fractions.
+        level: The ride's level before the press.
+    """
+    tap(task, point, 0)
+    deadline = time.monotonic() + AFTER_TAP
+    for _ in range(math.ceil(AFTER_TAP / LEVEL_POLL)):
+        # A look starts only while it and the sleep before it fit in what is left: a zone read took 13-48ms offline.
+        if deadline - time.monotonic() < 2 * LEVEL_POLL:
+            break
+        task.sleep(LEVEL_POLL)
+        read = (dream_park.LEVEL.search(box.name) for box in task.ocr(*level_zone(point[1])) or [])
+        if any(found and int(found.group(1)) > level for found in read):
+            return
+    task.sleep(max(deadline - time.monotonic(), 0))
+
+
+def press(task, target, box=None, level=None):
     """Press one of Daily's targets, unless its limit is reached or what lies under it must never be pressed.
 
     Args:
         task: The Daily task.
         target: A key of `TARGETS`.
         box: The OCR box for a text button, None for a fixed point.
+        level: For a ride's Upgrade, the ride's level before the press, which ends the wait once it reads risen.
 
     Returns:
         True, which claims the frame: the target was pressed, or Daily has stopped.
@@ -417,7 +461,10 @@ def press(task, target, box=None):
             return stop(task, f"Stopped: {target} would have pressed {hit.name!r}. Check the game, then press Start again.")
     taps[target] += 1
     task.log_info(f"pressing {target}")
-    tap(task, point)
+    if target == UPGRADE and level is not None:
+        tap_upgrade(task, point, level)
+    else:
+        tap(task, point)
     return True
 
 
@@ -999,7 +1046,7 @@ def handle_daily_facilities(task):
     if ride.action == dream_park.BUILD:
         return press(task, BUILD, ride.button)
     park["upgrades"] += 1
-    return press(task, UPGRADE, ride.button)
+    return press(task, UPGRADE, ride.button, ride.level)
 
 
 def skill_due(task):
