@@ -1,10 +1,12 @@
 """Read what the battle screen says about the moment a card is being chosen in.
 
 `SortieMode.run` pays for one full-frame OCR a second and every handler reads the result for free, so
-everything here comes out of that pass or out of raw pixels. Nothing in this module runs OCR.
+everything here comes out of that pass or out of raw pixels. The one exception is `enemies`, which reads each enemy's numbers off a
+zoomed crop because the full-frame pass drops too many of them.
 """
 
 import re
+from collections import namedtuple
 from functools import lru_cache
 from pathlib import Path
 
@@ -133,6 +135,25 @@ RETICLE_RADIUS = (0.059, 0.078)
 # Canny's upper edge threshold and the accumulator votes a ring needs. Across 847 captures the rings found were real ones or scenery.
 RETICLE_EDGES = 120
 RETICLE_VOTES = 40
+# An enemy's action counter digit, as a half-size around the counter's centre. Measured on a 1080p capture.
+COUNTER_DIGIT_HALF = (0.016, 0.026)
+# How much the HP number and the counter digit are enlarged, and the black border each enlarged crop gets, in pixels before enlarging.
+# Across 273 enemies in 228 battle frames, the full-frame pass had a number for 237, and 21 of those disagreed with the frame: a 1 dropped
+# or added, or the HP the enemy had shown a moment earlier. The enlarged crop read 271, and none of the 40 checked by hand was wrong.
+HEALTH_ZOOM = 3
+COUNTER_ZOOM = 4
+CROP_MARGIN = 12
+# The infinity a counter shows for an enemy that will not act often reads as an 8. Its glyph is about twice as wide as it is tall and the 8
+# about two thirds as wide, so the white strokes in the middle of the diamond tell them apart.
+GLYPH_HALF = (0.010, 0.013)
+INFINITY_WIDTH = 1.2
+COUNTER_DIGITS = re.compile(r"^\d{1,2}$")
+# How sure OCR has to be of a counter. Of 241 counter readings in 228 battle frames, the one wrong digit, a 7 taken for a 1, scored 0.81
+# and every infinity taken for an 8 under 0.85, while the 225 that scored 0.9 or more were all right.
+COUNTER_SURE = 0.9
+# What `enemies` knows about one enemy: its counter's x as a fraction across the frame, its current HP, how many more cards can be played
+# before it acts, and the attribute it is weak to. Each of the last three is None when it was not read for sure.
+Foe = namedtuple("Foe", ["x", "health", "counter", "weakness"])
 
 
 def box_around(centre_x, centre_y, half):
@@ -485,6 +506,102 @@ def boss_x(task):
         else:
             unsummoned.append(centre_of(number, task.width, task.height)[0])
     return unsummoned[0] if summoned and len(unsummoned) == 1 else None
+
+
+def enlarged(zoom):
+    """Build the frame processor that enlarges an enemy's crop and pads it with black, so OCR finds every digit in it.
+
+    Args:
+        zoom: How many times to enlarge the crop.
+
+    Returns:
+        A function from the cut-out pixels to the enlarged ones inside a black border.
+    """
+    def enlarge(image):
+        margin = CROP_MARGIN * zoom
+        image = cv2.resize(image, None, fx=zoom, fy=zoom, interpolation=cv2.INTER_CUBIC)
+        return cv2.copyMakeBorder(image, margin, margin, margin, margin, cv2.BORDER_CONSTANT, value=(0, 0, 0))
+    return enlarge
+
+
+def numbers_in(task, frame, region, zoom, pattern, threshold=0):
+    """Read the numbers on an enlarged crop of the frame.
+
+    Args:
+        task: The running task, for its OCR.
+        frame: The frame to read, from `frame_of`.
+        region: Where to read, as a relative box, cut back to the frame where it runs off it.
+        zoom: How many times to enlarge the crop.
+        pattern: What a reading has to look like to count.
+        threshold: How sure OCR has to be of a reading, or 0 for its own default.
+
+    Returns:
+        Every reading that matches, as text.
+    """
+    left, top, right, bottom = max(0.0, region[0]), max(0.0, region[1]), min(1.0, region[2]), min(1.0, region[3])
+    if left >= right or top >= bottom:
+        return []
+    read = [box.name.strip() for box in task.ocr(left, top, right, bottom, frame=frame, threshold=threshold, frame_processor=enlarged(zoom)) or []]
+    return [text for text in read if pattern.match(text)]
+
+
+def counter_glyph_wide(frame, centre_x, centre_y):
+    """Say whether the white figure inside an action counter is drawn wider than it is tall, as the infinity is and no digit is.
+
+    Args:
+        frame: The frame to read.
+        centre_x: The counter's centre across the frame, as a fraction.
+        centre_y: The counter's centre down the frame, as a fraction.
+
+    Returns:
+        True when the largest white shape in the middle of the diamond is wide. False when it is not, or nothing white is there.
+    """
+    patch = patch_of(frame, box_around(centre_x, centre_y, GLYPH_HALF))
+    if patch is None or patch.size == 0:
+        return False
+    # The largest shape rather than every white pixel, so a sliver of bright scenery at a corner cannot stretch the figure.
+    count, _, stats, _ = cv2.connectedComponentsWithStats(white_mask(patch), 8)
+    if count < 2:
+        return False
+    largest = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
+    return bool(stats[largest, cv2.CC_STAT_WIDTH] > INFINITY_WIDTH * stats[largest, cv2.CC_STAT_HEIGHT])
+
+
+def enemies(task):
+    """Read every enemy on screen: where it stands, its HP, how soon it acts and what it is weak to.
+
+    Args:
+        task: The running task, whose `all_texts` holds the full-frame OCR pass and whose OCR reads the zoomed crops.
+
+    Returns:
+        A tuple of `Foe`, left to right. The HP is the zoomed crop's number, or a full-frame number of three digits or more when the
+        crop reads none, since that pass drops a leading 1 and can hold a number from an earlier frame. The counter is the crop's
+        number, and None for the infinity of an enemy that will not act. A counter with neither number is left out: card art in the
+        same magenta passes for one.
+    """
+    frame = frame_of(task)
+    numbers = [box for box in getattr(task, "all_texts", None) or [] if HEALTH_DIGITS.match(box.name)]
+    found = []
+    for centre_x, centre_y in enemy_counters(frame, TARGET_BAND):
+        region = (centre_x + HEALTH_NUMBER[0], centre_y + HEALTH_NUMBER[1], centre_x + HEALTH_NUMBER[2], centre_y + HEALTH_NUMBER[3])
+        full = next((box.name for box in numbers if in_region(box, region, task.width, task.height)), None)
+        zoomed = set(numbers_in(task, frame, region, HEALTH_ZOOM, HEALTH_DIGITS))
+        if len(zoomed) == 1:
+            health = int(zoomed.pop())
+        elif full is not None and (full in zoomed or not zoomed and len(full) >= 3):
+            health = int(full)
+        else:
+            health = None
+        counted = set(numbers_in(task, frame, box_around(centre_x, centre_y, COUNTER_DIGIT_HALF), COUNTER_ZOOM, COUNTER_DIGITS,
+                                 COUNTER_SURE))
+        counter = int(counted.pop()) if len(counted) == 1 else None
+        if counter == 8 and counter_glyph_wide(frame, centre_x, centre_y):
+            counter = None
+        if health is None and counter is None:
+            continue
+        badge = box_around(centre_x + WEAKNESS_OFFSET[0], centre_y + WEAKNESS_OFFSET[1], WEAKNESS_HALF)
+        found.append(Foe(round(centre_x, 3), health, counter, attribute_of(patch_of(frame, badge))))
+    return tuple(found)
 
 
 def reticle_x(frame):

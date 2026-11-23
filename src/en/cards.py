@@ -150,7 +150,9 @@ Board = namedtuple("Board", [
     "enemies",
     # The share of the team's HP left after the enemy's next hit, from `board.team_after_hit`. None when not read.
     "health",
-], defaults=[BASE_ACTION_POINTS, None, None, (), (), (), (), 0, (), DECK, False, 1, None])
+    # Every enemy read off the screen, as `board.Foe` left to right: where it stands, its HP and how soon it acts. Empty when not read.
+    "foes",
+], defaults=[BASE_ACTION_POINTS, None, None, (), (), (), (), 0, (), DECK, False, 1, None, ()])
 
 # How many distinct readings to remember the folding of. OCR invents new misspellings all session, so this
 # is bounded rather than unlimited, and it is far larger than the ten names one frame ever asks about.

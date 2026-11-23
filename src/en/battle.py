@@ -8,6 +8,7 @@ keeps the frame around it, and a card the Play Priority list names is still play
 """
 
 import collections
+import json
 import math
 import re
 import time
@@ -669,6 +670,22 @@ def points_left(task, frame):
         if len(read) == 1 and len(read[0]) == 1 and read[0].isdigit():
             return int(read[0])
     return None
+
+
+def board_line(state, unread):
+    """Write down what a plan was made against, so a run's decisions can be judged afterwards from its log.
+
+    Args:
+        state: The `cards.Board` the plan was made against.
+        unread: Whether the Action Point count did not read, so `action_points` is the stand-in for one.
+
+    Returns:
+        One line of JSON holding only what the battle screen showed.
+    """
+    return json.dumps({"action_points": state.action_points, "points_read": not unread, "hand": list(state.hand), "played": list(state.played),
+                       "weakness": state.weakness, "invulnerable": state.invulnerable, "enemies": state.enemies,
+                       "health": None if state.health is None else round(state.health, 3), "foes": [foe._asdict() for foe in state.foes]},
+                      ensure_ascii=False)
 
 
 def out_of_points(task):
@@ -1399,7 +1416,8 @@ def install():
             task.log_info(f"turn opens with {budget}, {turn.enemies} enemy counter(s), {against}, hand {names}")
         state = cards.Board(action_points=points, weakness=turn.weakness, hand=tuple(names), played=tuple(turn.played),
                             last_turn=turn.last_turn, battle=(*turn.earlier, *turn.played), hand_size=count or 0, kept=turn.kept, invulnerable=turn.invulnerable, enemies=turn.enemies or 1,
-                            health=board.team_after_hit(frame_of(task)))
+                            health=board.team_after_hit(frame_of(task)), foes=board.enemies(task))
+        task.log_info(f"board {board_line(state, unread)}")
         card = choose(hand, state, turn.refused)
         if card is None and unread and points < cards.BASE_ACTION_POINTS:
             card = choose(hand, state._replace(action_points=cards.BASE_ACTION_POINTS), turn.refused)
