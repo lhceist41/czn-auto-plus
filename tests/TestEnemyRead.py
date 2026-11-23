@@ -297,6 +297,25 @@ class TestEnemiesReachThePlan(unittest.TestCase):
             utils_sortie._try_all_card_keys(task, len(task.hand_cards))
             self.assertEqual(3, plan.call_args.args[1].enemies)
 
+    def test_a_frame_with_a_card_raised_does_not_lower_the_count(self):
+        # On a saved frame, a raised Gale Strike dimmed the other two counters and left only its target's X: three enemies read as one.
+        three = [(0.43, 0.33), (0.56, 0.19), (0.69, 0.33)]
+        target = (board.Foe(0.558, None, None, None),)
+        for raised, enemies in ((True, 3), (False, 1)):
+            with self.subTest(raised=raised), upstream(hand(ATTACK, BIG_ATTACK)) as (utils_sortie, task), \
+                    mock.patch.object(cards, "plan", wraps=cards.plan) as plan:
+                battle.install()
+                with mock.patch.object(board, "enemies", lambda task: ()), \
+                        mock.patch.object(board, "enemy_counters", lambda frame, band=board.ENEMY_BAND: three):
+                    utils_sortie._try_all_card_keys(task, len(task.hand_cards))
+                self.assertEqual(3, plan.call_args.args[1].enemies)
+                with mock.patch.object(board, "enemies", lambda task: target), \
+                        mock.patch.object(board, "enemy_counters", lambda frame, band=board.ENEMY_BAND: []), \
+                        mock.patch.object(board, "card_raised", lambda frame: raised):
+                    utils_sortie._try_all_card_keys(task, len(task.hand_cards))
+                self.assertEqual(2, plan.call_count)
+                self.assertEqual(enemies, plan.call_args.args[1].enemies)
+
 
 if __name__ == "__main__":
     unittest.main()

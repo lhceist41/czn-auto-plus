@@ -181,10 +181,12 @@ def foe_line(foe):
         foe: A `board.Foe`.
 
     Returns:
-        A dict. `hp_source` is "both" when the zoomed crop and the full-frame pass read the same HP, the only HP a kill is planned on,
-        "one" when only one of them gave it, and null with no HP.
+        A dict. `hp_source` is "both" when the zoomed crop and the full-frame pass read the same HP, "crop" when the crop read one
+        number and that pass read none, "one" when only one of them gave it otherwise, and null with no HP. A kill is planned on
+        "both" and "crop", a hit only learnt from "both".
     """
-    return {"x": foe.x, "hp": foe.health, "hp_source": None if foe.health is None else "both" if foe.sure else "one",
+    source = "both" if foe.agreed else "crop" if foe.sure else "one"
+    return {"x": foe.x, "hp": foe.health, "hp_source": None if foe.health is None else source,
             "counter": foe.counter, "weakness": foe.weakness}
 
 

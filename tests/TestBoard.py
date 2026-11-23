@@ -42,6 +42,8 @@ SUMMONED_AT = (820, 80)
 SUMMONED_HEALTH = (("1179", 0.725, 0.108), ("253", 0.535, 0.444), ("206", 0.910, 0.444))
 # A raised attack card's reticle in each of its two colours, cut with the enemy behind it, and the x of that enemy's HP number.
 RETICLES = (("reticle_white", (894, 395), 0.522), ("reticle_cyan", (1128, 402), 0.642))
+# The hint a raised card shows for Enter and ESC, cut over a light scene from another frame than the hint it is matched against.
+CARD_RAISED_AT = (0, 930)
 # The two Weakness badges on the Sortie boss select screen, Shadow Collector's Passion and Cold, Sweet Dream's Void.
 BOSS_BADGES_AT = (820, 785)
 # Upstream's boss entries for that screen, at the points it reads each name from.
@@ -300,6 +302,17 @@ class TestRealEnemies(unittest.TestCase):
                 self.assertAlmostEqual(board.reticle_x(pasted(name, *at)), health, delta=0.01)
         # The same enemies with no card raised.
         self.assertIsNone(board.reticle_x(pasted("summoned_minions", *SUMMONED_AT)))
+
+    def test_a_raised_card_is_told_by_its_key_hint(self):
+        self.assertTrue(board.card_raised(pasted("card_raised_hint", *CARD_RAISED_AT)))
+        # With no card raised, the Ego slots and the EP bar stand there instead.
+        frame = pasted("ego_slot_used", *EGO_SLOTS_AT)
+        left, top = EP_BAR_AT
+        bar = fixture("ep_bar_six")
+        frame[top:top + bar.shape[0], left:left + bar.shape[1]] = bar
+        self.assertFalse(board.card_raised(frame))
+        self.assertFalse(board.card_raised(flat(0)))
+        self.assertFalse(board.card_raised(None))
 
     def test_a_real_attack_flash_is_not_an_enemy(self):
         # It is the right colour, well over the minimum area and within the squareness band, so the height is

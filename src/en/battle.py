@@ -1493,7 +1493,8 @@ def install():
         # An attack's flash can pass for extra counters, and an enemy that dies stays gone. Too few only values all-enemy damage as before.
         # The enemies read also count those behind an X diamond, read or not, while one read at 0 HP is dying and stays out of both.
         seen = max(len(board.enemy_counters(frame_of(task))), len(foes))
-        if seen:
+        # A raised card dims the counters it is not aimed at, so its frame would hold the turn's count low.
+        if seen and not board.card_raised(frame_of(task)):
             turn.enemies = min(turn.enemies or seen, seen)
         if turn.weakness is None:
             # Read again until a frame shows one. Live, a turn's first frame showed none and its second showed Order.

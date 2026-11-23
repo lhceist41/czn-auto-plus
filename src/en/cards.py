@@ -171,7 +171,8 @@ Board = namedtuple("Board", [
     "deck",
     # Whether an enemy shows Absolute Invincibility, from `board.enemy_invulnerable`, so damage is worth nothing this turn.
     "invulnerable",
-    # How many enemies are on screen, from `board.enemy_counters`, so damage to all enemies counts once for each. 1 when not known.
+    # How many enemies are on screen, the fewest any frame of the turn without a card raised showed by its counters or `board.enemies`,
+    # whichever showed more, so damage to all enemies counts once for each. 1 when not known.
     "enemies",
     # The share of the team's HP left after the enemy's next hit, from `board.team_after_hit`. None when not read.
     "health",
@@ -816,7 +817,8 @@ def note_hit(name, before, after):
 
     Only a plain hit on one enemy teaches anything: an attack with damage to all enemies, with a figure the text leaves as X or with
     no owner is skipped, and so is any pair of reads where not exactly one enemy lost HP, any enemy gained some, or the HP of the one
-    that lost it was not read for sure both times. A hit that kills leaves no HP to compare, so the figures lean low, the safe way.
+    that lost it was not read the same by the zoomed crop and the full-frame pass both times. A hit that kills leaves no HP to compare,
+    so the figures lean low, the safe way.
 
     Args:
         name: The card the game took.
@@ -839,7 +841,7 @@ def note_hit(name, before, after):
     if len(dropped) != 1 or any(later.health > foe.health for foe, later in pairs):
         return None
     foe, later = dropped[0]
-    if not (foe.sure and later.sure):
+    if not (foe.agreed and later.agreed):
         return None
     figure = (foe.health - later.health) * 100 / doing.damage
     HITS.setdefault(who, deque(maxlen=HIT_MEMORY)).append(figure)
@@ -941,9 +943,9 @@ def kills(picked, board):
 def lethal(fixed, board):
     """Find the cheapest set of affordable attacks that kills the most enemies for sure, to play before anything else.
 
-    A kill is only planned on HP read the same by the zoomed crop and the full-frame pass, and on the low end of the damage the
-    attacker's own hits have done, `SURE_HIT`, once `CALIBRATED` of them have been seen. Live, the bot buffed three cards deep into a
-    turn whose first attack would have finished the fight.
+    A kill is only planned on HP the zoomed crop read as one number that the full-frame pass read the same or not at all, and on the
+    low end of the damage the attacker's own hits have done, `SURE_HIT`, once `CALIBRATED` of them have been seen. Live, the bot
+    buffed three cards deep into a turn whose first attack would have finished the fight.
 
     Args:
         fixed: The playable hand cards with a fixed price.

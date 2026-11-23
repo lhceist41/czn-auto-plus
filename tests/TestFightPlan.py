@@ -53,7 +53,7 @@ def one(health, sure=True, counter=None):
     Returns:
         The enemies, as `Board.foes` holds them.
     """
-    return (Foe(0.566, health, counter, None, sure),)
+    return (Foe(0.566, health, counter, None, sure, sure),)
 
 
 def played(chosen):
@@ -267,23 +267,25 @@ class TestLearningHits(unittest.TestCase):
         cards.HITS.update(self.saved)
 
     def test_a_plain_hit_on_one_enemy_is_learnt(self):
-        before = (Foe(0.55, 300, 4, None, True), Foe(0.75, 200, 5, None, True))
-        after = (Foe(0.551, 195, 3, None, True), Foe(0.75, 200, 4, None, True))
+        before = (Foe(0.55, 300, 4, None, True, True), Foe(0.75, 200, 5, None, True, True))
+        after = (Foe(0.551, 195, 3, None, True, True), Foe(0.75, 200, 4, None, True, True))
         self.assertEqual(105, cards.note_hit("Strike", before, after))
         self.assertEqual([105], list(cards.HITS["Mei Lin"]))
 
     def test_a_hit_that_cannot_be_told_apart_is_not_learnt(self):
-        sure = (Foe(0.55, 300, 4, None, True),)
+        sure = (Foe(0.55, 300, 4, None, True, True),)
         cases = {
-            "unsure before": ("Strike", (Foe(0.55, 300, 4, None, False),), (Foe(0.55, 195, 3, None, True),)),
+            "unsure before": ("Strike", (Foe(0.55, 300, 4, None, False),), (Foe(0.55, 195, 3, None, True, True),)),
             "unsure after": ("Strike", sure, (Foe(0.55, 195, 3, None, False),)),
-            "damage to all enemies": ("Drone Bombing", sure, (Foe(0.55, 195, 3, None, True),)),
-            "a figure left as X": ("Rising Dragon Spire", sure, (Foe(0.55, 195, 3, None, True),)),
+            "the crop alone before": ("Strike", (Foe(0.55, 300, 4, None, True),), (Foe(0.55, 195, 3, None, True, True),)),
+            "the crop alone after": ("Strike", sure, (Foe(0.55, 195, 3, None, True),)),
+            "damage to all enemies": ("Drone Bombing", sure, (Foe(0.55, 195, 3, None, True, True),)),
+            "a figure left as X": ("Rising Dragon Spire", sure, (Foe(0.55, 195, 3, None, True, True),)),
             "the enemy died": ("Strike", sure, ()),
-            "two enemies lost HP": ("Strike", sure + (Foe(0.75, 200, 5, None, True),),
-                                    (Foe(0.55, 195, 3, None, True), Foe(0.75, 150, 4, None, True))),
-            "an enemy gained HP": ("Strike", sure + (Foe(0.75, 200, 5, None, True),),
-                                   (Foe(0.55, 195, 3, None, True), Foe(0.75, 250, 4, None, True))),
+            "two enemies lost HP": ("Strike", sure + (Foe(0.75, 200, 5, None, True, True),),
+                                    (Foe(0.55, 195, 3, None, True, True), Foe(0.75, 150, 4, None, True, True))),
+            "an enemy gained HP": ("Strike", sure + (Foe(0.75, 200, 5, None, True, True),),
+                                   (Foe(0.55, 195, 3, None, True, True), Foe(0.75, 250, 4, None, True, True))),
             "no HP lost": ("Strike", sure, sure),
         }
         for name, (card, before, after) in cases.items():
@@ -300,7 +302,7 @@ class TestLearningHits(unittest.TestCase):
 
     def test_only_the_newest_hits_are_kept(self):
         for figure in range(cards.HIT_MEMORY + 5):
-            cards.note_hit("Strike", (Foe(0.55, 1000, 4, None, True),), (Foe(0.55, 1000 - figure - 1, 3, None, True),))
+            cards.note_hit("Strike", (Foe(0.55, 1000, 4, None, True, True),), (Foe(0.55, 1000 - figure - 1, 3, None, True, True),))
         self.assertEqual(cards.HIT_MEMORY, len(cards.HITS["Mei Lin"]))
         self.assertEqual(6, min(cards.HITS["Mei Lin"]))
 
@@ -413,6 +415,21 @@ class TestReadingSureHealth(unittest.TestCase):
                         self.assertFalse(any(card.get("kills") for card in chosen))
                     # The same 17 read for sure is a kill, so it is the read, not the damage, that holds the plan back.
                     self.assertTrue(cards.plan(hand(*BUFFS_AT_8_HP), cards.Board(foes=(foes[0]._replace(sure=True),)))[0].get("kills"))
+
+    def test_only_hp_both_readers_agreed_on_teaches_a_hit(self):
+        # 178 read by both, then a cover takes the 8 and the full-frame pass reads nothing: the crop's 17 is sure for a kill, but taken
+        # for a hit it would teach a figure far too high, and the saved hits would keep it.
+        def read(crop, full):
+            reads = {"enemy_eight": ([(crop, 0.989)], [("8", 1.0)])}
+            return board.enemies(CropTask(["enemy_eight"], full=[health_box("enemy_eight", full)] if full else [], reads=reads))
+
+        both, crop_alone = read("178", "178"), read("17", None)
+        self.assertEqual([(178, True, True)], [(foe.health, foe.sure, foe.agreed) for foe in both])
+        self.assertEqual([(17, True, False)], [(foe.health, foe.sure, foe.agreed) for foe in crop_alone])
+        with hits({}):
+            self.assertIsNone(cards.note_hit("Strike", both, crop_alone))
+            self.assertEqual({}, cards.HITS)
+            self.assertIsNotNone(cards.note_hit("Strike", both, read("75", "75")))
 
 
 # The hits saved at the end of a run whose sure kills came a card late.

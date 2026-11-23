@@ -41,7 +41,7 @@ TWO_TURNS = [
 
 
 def two_foes():
-    return [Foe(0.55, 300, 3, None, True), Foe(0.70, 200, 5, None, True)]
+    return [Foe(0.55, 300, 3, None, True, True), Foe(0.70, 200, 5, None, True, True)]
 
 
 class Waiting(Pressed):
@@ -463,6 +463,18 @@ class TestNothingChanges(Recording):
                 self.fight(utils_task=(utils_sortie, task))
                 self.fight(utils_task=(utils_sortie, task), node=2)
         self.assertEqual(2, warning.call_count)
+
+
+class TestHealthSource(unittest.TestCase):
+    """Each enemy's HP is written down with the readers that gave it, and the replay reads it back the same."""
+
+    def test_the_record_tells_a_lone_crop_read_from_two_readers_agreeing(self):
+        for foe, source in ((Foe(0.55, 178, 3, None, True, True), "both"), (Foe(0.55, 17, 3, None, True), "crop"),
+                            (Foe(0.55, 304, 3, None, False), "one"), (Foe(0.55, None, None, None, False), None)):
+            with self.subTest(source=source):
+                line = fight_log.foe_line(foe)
+                self.assertEqual(source, line["hp_source"])
+                self.assertEqual((foe,), replay_fights.foes_of([line]))
 
 
 class TestReplay(Recording):

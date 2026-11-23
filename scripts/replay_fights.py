@@ -103,7 +103,8 @@ def foes_of(foes):
     Returns:
         A tuple of `board.Foe`.
     """
-    return tuple(board.Foe(foe["x"], foe["hp"], foe["counter"], foe["weakness"], foe["hp_source"] == "both") for foe in foes)
+    return tuple(board.Foe(foe["x"], foe["hp"], foe["counter"], foe["weakness"], foe["hp_source"] in ("both", "crop"),
+                           foe["hp_source"] == "both") for foe in foes)
 
 
 def board_of(line, points):

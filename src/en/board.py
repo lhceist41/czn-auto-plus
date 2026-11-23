@@ -142,6 +142,13 @@ RETICLE_RADIUS = (0.059, 0.078)
 # Canny's upper edge threshold and the accumulator votes a ring needs. Across 847 captures the rings found were real ones or scenery.
 RETICLE_EDGES = 120
 RETICLE_VOTES = 40
+# The hint the game shows bottom left while a card is raised, the ESC key over "Cancel Selection", cut from a 1080p frame and matched on its
+# edges, since its white text sits on a dark outline over a light scene and a dark one alike.
+CARD_RAISED_IMAGE = Path(__file__).with_name("images") / "card_raised.png"
+CARD_RAISED_BAND = (0.0, 0.87, 0.16, 0.99)
+# Across 131 saved battle frames, the 44 with a card raised scored 0.75 or more and the others 0.18 or less. Rings alone also fired on
+# bubbles and scenery in 7 frames without a card raised.
+CARD_RAISED_MATCH = 0.5
 # An enemy's action counter digit, as a half-size around the counter's centre. Measured on a 1080p capture.
 COUNTER_DIGIT_HALF = (0.016, 0.026)
 # How much the HP number and the counter digit are enlarged, and the black border each enlarged crop gets, in pixels before enlarging.
@@ -160,8 +167,9 @@ COUNTER_DIGITS = re.compile(r"^\d{1,2}$")
 COUNTER_SURE = 0.9
 # What `enemies` knows about one enemy: its counter's x as a fraction across the frame, its current HP, how many more cards can be played
 # before it acts, and the attribute it is weak to. Each of those three is None when it was not read for sure. `sure` says the zoomed crop
-# read one HP and the full-frame pass read the same or nothing there, which is what a kill is planned on.
-Foe = namedtuple("Foe", ["x", "health", "counter", "weakness", "sure"], defaults=[False])
+# read one HP and the full-frame pass read the same or nothing there, which is what a kill is planned on. `agreed` says that pass read the
+# same HP, not nothing: a crop alone can read a covered 178 as 17, and a hit learnt from that would stay in the saved figures.
+Foe = namedtuple("Foe", ["x", "health", "counter", "weakness", "sure", "agreed"], defaults=[False, False])
 
 
 def box_around(centre_x, centre_y, half):
@@ -628,7 +636,7 @@ def enemies(task):
         is left out: card art in the same magenta passes for one. An X is kept with no HP when its number does not read, so the enemy
         still counts and no single hit is taken to kill the others for sure. An enemy at 0 HP is dying and left out. The HP is sure
         when the crop read one number and the full-frame pass read the same or none, since that pass drops small numbers rather than
-        misreading them.
+        misreading them, and agreed when that pass read the same.
     """
     frame = frame_of(task)
     numbers = [box for box in getattr(task, "all_texts", None) or [] if HEALTH_DIGITS.match(box.name)]
@@ -654,8 +662,40 @@ def enemies(task):
         if health is None and counter is None and not acted or health == 0:
             continue
         badge = box_around(centre_x + WEAKNESS_OFFSET[0], centre_y + WEAKNESS_OFFSET[1], WEAKNESS_HALF)
-        found.append(Foe(round(centre_x, 3), health, counter, attribute_of(patch_of(frame, badge)), sure))
+        found.append(Foe(round(centre_x, 3), health, counter, attribute_of(patch_of(frame, badge)), sure, sure and full is not None))
     return tuple(found)
+
+
+def edges(image):
+    """Reduce BGR pixels to how sharply their brightness changes.
+
+    Args:
+        image: The pixels, in BGR.
+
+    Returns:
+        A single-channel float image, high along every edge whichever side of it is the brighter.
+    """
+    grey = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY).astype(np.float32)
+    return cv2.magnitude(cv2.Sobel(grey, cv2.CV_32F, 1, 0), cv2.Sobel(grey, cv2.CV_32F, 0, 1))
+
+
+def card_raised(frame):
+    """Say whether a hand card is raised, waiting for Enter or ESC, by the hint the game shows for those keys.
+
+    A raised attack card dims the counters of the enemies it is not aimed at and shows the HP it would leave on the ones it is, so the
+    enemies read on such a frame are not the ones on the field.
+
+    Args:
+        frame: The frame to read, or None when there is none.
+
+    Returns:
+        True while the hint is shown. False when it is not, or there is no frame.
+    """
+    patch = patch_of(frame, CARD_RAISED_BAND)
+    template = icon_template(CARD_RAISED_IMAGE, frame.shape[0], edges) if patch is not None and patch.size else None
+    if template is None or patch.shape[0] < template.shape[0] or patch.shape[1] < template.shape[1]:
+        return False
+    return float(cv2.matchTemplate(edges(patch), template, cv2.TM_CCOEFF_NORMED).max()) >= CARD_RAISED_MATCH
 
 
 def reticle_x(frame):
