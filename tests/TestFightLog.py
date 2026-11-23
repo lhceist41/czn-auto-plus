@@ -21,6 +21,7 @@ import replay_fights  # noqa: E402
 
 from src.en import battle, board, cards, fight_log  # noqa: E402
 from tests.TestBattlePlay import ATTACK, BIG_ATTACK, SHIELD, Pressed, hand, upstream  # noqa: E402
+import utils as real_utils  # noqa: E402
 from tests.fakes import FakeBox  # noqa: E402
 
 FIXTURE = REPO_ROOT / "tests" / "fights" / "recorded.jsonl"
@@ -281,6 +282,26 @@ class TestRecorder(Recording):
                 self.fight(utils_task=(utils_sortie, task), node=1, end_texts=None)
                 self.assertEqual([("unknown", "no title seen")], self.ends())
                 self.assertEqual(2, len({line["fight"] for line in self.lines()}))
+
+    def test_a_later_node_after_enter_is_never_won(self):
+        # A lost fight that showed no title and a result page that went unread, then upstream's Enter starts the next run without the
+        # count rising, and its first fight sits one node further on.
+        with upstream(hand()) as (utils_sortie, task):
+            self.stand_up(utils_sortie, task, ChaosMode)
+            self.fight(utils_task=(utils_sortie, task), node=1, end_texts=None)
+            real_utils.reset_mission_status(task)
+            self.fight(utils_task=(utils_sortie, task), node=2, end_texts=None)
+        self.assertEqual([("unknown", "no title seen")], self.ends())
+
+    def test_the_first_fight_past_a_floor_boss_says_the_boss_was_won(self):
+        # Upstream's settlement after a floor boss counts the floor and builds a new status for it, in the same run.
+        with upstream(hand()) as (utils_sortie, task):
+            self.stand_up(utils_sortie, task, ChaosMode)
+            self.fight(utils_task=(utils_sortie, task), node=3, end_texts=None)
+            task.node_status["pass_final_boss_count"] += 1
+            real_utils.reset_layer_status(task)
+            self.fight(utils_task=(utils_sortie, task), node=1, end_texts=None)
+        self.assertEqual([("won", "next fight of the same run")], self.ends())
 
     def test_a_fight_the_bot_was_started_in_is_never_won(self):
         # Started mid-fight, so upstream's status puts the node at 0. The fight is lost, its result page goes unread and the next run

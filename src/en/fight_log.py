@@ -246,39 +246,40 @@ def fight_for(task, turn, now):
     if record is not None and not record.closed:
         gone = record.left_at is not None and now - record.left_at > FIGHT_GAP
         # The status parts a run whose result page went unread from the next, which keeps the count and can repeat the place.
-        same_run = record.rounds == rounds_of(task) and record.status is getattr(task, "node_status", None)
-        if record.fight == turn.fight and same_run and not gone:
+        replaced = record.status is not getattr(task, "node_status", None)
+        if record.fight == turn.fight and record.rounds == rounds_of(task) and not replaced and not gone:
             record.left_at = None
             return record
-        end(task, record, *after(record, turn.fight, rounds_of(task)))
+        end(task, record, *after(record, turn.fight, rounds_of(task), replaced))
     record = Fight(task, turn.fight)
     setattr(task, RECORD, record)
     return record
 
 
-def after(record, fight, rounds):
+def after(record, fight, rounds, replaced=False):
     """Say how a fight that was never seen ending went, from the fight that came next.
 
     A run ends at a lost fight, so a fight on a later floor or node of the same run means this one was won. The run count tells runs
-    apart, since every run of a task keeps one start time. The place covers a run whose result page went unread: it finishes without
-    the count rising, and the next run starts again from the first node.
+    apart, since every run of a task keeps one start time. A run whose result page went unread finishes without the count rising, but
+    upstream still builds the next run a new status and starts it again from the first node.
 
     Args:
         record: The `Fight` being ended.
         fight: The next fight, from `battle.fight_of`.
         rounds: The runs finished when the next fight came, from `rounds_of`.
+        replaced: Whether the task's `node_status` is no longer the one the fight began under.
 
     Returns:
         The outcome and what it was told from.
     """
     if record.last_team is not None and record.last_team[0] == 0:
         return "lost", "team HP read 0"
-    if later_in_run(record.fight, record.rounds, fight, rounds):
+    if later_in_run(record.fight, record.rounds, fight, rounds, replaced):
         return "won", "next fight of the same run"
     return "unknown", "no title seen"
 
 
-def later_in_run(fight, rounds, following, following_rounds):
+def later_in_run(fight, rounds, following, following_rounds, replaced=False):
     """Tell whether a fight comes after another in the same run.
 
     Args:
@@ -286,15 +287,19 @@ def later_in_run(fight, rounds, following, following_rounds):
         rounds: The runs finished when it began.
         following: The fight after it.
         following_rounds: The runs finished when that one began.
+        replaced: Whether upstream built a new `node_status` between the two.
 
     Returns:
         True only when both are known, in the same task and run, the first sits on a counted node and the second on a later floor or
-        node.
+        node, on a higher floor when the status was replaced.
     """
     if fight is None or following is None or rounds is None or rounds != following_rounds or fight[0] != following[0]:
         return False
     place, later = fight[1:], following[1:]
     if not all(isinstance(number, int) for number in place + later):
+        return False
+    # Upstream builds a new status for a run and for a floor won, so a new one with the floor not higher means the next run.
+    if replaced and later[0] <= place[0]:
         return False
     # Node 0 is a fight before any route page the task counted, such as one the bot was started in, so it says nothing of the run.
     return place[1] >= 1 and later > place
