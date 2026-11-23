@@ -906,6 +906,25 @@ class TestInstalling(unittest.TestCase):
             turn = getattr(task, battle.TURN)
             self.assertEqual(((), ()), (turn.earlier, turn.last_turn))
 
+    def test_the_next_run_on_the_same_node_starts_with_no_plays(self):
+        # Every run of a task keeps one start time, so the place repeats. Upstream builds a new status for the next run, whether or
+        # not its result page was read and counted the run.
+        for counted in (1, 0):
+            with self.subTest(counted=counted), upstream(hand(ATTACK)) as (utils_sortie, task):
+                battle.install()
+                task.start_time = "run"
+                task.node_status = {"pass_final_boss_count": 0, "node_count": 1, "total_rounds": 0}
+                for count in (1, 2):
+                    utils_sortie._try_all_card_keys(task, count)
+                    battle.end_of_turn(task)
+                    task.hand_cards = hand(*[ATTACK] * (count + 1))
+                utils_sortie._try_all_card_keys(task, 3)
+                self.assertEqual((ATTACK, ATTACK), getattr(task, battle.TURN).earlier)
+                task.node_status = {"pass_final_boss_count": 0, "node_count": 1, "total_rounds": counted}
+                utils_sortie._try_all_card_keys(task, 3)
+                turn = getattr(task, battle.TURN)
+                self.assertEqual(((), ()), (turn.earlier, turn.last_turn))
+
     def test_a_turn_spares_its_first_frame_for_the_team_read(self):
         # Live, a restart mid-battle never read the team: by the time the read could tap, every turn already had a card in flight.
         with upstream(hand(ATTACK)) as (utils_sortie, task):

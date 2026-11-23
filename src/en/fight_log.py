@@ -57,6 +57,7 @@ class Fight:
         self.mode = type(task).__name__
         self.fight = fight
         self.rounds = rounds_of(task)
+        self.status = getattr(task, "node_status", None)
         self.started = time.monotonic()
         self.last_seen = self.started
         # When the battle screen was last seen leaving, cleared when the fight turns out to go on.
@@ -244,7 +245,9 @@ def fight_for(task, turn, now):
     record = getattr(task, RECORD, None)
     if record is not None and not record.closed:
         gone = record.left_at is not None and now - record.left_at > FIGHT_GAP
-        if record.fight == turn.fight and record.rounds == rounds_of(task) and not gone:
+        # The status parts a run whose result page went unread from the next, which keeps the count and can repeat the place.
+        same_run = record.rounds == rounds_of(task) and record.status is getattr(task, "node_status", None)
+        if record.fight == turn.fight and same_run and not gone:
             record.left_at = None
             return record
         end(task, record, *after(record, turn.fight, rounds_of(task)))

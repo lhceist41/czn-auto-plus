@@ -60,6 +60,12 @@ def next_run(task):
     task.node_status.update(total_rounds=task.node_status["total_rounds"] + 1, pass_final_boss_count=0, node_count=0)
 
 
+def enter_again(task, counted):
+    """Enter the task's next run the way upstream does: a new status with floor and node at 0, counting the run only when its result
+    page was read, and the task's start time left as it is."""
+    task.node_status = {"pass_final_boss_count": 0, "node_count": 0, "total_rounds": task.node_status["total_rounds"] + counted}
+
+
 def team_box(team):
     hp, most = team
     return FakeBox(f"{hp}/{most}", 0.30, 0.04)
@@ -263,6 +269,18 @@ class TestRecorder(Recording):
             self.fight(utils_task=(utils_sortie, task), node=1, end_texts=None)
         self.assertEqual([("unknown", "no title seen")] * 2, self.ends())
         self.assertEqual(3, len({line["fight"] for line in self.lines()}))
+
+    def test_the_next_run_on_the_same_node_is_a_fight_of_its_own(self):
+        # A lost fight on the first node that showed no title, then the next run's first fight on that same node.
+        for counted in (0, 1):
+            with self.subTest(counted=counted), upstream(hand()) as (utils_sortie, task):
+                self.file.unlink(missing_ok=True)
+                self.stand_up(utils_sortie, task, ChaosMode)
+                self.fight(utils_task=(utils_sortie, task), node=1, end_texts=None)
+                enter_again(task, counted)
+                self.fight(utils_task=(utils_sortie, task), node=1, end_texts=None)
+                self.assertEqual([("unknown", "no title seen")], self.ends())
+                self.assertEqual(2, len({line["fight"] for line in self.lines()}))
 
     def test_a_fight_the_bot_was_started_in_is_never_won(self):
         # Started mid-fight, so upstream's status puts the node at 0. The fight is lost, its result page goes unread and the next run

@@ -431,7 +431,7 @@ class Turn:
     a frame or two - so it is read once and kept, and a turn that never manages to read one keeps trying.
     """
 
-    def __init__(self, hand_count, last_turn=(), kept=(), earlier=(), fight=None, retrieved=()):
+    def __init__(self, hand_count, last_turn=(), kept=(), earlier=(), fight=None, retrieved=(), status=None):
         """Start a turn that has learnt nothing yet.
 
         Args:
@@ -441,9 +441,11 @@ class Turn:
             earlier: The cards the turns before played this battle, oldest first.
             fight: The fight it belongs to, from `fight_of`.
             retrieved: How many times each card has come back to hand this battle, from the turn before.
+            status: The task's `node_status` the fight began under, None in a mode that keeps none.
         """
         self.hand_count = hand_count
         self.fight = fight
+        self.status = status
         self.earlier = tuple(earlier)
         # Plays of a card with Retrieve that it came back to hand from, this battle, against its `cards.RETRIEVES` allowance.
         self.retrieved = collections.Counter(retrieved)
@@ -1281,8 +1283,11 @@ def turn_of(task, hand_count):
     """
     turn = getattr(task, TURN, None)
     fight = fight_of(task)
-    if turn is None or turn.fight != fight:
-        turn = Turn(hand_count, fight=fight)
+    status = getattr(task, "node_status", None)
+    # Upstream builds a new status whenever a run starts, even one whose result page went unread, so the status tells two runs'
+    # fights on the same floor and node apart where the place cannot.
+    if turn is None or turn.fight != fight or turn.status is not status:
+        turn = Turn(hand_count, fight=fight, status=status)
         setattr(task, TURN, turn)
     elif new_turn(turn.hand_count, hand_count, turn.ended):
         # A Finale ends the turn before its press settles, so the deal after it is what says it played.
@@ -1291,7 +1296,7 @@ def turn_of(task, hand_count):
             fight_log.resolved(task, turn.attempted, "played", "deal")
         # With no node to tell fights apart, the battle is only known back to the turn before.
         earlier = (*turn.earlier, *played) if fight is not None else played
-        turn = Turn(hand_count, played, turn.hand, earlier, fight, turn.retrieved if fight is not None else ())
+        turn = Turn(hand_count, played, turn.hand, earlier, fight, turn.retrieved if fight is not None else (), status)
         setattr(task, TURN, turn)
     turn.hand_count = hand_count
     return turn
