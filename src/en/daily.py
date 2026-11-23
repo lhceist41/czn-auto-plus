@@ -8,7 +8,8 @@ A screen Daily does not know for 30 seconds, and the tutorial, stop it with noth
 The park spends only its own profit, a free counter that refills while the player is away. Its rows are read by
 `dream_park`, and one is pressed only when its price reads as a plain park number. When the ride it wants is further
 down, the list is dragged a short way, a few times a visit at most. Once a visit, the panel's Skill tab gets AI Automation
-upgraded while one level pays for itself by the next visit, and no other skill is ever pressed.
+upgraded while one level pays for itself by the next visit, then Another Happy Day while Happiness lags, and no other
+skill is ever pressed.
 
 Imported by ok-script before `ok_tasks/` is on `sys.path`, so upstream is reached only through `handlers.loaded`.
 """
@@ -1421,8 +1422,8 @@ class DailyMode(TriggerTask):
         super().__init__(*args, **kwargs)
         self.name = "Daily"
         self.description = ("Start on the Lobby. Closes the entry popups, claims the daily attendance reward and all mail, then visits Nightmare "
-                            "Dream Park while it runs: ranks it up, builds and upgrades rides and its AI Automation skill with the park's "
-                            "own profit and claims its achievements. "
+                            "Dream Park while it runs: ranks it up, builds and upgrades rides, buys its AI Automation and Another Happy Day "
+                            "skills with the park's own profit and claims its achievements. "
                             "Stops on the Lobby. Presses nothing else.")
         self.trigger_interval = 1
         self.all_texts = []

@@ -111,8 +111,8 @@ DESCRIPTIONS = {
     "卡牌奖励优先级": "Preferred cards when a reward offers a choice.",
     "获得卡牌优先级": "Preferred cards when the run offers a card to obtain.",
     "丢弃卡牌优先级": "Cards to throw away first when the run asks you to discard.",
-    PLAYS_ITS_OWN_CARDS: "Order to play cards in battle. Needs shortcut key display turned on in the game's"
-                         " settings.",
+    PLAYS_ITS_OWN_CARDS: "Order to play cards in battle. Needs Show Keybinds turned on in the game's Settings,"
+                         " Keybinds tab.",
     DESIRE_FACTION: "Which Desire faction to build towards. Every Desire card and event option pushes this one higher.",
     SMART_CARD_PLAY: "Choose battle cards by cost, type and effect text instead of pressing every hotkey in turn.",
     "装备1号位优先级": "Preferred equipment for the first slot, best first.",
@@ -181,7 +181,7 @@ TOOLTIPS = {
               " the run rests.",
 }
 # Setup a mode needs before its first run, shown behind its Instructions button. A mode with nothing to set up gets no button.
-INSTRUCTIONS = {"ChaosMode": "Turn on the event/dialogue Fast Forward in-game before starting a run."}
+INSTRUCTIONS = {}
 
 _applied = False
 

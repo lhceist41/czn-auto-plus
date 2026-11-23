@@ -98,6 +98,10 @@ def build_modes(executor):
     modes = []
     for mode_class in (DailyMode, ChaosMode, SortieMode, StoryMode):
         mode = mode_class(executor, None)
+        # The task manager marks what it loads out of `ok_tasks/` before `load_config`, and `overrides` replaces
+        # only those modes' Instructions. `shell.restructure` clears the mark again, as in the app.
+        if mode_class is not DailyMode:
+            mode.is_custom = True
         mode.load_config()
         modes.append(mode)
     return modes

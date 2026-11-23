@@ -141,7 +141,8 @@ def lobby_stop(utils):
 
     Returns:
         A factory taking `handle_non_battle_page` as installed and returning the handler to run in its place. It stops
-        exactly when upstream's does, and only adds the notice; the Rescue and Ark City stops and Story's stop stay silent.
+        exactly when upstream's does, and only adds the notice; the Ark City stop and Story's stop stay silent, and
+        Rescue is announced by `spend_guard`, which stops ahead of this.
     """
     def factory(original):
         def handle_non_battle_page(task):

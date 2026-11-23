@@ -74,7 +74,7 @@ A new Daily task with a Nightmare Dream Park visit, Story plays Battle Missions 
 ### What you need to do
 
 - **App and settings:** set Game Language to the language your game shows. Chaos, Sortie and Story now stop at the start with a message naming the value to set when it does not match.
-- **Chaos Manifestation:** you no longer need the game's auto-battle on before Captain Lv 30, where it unlocks. Keep shortcut key display and auto-story on in the game's settings.
+- **Chaos Manifestation:** you no longer need the game's auto-battle on before Captain Lv 30, where it unlocks. Keep **Show Keybinds** on in the game's Settings, Keybinds tab.
 
 ### New
 
