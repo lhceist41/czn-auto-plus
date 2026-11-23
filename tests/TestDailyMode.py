@@ -187,6 +187,7 @@ POINTS = {
     daily.SKILL_TAB: (0.892, 0.185),
     daily.FACILITIES_TAB: (0.714, 0.185),
     daily.SKILL_UPGRADE: (0.772, 0.456),
+    daily.HAPPY_DAY_UPGRADE: (0.772, 0.847),
 }
 # What Daily must never press, by where it sits. Power is the icon's centre in 265 (rows 972-1022 of 1080) and the
 # `End` key label under it in 273. Skip Tutorial is a box over three targets, not a point: `TestTutorial` covers it.
@@ -987,7 +988,7 @@ class TestStops(Daily):
 
     def test_the_limits_are_as_designed(self):
         special = {daily.CLAIM_ALL: 2, daily.ATTENDANCE_CLAIM: 2, daily.WAKE: 2, daily.RANK_UP: 2, daily.UPGRADE: 200, daily.CLAIM: 30, daily.SKIP_TICK: 1,
-                   daily.SKILL_UPGRADE: 30}
+                   daily.SKILL_UPGRADE: 30, daily.HAPPY_DAY_UPGRADE: 30}
         self.assertEqual({target: special.get(target, 3) for target in POINTS}, daily.TAP_LIMITS)
         self.assertEqual(set(POINTS), set(daily.TARGETS))
 

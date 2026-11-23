@@ -678,6 +678,66 @@ SKILL_NEVER = {
     "Another Happy Day's Acquire": (0.770, 0.847),
 }
 
+# 038, the Skill tab at Rank 10 with AI Automation's bullet read as a full-width `Ｏ` and Happiness 13 short of 93.
+SKILL_FULL_WIDTH = (
+    ('10', 0.100, 0.044), ('2.55M', 0.959, 0.046), ('Rules of Gooal', 0.165, 0.132), ('N', 0.212, 0.122), ('104/93 112 / 93', 0.757, 0.106),
+    ('80/93', 0.930, 0.106), ('0/54', 0.171, 0.204), ('Order', 0.190, 0.168), ('六', 0.714, 0.195), ('Manage', 0.087, 0.294), ('技能', 0.803, 0.274),
+    ('Recruit', 0.085, 0.382), ('ＯAl Automation', 0.772, 0.350), ('Lv.5/50', 0.931, 0.350), ('• +50 min Max Offline Time Increase', 0.834, 0.402),
+    ('六', 0.033, 0.478), ('Operate', 0.087, 0.473), ('强化', 0.772, 0.456), ('953', 0.953, 0.454), ('o Large-Scale Promotion', 0.801, 0.528),
+    ('unaffected)', 0.772, 0.596), ('+0 Max Simultaneous Visitors (profit', 0.845, 0.569), ('Acquire', 0.770, 0.634), ('1.44K', 0.947, 0.632),
+    ('o Social Etiquette', 0.778, 0.706), ('• +0 Max Managers', 0.787, 0.757), ('Acquire', 0.770, 0.811), ('100.00K', 0.924, 0.809),
+    ('o Another Happy Day', 0.789, 0.884), ('Press and hold the button to upgrade quickly.', 0.802, 0.931),
+)
+# The same tab one level on, its next price a stand-in past ten minutes of profit at 145/s.
+SKILL_FULL_WIDTH_LV6 = edited(SKILL_FULL_WIDTH, ("Lv.5/50", "Lv.6/50"), ("953", "100.00K"))
+# 071, the tab one drag down at Rank 12: Another Happy Day Lv.1 with its Upgrade at 500, Happiness 12 short of 121.
+SKILL_HAPPY_DAY = (
+    ('12', 0.099, 0.045), ('The Rising Star of the Amusement Park World', 0.327, 0.045), ('1.53M', 0.960, 0.046), ('Rules of Goodl', 0.165, 0.131),
+    ('N', 0.211, 0.122), ('122/ 121  122/121  109 /121', 0.814, 0.106), ('0/54', 0.171, 0.204), ('Order', 0.190, 0.168), ('六', 0.714, 0.195),
+    ('」', 0.033, 0.297), ('Manage', 0.087, 0.293), ('技能', 0.803, 0.274), ('Recruit', 0.085, 0.381), ('o Large-Scale Promotion', 0.801, 0.386),
+    ('六', 0.032, 0.478), ('Operate', 0.086, 0.471), ('unaffected)', 0.772, 0.455), ('+0 Max Simultaneous Visitors (profit', 0.844, 0.426),
+    ('Acquire', 0.770, 0.493), ('1.44K', 0.947, 0.489), ('o Social Etiquette', 0.777, 0.564), ('• +0 Max Managers', 0.789, 0.615),
+    ('Acquire', 0.770, 0.669), ('100.00K', 0.925, 0.668), ('o Another Happy Day', 0.789, 0.743), ('Lv.1/50', 0.931, 0.743),
+    ('• +1 Amusement Park Happiness Increase', 0.851, 0.793), ('强化', 0.772, 0.847), ('500', 0.953, 0.844),
+    ('Press and hold the button to upgrade quickly.', 0.802, 0.930),
+)
+# 075, the tab's end: Another Happy Day, then Dopamine Rush and Now This Is Healing, both locked to Rank 13.
+SKILL_END = (
+    ('12', 0.099, 0.044), ('The Rising Star of the Amusement Park World', 0.321, 0.046), ('1.54M', 0.960, 0.046), ('Rules of Goodl', 0.165, 0.131),
+    ('N', 0.211, 0.122), ('122/121  122/ 121  109/ 121', 0.811, 0.106), ('0/54★', 0.180, 0.205), ('Order', 0.190, 0.168), ('六', 0.714, 0.195),
+    ('Manage', 0.087, 0.293), ('技能', 0.804, 0.274), ('Acquire', 0.770, 0.329), ('100.00K', 0.926, 0.327), ('Recruit', 0.085, 0.382),
+    ('o Another Happy Day', 0.789, 0.401), ('Lv.1/50', 0.931, 0.401), ('六', 0.034, 0.478), ('Operate', 0.086, 0.471),
+    ('· +1 Amusement Park Happiness Increase', 0.849, 0.450), ('强化', 0.772, 0.506), ('500', 0.953, 0.502), ('0 Dopamine Rush', 0.777, 0.579),
+    ('• +0 Amusement Park Thrill Increase', 0.836, 0.630), ('Reach Amusement Park Rank 13', 0.852, 0.680), ('o Now This Is Healing', 0.790, 0.756),
+    ('• +0 Amusement Park Comfort Increase', 0.845, 0.807), ('Reach Amusement Park Rank 13', 0.852, 0.860),
+    ('Press and hold the button to upgrade quickly.', 0.802, 0.930),
+)
+SKILL_END_LOCKED_LINES = ((0.852, 0.680), (0.852, 0.860))
+HAPPY_DAY_HEADER = '122/ 121  122/121  109 /121'
+
+
+def happy_day(level, happiness, header=None):
+    """Give the tab one drag down with Another Happy Day at a level and Happiness at a value, the price as read at Lv.1."""
+    return edited(SKILL_HAPPY_DAY, ("Lv.1/50", f"Lv.{level}/50"), (HAPPY_DAY_HEADER, header or f"122/ 121  122/121  {happiness} /121"))
+
+
+# 054, the Facilities list on its last opening of the visit, at its top, Special Guest's button below the edge; the
+# header as it read once Thrill and Comfort had passed 121 and Happiness stayed at 108.
+FACILITIES_LAST_OPENING = (
+    ('12', 0.098, 0.045), ('The Rising Star of the Amusement Park World', 0.327, 0.045), ('2.30M', 0.959, 0.046), ('Rules of Gooal', 0.165, 0.132),
+    ('N', 0.211, 0.122), ('122/121 122/ 121108/121', 0.809, 0.106), ('0/54', 0.171, 0.204), ('Order', 0.190, 0.168), ('Manage', 0.087, 0.294),
+    ('Facilities', 0.803, 0.272), ('へ', 0.048, 0.354), ('Recruit', 0.084, 0.382), ('o Roller Coaster', 0.772, 0.350), ('Lv.40/50', 0.934, 0.349),
+    ('Thrill +40', 0.779, 0.402), ('+64/5s', 0.882, 0.400), ('六', 0.033, 0.479), ('Operate', 0.087, 0.473), ('强化', 0.772, 0.456),
+    ('47.30K', 0.943, 0.455), ('o Top Spin', 0.755, 0.529), ('Lv.34/50', 0.933, 0.527), ('Thrill +68', 0.779, 0.579), ('+68/5s', 0.885, 0.580),
+    ('强化', 0.773, 0.634), ('43.83K', 0.925, 0.632), ('o Drop Tower', 0.765, 0.707), ('Lv.31/50', 0.933, 0.706), ('Comfort +62', 0.787, 0.756),
+    ('+74/4s', 0.885, 0.757), ('强化', 0.772, 0.811), ('36.28K', 0.924, 0.809), ('o Special Guest', 0.771, 0.884), ('LV.29/50', 0.935, 0.884),
+    ('Press and hold the button to upgrade quickly.', 0.803, 0.931),
+)
+# The same list one short drag on, Special Guest's row whole; its emotion line and price are stand-ins, not read.
+FACILITIES_LAST_DRAGGED = shifted(FACILITIES_LAST_OPENING, 0.135, ("Happiness +58", 0.790, 0.799), ("+58/7s", 0.879, 0.800),
+                                  ("强化", 0.772, 0.854), ("31.00K", 0.924, 0.853))
+SPECIAL_GUEST_UPGRADE = (0.772, 0.854)
+
 # Where the park presses, beyond Daily's own targets, and what it must never press.
 PARK_NEVER = {
     "the Rules of Good Order banner": (0.803, 0.803),
@@ -1849,6 +1909,21 @@ class TestSkillRows(unittest.TestCase):
         self.assertEqual(["Large-Scale Promotion", "Social Etiquette", "Another Happy Day"], [row[0] for row in self.rows(SKILL_DRAGGED)])
         self.assertEqual(("Another Happy Day", None, dream_park.ACQUIRE, 1_070), self.rows(SKILL_DRAGGED)[2])
 
+    def test_a_full_width_bullet_reads_as_the_list_bullet(self):
+        self.assertEqual(("Al Automation", 5, dream_park.UPGRADE, 953), self.rows(SKILL_FULL_WIDTH)[0])
+        self.assertEqual("Another Happy Day", dream_park.row_names(Task().show(SKILL_FULL_WIDTH))[-1][0])
+        ride = edited(FACILITIES_LAST_OPENING, ("o Roller Coaster", "ＯRoller Coaster"))
+        self.assertEqual("Roller Coaster", dream_park.facility_rows(Task().show(ride))[0].name)
+
+    def test_negative_control_without_the_normalising_the_full_width_bullet_loses_ai_automation(self):
+        """Proves the test above bites."""
+        with mock.patch.object(dream_park.unicodedata, "normalize", lambda form, text: text):
+            self.assertEqual(["Large-Scale Promotion", "Social Etiquette"], [row[0] for row in self.rows(SKILL_FULL_WIDTH)])
+
+    def test_the_tabs_end_reads_another_happy_day_and_no_locked_skill(self):
+        self.assertEqual([("Another Happy Day", 1, dream_park.UPGRADE, 500)], self.rows(SKILL_END))
+        self.assertEqual(("Another Happy Day", 1, dream_park.UPGRADE, 500), self.rows(SKILL_HAPPY_DAY)[2])
+
     def test_the_profit_rate_reads_off_the_manage_panel(self):
         self.assertEqual(91, dream_park.profit_rate(Task().show(MANAGE)))
         self.assertEqual(116, dream_park.profit_rate(Task().show(MANAGE_RANK9)))
@@ -1899,6 +1974,41 @@ class TestSkillChoice(unittest.TestCase):
             with self.subTest(name):
                 renamed = edited(SKILL_TOP, ("o Al Automation", name, 0.773))
                 self.assertEqual((None, "AI Automation is not in view"), self.choose(renamed, 1_000_000, money=1_000_000))
+
+
+class TestHappyDayChoice(unittest.TestCase):
+
+    def test_happiness_counts_short_only_while_it_lags_the_most(self):
+        self.assertEqual(13, dream_park.happiness_short(((104, 112, 80), 93)))
+        self.assertEqual(12, dream_park.happiness_short(((122, 122, 109), 121)))
+        self.assertEqual(5, dream_park.happiness_short(((116, 121, 116), 121)), "a tie with another emotion still counts")
+        self.assertEqual(0, dream_park.happiness_short(((100, 122, 109), 121)), "Thrill lags further")
+        self.assertEqual(0, dream_park.happiness_short(((122, 122, 121), 121)))
+        self.assertEqual(0, dream_park.happiness_short(((122, 122, 125), 121)))
+        self.assertEqual(0, dream_park.happiness_short(None))
+
+    def choose(self, screen, rate, money=None):
+        task = Task().show(screen)
+        return dream_park.choose_happy_day(dream_park.skill_rows(task), dream_park.profit(task) if money is None else money, rate)
+
+    def test_a_level_within_the_profit_and_ten_minutes_of_profit_is_chosen(self):
+        skill, reason = self.choose(SKILL_HAPPY_DAY, 145)
+        self.assertEqual(("Another Happy Day", 1, None), (skill.name, skill.level, reason))
+        self.assertIsNotNone(self.choose(SKILL_HAPPY_DAY, 500 / 600)[0])
+        self.assertEqual((None, "Another Happy Day's next level costs 500, more than 10 minutes of profit at 1/s"), self.choose(SKILL_HAPPY_DAY, 0.8))
+        self.assertEqual((None, "Another Happy Day's next level costs 500, more than the profit"), self.choose(SKILL_HAPPY_DAY, 145, money=499))
+
+    def test_acquiring_it_counts_as_a_level(self):
+        skill, reason = self.choose(SKILL_DRAGGED, 145)
+        self.assertEqual(("Another Happy Day", None, dream_park.ACQUIRE, None), (skill.name, skill.level, skill.action, reason))
+
+    def test_out_of_view_unread_or_capped_chooses_nothing(self):
+        self.assertEqual((None, dream_park.HAPPY_DAY_NOT_IN_VIEW), self.choose(SKILL_TOP, 145))
+        self.assertEqual((None, "the profit rate did not read"), self.choose(SKILL_HAPPY_DAY, None))
+        self.assertEqual((None, "the profit did not read"), self.choose(edited(SKILL_HAPPY_DAY, ("1.53M", "1.5?M")), 145))
+        self.assertEqual((None, "Another Happy Day shows no level to upgrade"), self.choose(edited(SKILL_HAPPY_DAY, ("Lv.1/50", "Lv.?/50")), 145))
+        self.assertEqual((None, "Another Happy Day's price did not read"), self.choose(edited(SKILL_HAPPY_DAY, ("500", "5?0")), 145))
+        self.assertEqual((None, "Another Happy Day is at Lv.50"), self.choose(edited(SKILL_HAPPY_DAY, ("Lv.1/50", "Lv.50/50")), 145))
 
 
 class TestSkillTab(Park):
@@ -1981,7 +2091,7 @@ class TestSkillTab(Park):
         self.assertPressed(daily.FACILITIES_TAB)
         self.assertFalse(self.pressed_at((0.770, 0.456)))
 
-    def test_large_scale_promotion_another_happy_day_and_social_etiquette_are_never_pressed(self):
+    def test_large_scale_promotion_social_etiquette_and_another_happy_day_at_its_happiness_target_are_never_pressed(self):
         self.park()["rate"] = 1_000_000
         self.settled(edited(SKILL_DRAGGED, ("58.75K", "5.00M")))
         self.assertPressed(daily.FACILITIES_TAB)
@@ -2140,6 +2250,132 @@ class TestSkillTab(Park):
         self.assertIn("Dream Park: 0 upgrades, bought AI Automation Lv.6, Lv.7, 0 achievement claims", daily.park_summary(self.park()))
 
 
+class TestHappyDayTrip(Park):
+    """Another Happy Day's levels, bought on the Skill tab trip while Happiness lags."""
+
+    def setUp(self):
+        super().setUp()
+        self.park()["phase"], self.park()["rate"] = daily.TO_OPERATE, 145
+
+    def assertNoneOfTheOthers(self):
+        self.assertParkNothingForbidden()
+        for name, point in SKILL_NEVER.items():
+            if not name.startswith("Another Happy Day"):
+                self.assertFalse(self.pressed_at(point), name)
+
+    def test_the_live_trip_presses_ai_automation_read_with_a_full_width_bullet(self):
+        self.settled(SKILL_FULL_WIDTH)
+        self.assertPressed(daily.SKILL_UPGRADE)
+
+    def test_with_happiness_lagging_the_tab_is_dragged_once_ai_automation_is_done_and_a_level_bought(self):
+        self.settled(SKILL_FULL_WIDTH)
+        self.tick()
+        self.show(SKILL_FULL_WIDTH_LV6)
+        self.assertEqual([6], self.park()["skill_levels"])
+        self.assertPressed(daily.SKILL_UPGRADE)
+        self.assertEqual([(0.80, 0.70, 0.80, 0.55, 2)], self.task.swipes)
+        self.tick()
+        self.show(SKILL_HAPPY_DAY)
+        self.assertPressed(daily.SKILL_UPGRADE)
+        self.tick(daily.SETTLE)
+        self.show(SKILL_HAPPY_DAY)
+        self.assertPressed(daily.SKILL_UPGRADE, daily.HAPPY_DAY_UPGRADE)
+        self.assertEqual(1, len(self.task.swipes))
+        self.assertNoneOfTheOthers()
+
+    def test_one_level_per_point_still_short_then_the_tab_is_left(self):
+        self.settled(happy_day(1, 119))
+        self.tick()
+        self.show(happy_day(2, 120))
+        self.tick()
+        self.show(happy_day(3, 121))
+        self.assertPressed(daily.HAPPY_DAY_UPGRADE, daily.HAPPY_DAY_UPGRADE, daily.FACILITIES_TAB)
+        self.assertEqual([2, 3], self.park()["happy_levels"])
+        self.assertTrue(self.park()["skill_done"])
+        self.assertIn("bought Another Happy Day Lv.2, Lv.3", daily.park_summary(self.park()))
+        self.assertNoneOfTheOthers()
+
+    def test_a_header_slow_to_show_the_new_point_never_buys_past_what_happiness_was_short(self):
+        self.settled(happy_day(1, 120))
+        self.tick()
+        self.show(happy_day(2, 120))
+        self.assertPressed(daily.HAPPY_DAY_UPGRADE, daily.FACILITIES_TAB)
+        self.assertEqual([2], self.park()["happy_levels"])
+
+    def test_with_happiness_at_its_target_behind_another_emotion_or_unread_nothing_is_bought(self):
+        cases = {"at its target": happy_day(1, 121), "Thrill further behind": happy_day(1, 109, header="100/ 121  122/121  109 /121"),
+                 "header unread": edited(SKILL_HAPPY_DAY, (HAPPY_DAY_HEADER, None))}
+        for case, screen in cases.items():
+            with self.subTest(case):
+                self.fresh()
+                self.park()["phase"], self.park()["rate"] = daily.TO_OPERATE, 145
+                self.settled(screen)
+                self.assertPressed(daily.FACILITIES_TAB)
+                self.assertEqual("AI Automation is not in view", self.park()["skill_note"])
+                self.assertEqual([], self.task.swipes)
+
+    def test_never_past_the_budget(self):
+        cases = {"profit": (edited(SKILL_HAPPY_DAY, ("1.53M", "400")), 145, "more than the profit"),
+                 "ten minutes of profit": (SKILL_HAPPY_DAY, 0.5, "more than 10 minutes of profit")}
+        for case, (screen, rate, note) in cases.items():
+            with self.subTest(case):
+                self.fresh()
+                self.park()["phase"], self.park()["rate"] = daily.TO_OPERATE, rate
+                self.settled(screen)
+                self.assertPressed(daily.FACILITIES_TAB)
+                self.assertIn(note, self.park()["skill_note"])
+
+    def test_a_locked_row_is_never_pressed(self):
+        self.settled(SKILL_END)
+        self.assertEqual(1, len(self.task.clicks))
+        self.assertTrue(self.pressed_at((0.772, 0.506)))
+        for point in SKILL_END_LOCKED_LINES:
+            self.assertFalse(self.pressed_at(point))
+        self.fresh()
+        self.park()["phase"], self.park()["rate"] = daily.TO_OPERATE, 145
+        self.settled(edited(SKILL_END, ("强化", "Reach Amusement Park Rank 13"), ("500", None)))
+        self.assertPressed(daily.FACILITIES_TAB)
+        self.assertEqual([], self.task.swipes)
+        self.assertIn(dream_park.HAPPY_DAY_NOT_IN_VIEW, self.park()["skill_note"])
+
+    def test_a_locked_skill_in_view_never_drags_the_tab(self):
+        """Rank 4, every emotion 8 short of 29 and AI Automation priced out: Social Etiquette's lock line holds the drag."""
+        self.park()["rate"] = 0.5
+        self.settled(SKILL_LV1)
+        self.assertEqual([], self.task.swipes)
+        self.assertPressed(daily.FACILITIES_TAB)
+        self.assertIn(dream_park.HAPPY_DAY_NOT_IN_VIEW, self.park()["skill_note"])
+
+    def test_the_tab_drags_stop_on_rows_that_did_not_move_and_at_their_cap(self):
+        priced_out = edited(SKILL_FULL_WIDTH, ("953", "100.00K"))
+        self.settled(priced_out)
+        self.tick(daily.SETTLE)
+        self.show(priced_out)
+        self.assertEqual(1, len(self.task.swipes))
+        self.assertPressed(daily.FACILITIES_TAB)
+        self.fresh()
+        self.park()["phase"], self.park()["rate"] = daily.TO_OPERATE, 145
+        for step in range(daily.SKILL_SCROLL_CAP + 2):
+            self.show(shifted(priced_out, 0.02 * step))
+            self.tick(daily.SETTLE)
+        self.assertEqual(daily.SKILL_SCROLL_CAP, len(self.task.swipes))
+        self.assertPressed(daily.FACILITIES_TAB)
+
+    def test_two_presses_without_a_level_rise_leave_the_tab(self):
+        self.task.show(SKILL_HAPPY_DAY)
+        for _ in range(daily.SETTLE + 2 * daily.UPGRADE_WAIT + 2):
+            run_pass(self.task)
+            self.tick()
+        self.assertPressed(daily.HAPPY_DAY_UPGRADE, daily.HAPPY_DAY_UPGRADE, daily.FACILITIES_TAB)
+        self.assertEqual([], self.park()["happy_levels"])
+        self.assertIn("(Another Happy Day's level did not rise after two presses)", daily.park_summary(self.park()))
+
+    def test_a_crystal_word_on_the_dragged_tab_stops_daily_with_nothing_pressed(self):
+        self.show(edited(SKILL_HAPPY_DAY, ("500", "500 Crystals")))
+        self.assertEqual([], self.task.clicks)
+        self.assertStopped("a Dream Park price reads")
+
+
 class TestScroll(Park):
     """The short drag down the Facilities list that reaches a ride below the rows in view."""
 
@@ -2266,7 +2502,8 @@ class TestScroll(Park):
         self.assertEqual(2, self.park()["scrolls"])
         self.assertPressed(daily.PARK_OPERATE)
 
-    def test_the_cap_holds_across_a_return_to_the_list(self):
+    def test_a_return_to_the_list_gets_its_own_drags(self):
+        """The list reopens at its top, the lagging ride a drag down again, so an opening's drags start afresh."""
         self.skill_trip_made()
         for step in range(daily.SCROLL_CAP + 1):
             self.show(shifted(FACILITIES_HAPPINESS_LAGS, 0.02 * step))
@@ -2275,9 +2512,39 @@ class TestScroll(Park):
         self.show(MANAGE_RANK6)
         self.tick(daily.NAV_WAIT)
         self.settled(FACILITIES_HAPPINESS_LAGS)
-        self.assertDragged(daily.SCROLL_CAP)
-        self.assertPressed(daily.PARK_OPERATE, daily.PANEL_CLOSE)
-        self.assertIn("(the list dragged 3 times)", self.park()["note"])
+        self.assertDragged(daily.SCROLL_CAP + 1)
+        self.assertEqual((daily.SCROLL_CAP + 1, 1), (self.park()["scrolls"], self.park()["opening_scrolls"]))
+        self.assertPressed(daily.PARK_OPERATE)
+
+    def test_the_last_opening_of_the_live_visit_drags_to_special_guest_and_upgrades_it(self):
+        """Three drags spent on earlier openings left Special Guest's button below the list and the profit unspent."""
+        self.skill_trip_made()
+        self.park()["scrolls"] = daily.SCROLL_CAP
+        self.settled(FACILITIES_LAST_OPENING)
+        self.assertDragged(1)
+        self.assertEqual([], self.task.clicks)
+        self.tick(daily.SETTLE)
+        self.show(FACILITIES_LAST_DRAGGED)
+        self.assertEqual(1, len(self.task.clicks), self.task.clicks)
+        self.assertTrue(self.pressed_at(SPECIAL_GUEST_UPGRADE))
+        self.assertEqual(("Special Guest", 29, dream_park.UPGRADE), (self.park()["pending"][0], self.park()["pending"][1], self.park()["pending"][3]))
+        self.assertParkNothingForbidden()
+
+    def test_negative_control_with_the_drags_counted_for_the_whole_visit_the_last_opening_leaves_the_profit(self):
+        """Proves the test above bites: three drags for the visit, as before, end the upgrades with no drag."""
+        self.skill_trip_made()
+        self.park()["scrolls"] = daily.SCROLL_CAP
+        with mock.patch.object(daily, "SCROLL_VISIT_CAP", daily.SCROLL_CAP):
+            self.settled(FACILITIES_LAST_OPENING)
+        self.assertDragged(0)
+        self.assertLeft("no Happiness ride with a readable price in view (the list dragged 3 times)")
+
+    def test_the_visit_cap_holds_across_returns_to_the_list(self):
+        self.skill_trip_made()
+        self.park()["scrolls"] = daily.SCROLL_VISIT_CAP
+        self.settled(FACILITIES_LAST_OPENING)
+        self.assertDragged(0)
+        self.assertLeft(f"(the list dragged {daily.SCROLL_VISIT_CAP} times)")
 
     def test_the_drags_stop_at_their_cap(self):
         """Every read moved a little and left the last row cut off: three drags, then the visit leaves."""

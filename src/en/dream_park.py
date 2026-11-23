@@ -9,6 +9,7 @@ Positions are screen fractions read off the Global client's captures at 1920x108
 """
 
 import re
+import unicodedata
 from collections import namedtuple
 
 import numpy as np
@@ -41,8 +42,9 @@ MINUTES = re.compile(r"(\d+)\s*m", re.I)
 SAME_LINE = 0.02
 
 # The Facilities list, between its title at y 0.274 and the hold hint at y 0.930. A ride's name starts with the list's
-# bullet, which OCR reads as `o`, `O` or `0`; its level sits on the same line at x 0.93; its emotion line about 0.05
-# lower; its button about 0.105 lower, `强化` (Upgrade, as `ocr.po` maps it) or `Build`, with the price at x 0.95.
+# bullet, which OCR reads as `o`, `O` or `0`, now and then as a full-width `Ｏ`; its level sits on the same line at x 0.93;
+# its emotion line about 0.05 lower; its button about 0.105 lower, `强化` (Upgrade, as `ocr.po` maps it) or `Build`, with
+# the price at x 0.95.
 LIST_TOP, LIST_BOTTOM = 0.30, 0.92
 NAME_X = (0.72, 0.84)
 NAME = re.compile(r"[oO0•·]\s*([A-Za-z].*)")
@@ -72,12 +74,16 @@ NOT_IN_VIEW = re.compile(r"no .*ride with a readable price in view")
 # y 0.351, `Lv.N/50` beside it and `强化` with the price 0.105 lower. A skill not yet bought shows `Acquire` and no level.
 # OCR reads AI as `Al`.
 AI_AUTOMATION = re.compile(r"a[il1|]\s*automation", re.I)
+# The fourth skill: one level adds 1 Happiness. Its row opens below the tab's edge, in view after one short drag.
+ANOTHER_HAPPY_DAY = re.compile(r"another\s*happy\s*day", re.I)
 ACQUIRE_CAPTIONS = ("acquire",)
 # One AI Automation level adds 10 minutes of Max Offline Time, so it earns its price back within one visit while the
 # price is at most this many seconds of the Profit Status rate.
 OFFLINE_STEP = 600
 
 UPGRADE, BUILD, ACQUIRE = "upgrade", "build", "acquire"
+# Why `choose_happy_day` pressed nothing when the skill's row is not in view, which a drag down the tab may change.
+HAPPY_DAY_NOT_IN_VIEW = "Another Happy Day is not in view"
 # `price_column` holds every box right of `PRICE_X` from the name line to the button line, each checked before a press.
 Ride = namedtuple("Ride", "name level emotion action button price price_column", defaults=((),))
 Skill = namedtuple("Skill", "name level action button price price_column")
@@ -303,6 +309,19 @@ def offline_stretch(task):
     return rate * seconds
 
 
+def row_name(text):
+    """Read a Facilities or Skill row's name off its box, the list's bullet in front.
+
+    Args:
+        text: The box's text.
+
+    Returns:
+        The name, or None when the text is no bullet and name. Full-width letters read as their plain forms.
+    """
+    name = NAME.fullmatch(unicodedata.normalize("NFKC", text).strip())
+    return name.group(1).strip() if name else None
+
+
 def facility_rows(task):
     """Read the Facilities rows whose button shows.
 
@@ -321,7 +340,7 @@ def facility_rows(task):
     boxes = [(box, x, y) for box, x, y in boxes_of(task) if LIST_TOP <= y <= LIST_BOTTOM]
     rows = []
     for box, x, y in sorted(boxes, key=lambda item: item[2]):
-        name = NAME.fullmatch(box.name.strip())
+        name = row_name(box.name)
         if name is None or not NAME_X[0] <= x <= NAME_X[1]:
             continue
         level = next((LEVEL.search(other.name) for other, ox, oy in boxes if ox >= LEVEL_X and abs(oy - y) <= SAME_LINE
@@ -339,7 +358,7 @@ def facility_rows(task):
         price_box = next((other for other, ox, oy in boxes if ox >= PRICE_X and abs(oy - button_y) <= SAME_LINE), None)
         price = parse_number(price_box.name) if price_box is not None else None
         column = tuple(other for other, ox, oy in boxes if ox >= PRICE_X and y - SAME_LINE <= oy <= button_y + SAME_LINE)
-        rows.append(Ride(name.group(1).strip(), int(level.group(1)) if level else 0, emotion_of(emotion.group(1)), action, button_box, price,
+        rows.append(Ride(name, int(level.group(1)) if level else 0, emotion_of(emotion.group(1)), action, button_box, price,
                          column))
     return rows
 
@@ -353,9 +372,9 @@ def row_names(task):
     """Give every ride name in the Facilities list as `(name, y)`, top to bottom, locked rides and cut off rows included."""
     names = []
     for box, x, y in sorted(boxes_of(task), key=lambda item: item[2]):
-        name = NAME.fullmatch(box.name.strip())
+        name = row_name(box.name)
         if name is not None and NAME_X[0] <= x <= NAME_X[1] and LIST_TOP <= y <= LIST_BOTTOM:
-            names.append((name.group(1).strip(), y))
+            names.append((name, y))
     return names
 
 
@@ -451,7 +470,7 @@ def skill_rows(task):
     boxes = [(box, x, y) for box, x, y in boxes_of(task) if LIST_TOP <= y <= LIST_BOTTOM]
     rows = []
     for box, x, y in sorted(boxes, key=lambda item: item[2]):
-        name = NAME.fullmatch(box.name.strip())
+        name = row_name(box.name)
         if name is None or not NAME_X[0] <= x <= NAME_X[1]:
             continue
         level = next((LEVEL.search(other.name) for other, ox, oy in boxes if ox >= LEVEL_X and abs(oy - y) <= SAME_LINE
@@ -465,7 +484,7 @@ def skill_rows(task):
         price_box = next((other for other, ox, oy in boxes if ox >= PRICE_X and abs(oy - button_y) <= SAME_LINE), None)
         price = parse_number(price_box.name) if price_box is not None else None
         column = tuple(other for other, ox, oy in boxes if ox >= PRICE_X and y - SAME_LINE <= oy <= button_y + SAME_LINE)
-        rows.append(Skill(name.group(1).strip(), int(level.group(1)) if level else None, action, button_box, price, column))
+        rows.append(Skill(name, int(level.group(1)) if level else None, action, button_box, price, column))
     return rows
 
 
@@ -501,6 +520,58 @@ def choose_skill(skills, money, rate):
         return None, f"AI Automation's next level costs {skill.price:,.0f}, more than {OFFLINE_STEP // 60} minutes of profit at {rate:,.0f}/s"
     if skill.price > money:
         return None, f"AI Automation's next level costs {skill.price:,.0f}, more than the profit"
+    return skill, None
+
+
+def happiness_short(emotions):
+    """Say how much Happiness the next Rank still needs while Happiness lags its target the most.
+
+    Args:
+        emotions: `((thrill, comfort, happiness), target)`, or None when unread.
+
+    Returns:
+        The points Happiness is short, or 0 when the emotions did not read, Happiness has reached the target or
+        another emotion lags further.
+    """
+    if emotions is None:
+        return 0
+    values, target = emotions
+    shortfalls = [target - value for value in values]
+    return shortfalls[2] if shortfalls[2] > 0 and shortfalls[2] >= max(shortfalls) else 0
+
+
+def choose_happy_day(skills, money, rate):
+    """Choose whether to buy Another Happy Day one level, or why not.
+
+    It is weighed only while Happiness lags. A level, acquiring the skill included, is bought under AI Automation's own
+    budget: within the profit and within 10 minutes of the Profit Status rate. A level or price that did not read, or a
+    level at the cap, is never chosen; a locked skill has no button and so no row.
+
+    Args:
+        skills: The rows, from `skill_rows`.
+        money: The profit, or None when unread.
+        rate: The Profit Status rate per second, or None when unread.
+
+    Returns:
+        `(skill, None)` for the row to press, or `(None, reason)`.
+    """
+    if rate is None:
+        return None, "the profit rate did not read"
+    if money is None:
+        return None, "the profit did not read"
+    skill = next((skill for skill in skills if ANOTHER_HAPPY_DAY.fullmatch(skill.name)), None)
+    if skill is None:
+        return None, HAPPY_DAY_NOT_IN_VIEW
+    if skill.action == UPGRADE and skill.level is None:
+        return None, "Another Happy Day shows no level to upgrade"
+    if skill.level is not None and skill.level >= MAX_LEVEL:
+        return None, f"Another Happy Day is at Lv.{MAX_LEVEL}"
+    if skill.price is None:
+        return None, "Another Happy Day's price did not read"
+    if skill.price > rate * OFFLINE_STEP:
+        return None, f"Another Happy Day's next level costs {skill.price:,.0f}, more than {OFFLINE_STEP // 60} minutes of profit at {rate:,.0f}/s"
+    if skill.price > money:
+        return None, f"Another Happy Day's next level costs {skill.price:,.0f}, more than the profit"
     return skill, None
 
 

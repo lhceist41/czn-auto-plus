@@ -76,6 +76,7 @@ ATTENDANCE_CLOSE = "the attendance popup's X"
 SKILL_TAB = "the park panel's Skill tab"
 FACILITIES_TAB = "the park panel's Facilities tab"
 SKILL_UPGRADE = "AI Automation's Upgrade"
+HAPPY_DAY_UPGRADE = "Another Happy Day's Upgrade"
 # Every Dream Park screen draws its back arrow at the same place, and each press of it takes one screen back.
 BACK = (0.041, 0.046)
 TARGETS = {
@@ -117,16 +118,22 @@ TARGETS = {
     SKILL_TAB: (0.892, 0.185),
     FACILITIES_TAB: (0.714, 0.185),
     SKILL_UPGRADE: None,
+    HAPPY_DAY_UPGRADE: None,
 }
 # How many upgrades one park visit may press, one level each, so the cap only bounds a loop that has gone wrong, and how
 # many achievement claims: the event has 23 achievements.
 UPGRADE_CAP = 200
 CLAIM_CAP = 30
-# How many AI Automation presses one visit may make; the price rule ends them far sooner.
+# How many AI Automation presses one visit may make, and as many for Another Happy Day; the price rule and the Happiness
+# still needed end them far sooner.
 SKILL_CAP = 30
-# How many short drags down the Facilities list one visit may make, how far a ride name must move for a drag to count as
-# having moved the list, and the seconds handed to ok-script's swipe, as the debug port hands them: 20 steps 10 ms apart.
+# How many short drags down the Facilities list each opening of it may make, and the whole visit: the list opens at its
+# top after every Rank Up and Skill tab trip, and the lagging ride sat one drag down on each of four openings in one
+# visit. Then how many down the Skill tab one trip may make, how far a name must move for a drag to count as having
+# moved the list, and the seconds handed to ok-script's swipe, as the debug port hands them: 20 steps 10 ms apart.
 SCROLL_CAP = 3
+SCROLL_VISIT_CAP = 12
+SKILL_SCROLL_CAP = 2
 SCROLL_MOVED = 0.01
 DRAG_DURATION = 2
 # How often each target may be pressed in one run. Claim All, the wake tap, Rank Up and Claim Reward get one retry for a
@@ -137,7 +144,8 @@ TAP_LIMITS = {BANNER_CLOSE: 3, NOTICE_CLOSE: 3, MENU: 3, ENVELOPE: 3, MENU_CLOSE
               EVENT: 3, DREAM_PARK: 3, EVENT_LEAVE: 3, ENTER_PARK: 3, PARK_ACHIEVEMENTS: 3, PAGE_LEAVE: 3, PARK_MANAGE: 3, PARK_OPERATE: 3,
               PANEL_CLOSE: 3, PARK_LEAVE: 3, PARK_RANK: 3, RANK_UP: 2, RANK_CLOSE: 3, RANK_RESULT_CLOSE: 3, UPGRADE: UPGRADE_CAP, BUILD: 3,
               CLAIM: CLAIM_CAP, MANAGEMENT_TAB: 3, ACHIEVEMENTS_LEAVE: 3, RULES_CANCEL: 3, PROFIT_CLOSE: 3, STORY_SKIP: 3, SKIP_TICK: 1,
-              SKIP_CONFIRM: 3, ATTENDANCE_CLAIM: 2, ATTENDANCE_CLOSE: 3, SKILL_TAB: 3, FACILITIES_TAB: 3, SKILL_UPGRADE: SKILL_CAP}
+              SKIP_CONFIRM: 3, ATTENDANCE_CLAIM: 2, ATTENDANCE_CLOSE: 3, SKILL_TAB: 3, FACILITIES_TAB: 3, SKILL_UPGRADE: SKILL_CAP,
+              HAPPY_DAY_UPGRADE: SKILL_CAP}
 TOWARD_MAIL = (MENU, ENVELOPE)
 
 # What `press` refuses whatever it was asked to press: mail deletion, the Shop, a purchase, Crystals or any account
@@ -264,8 +272,9 @@ UPGRADE_WAIT = 2
 LEVEL_POLL = 0.15
 LEVEL_ZONE = (0.86, 0.135, 0.08)
 RANK_WAIT = 5
-# Why the Skill tab was left when AI Automation stopped taking presses, which the finish line names.
+# Why the Skill tab was left when a skill stopped taking presses, which the finish line names.
 NO_SKILL_RISE = "AI Automation's level did not rise after two presses"
+NO_HAPPY_DAY_RISE = "Another Happy Day's level did not rise after two presses"
 
 # Parked on the task for one run: dropped by `disable`, so every start begins afresh.
 RUN = "_en_daily_run"
@@ -330,14 +339,18 @@ def new_park():
         awaited and what it was, presses without a rise per ride, how many times the Facilities list was dragged, when
         last and the ride names it showed before that drag, whether the achievements were visited, when a claim ring was
         pressed and how many claims in a row opened nothing, the counts for the finish line and why the upgrades ended.
-        Then the Profit Status rate, whether the Skill tab trip is done, the AI Automation press whose level rise is
-        awaited, presses without a rise, presses made, the levels bought and why the trip ended.
+        Then the Profit Status rate, whether the Skill tab trip is done, the skill press whose level rise is awaited,
+        presses without a rise, AI Automation presses made, the levels bought and why the trip ended; Another Happy
+        Day's presses and levels, the Happiness it was short when first weighed, how many drags down the Skill tab
+        the trip made, when last and the names before that drag; and the drags of the Facilities list's current opening.
     """
     return {"started": None, "phase": TO_MANAGE, "screen": None, "screen_since": None, "pressed": {}, "emotions": None, "emotions_at": 0,
             "stretch": None, "rate": None, "skill_done": False, "skill_pending": None, "skill_no_rise": 0, "skill_presses": 0,
-            "skill_levels": [], "skill_note": None, "rank_checked": None, "rank_wanted": None, "rank_sent": set(), "rank_unmet": set(),
+            "skill_levels": [], "skill_note": None, "happy_presses": 0, "happy_levels": [], "happy_need": None,
+            "skill_scrolls": 0, "skill_scrolled": None, "skill_scroll_names": None,
+            "rank_checked": None, "rank_wanted": None, "rank_sent": set(), "rank_unmet": set(),
             "ranked": set(), "rank_pressed": None, "pending": None, "no_rise": Counter(),
-            "scrolls": 0, "scrolled": None, "scroll_names": None,
+            "scrolls": 0, "opening_scrolls": 0, "scrolled": None, "scroll_names": None,
             "claims_done": False, "claim_pressed": None, "claim_misses": 0, "ranks": [], "rank_ups": 0,
             "upgrades": 0, "builds": [], "claims": 0, "note": None, "result": None}
 
@@ -748,10 +761,12 @@ def park_summary(park):
         parts.append(f"built {', '.join(park['builds'])}")
     if park["skill_levels"]:
         parts.append(f"bought AI Automation Lv.{', Lv.'.join(str(level) for level in park['skill_levels'])}")
+    if park["happy_levels"]:
+        parts.append(f"bought Another Happy Day Lv.{', Lv.'.join(str(level) for level in park['happy_levels'])}")
     parts.append(f"{park['claims']} achievement claim{'s' if park['claims'] != 1 else ''}")
     summary = "Dream Park: " + ", ".join(parts)
     summary += f" (upgrades ended: {park['note']})" if park["note"] else ""
-    return summary + (f" ({NO_SKILL_RISE})" if park["skill_note"] == NO_SKILL_RISE else "")
+    return summary + (f" ({park['skill_note']})" if park["skill_note"] in (NO_SKILL_RISE, NO_HAPPY_DAY_RISE) else "")
 
 
 def handle_daily_rules_dialog(task):
@@ -933,8 +948,8 @@ def may_scroll(task, rows, reason):
     """Say whether a short drag down the Facilities list may bring the ride `choose` wants into view.
 
     Only when the ride it wants is not in view, no row in view waits on its price, the lowest row is cut off at the
-    bottom, no locked ride shows, the last drag moved the list and left rows to read, the visit has drags left, and the
-    drag lets go where it ends, which ok-script's PostMessage input does.
+    bottom, no locked ride shows, the last drag moved the list and left rows to read, this opening of the list and the
+    visit have drags left, and the drag lets go where it ends, which ok-script's PostMessage input does.
 
     Args:
         task: The Daily task.
@@ -945,14 +960,19 @@ def may_scroll(task, rows, reason):
         True when the list may be dragged.
     """
     park = park_state(task)
-    if not dream_park.NOT_IN_VIEW.fullmatch(reason) or park["scrolls"] >= SCROLL_CAP:
+    if not dream_park.NOT_IN_VIEW.fullmatch(reason) or park["opening_scrolls"] >= SCROLL_CAP or park["scrolls"] >= SCROLL_VISIT_CAP:
         return False
     if any(ride.price is None and ride.level < dream_park.MAX_LEVEL for ride in rows):
         return False
     if not dream_park.cut_off_below(task) or dream_park.locked_in_view(task):
         return False
-    if park["scrolls"] and (not rows or unmoved(park["scroll_names"], dream_park.row_names(task))):
+    if park["opening_scrolls"] and (not rows or unmoved(park["scroll_names"], dream_park.row_names(task))):
         return False
+    return lets_go(task)
+
+
+def lets_go(task):
+    """Say whether a drag lets go where it ends, which ok-script's PostMessage input does."""
     return isinstance(getattr(task.executor, "interaction", None), PostMessageInteraction)
 
 
@@ -966,8 +986,10 @@ def scroll_facilities(task):
     """Drag the Facilities list a short way down, through ok-script's own swipe, so the rows below it come into view."""
     park = park_state(task)
     park["scrolls"] += 1
+    park["opening_scrolls"] += 1
     park["scroll_names"] = dream_park.row_names(task)
-    task.log_info(f"dragging the Facilities list from {dream_park.SCROLL_FROM} to {dream_park.SCROLL_TO} ({park['scrolls']} of {SCROLL_CAP})")
+    task.log_info(f"dragging the Facilities list from {dream_park.SCROLL_FROM} to {dream_park.SCROLL_TO} ({park['opening_scrolls']} of {SCROLL_CAP} "
+                  f"this opening, {park['scrolls']} of {SCROLL_VISIT_CAP} this visit)")
     task.swipe_relative(*dream_park.SCROLL_FROM, *dream_park.SCROLL_TO, duration=DRAG_DURATION)
     park["scrolled"] = time.monotonic()
     return True
@@ -991,8 +1013,9 @@ def handle_daily_facilities(task):
     shown_for = arrive(task, "facilities")
     park = park_state(task)
     if reopened:
-        # The list opens at its top each time, so names read before an earlier drag say nothing of this opening.
-        park["scroll_names"], park["scrolled"] = None, None
+        # The list opens at its top each time, so names read before an earlier drag say nothing of this opening, and
+        # the ride it needs may again sit a drag down.
+        park["scroll_names"], park["scrolled"], park["opening_scrolls"] = None, None, 0
     if not park_active(task) or park["phase"] == TO_LEAVE:
         return press_once(task, PANEL_CLOSE)
     if park["phase"] == TO_MANAGE:
@@ -1056,7 +1079,7 @@ def skill_due(task):
 
 
 def skill_risen(task, skills):
-    """Check the last AI Automation press took, once its level has had time to rise.
+    """Check the last skill press took, once its level has had time to rise.
 
     Args:
         task: The Daily task.
@@ -1070,18 +1093,19 @@ def skill_risen(task, skills):
     pending = park["skill_pending"]
     if pending is None:
         return None
-    level, pressed = pending
-    skill = next((skill for skill in skills if dream_park.AI_AUTOMATION.fullmatch(skill.name)), None)
+    pattern, level, pressed = pending
+    happy = pattern is dream_park.ANOTHER_HAPPY_DAY
+    skill = next((skill for skill in skills if pattern.fullmatch(skill.name)), None)
     if skill is not None and skill.level is not None and skill.level > level:
         park["skill_pending"], park["skill_no_rise"] = None, 0
-        park["skill_levels"].append(skill.level)
+        park["happy_levels" if happy else "skill_levels"].append(skill.level)
         return None
     if time.monotonic() - pressed < UPGRADE_WAIT:
         return True
     park["skill_pending"] = None
     park["skill_no_rise"] += 1
     if park["skill_no_rise"] >= 2:
-        return leave_skills(task, NO_SKILL_RISE)
+        return leave_skills(task, NO_HAPPY_DAY_RISE if happy else NO_SKILL_RISE)
     return None
 
 
@@ -1093,12 +1117,59 @@ def leave_skills(task, note):
     return press_once(task, FACILITIES_TAB)
 
 
+def happiness_left(task):
+    """Say how many Another Happy Day levels the trip may still buy.
+
+    Args:
+        task: The Daily task.
+
+    Returns:
+        The Happiness the header shows short while it lags the most, never past what it was short when first weighed
+        less the levels bought since; 0 when the header does not read.
+    """
+    park = park_state(task)
+    short = dream_park.happiness_short(dream_park.header_emotions(task))
+    if short and park["happy_need"] is None:
+        park["happy_need"] = short
+    if park["happy_need"] is None:
+        return 0
+    return min(short, park["happy_need"] - len(park["happy_levels"]))
+
+
+def may_scroll_skills(task):
+    """Say whether a short drag down the Skill tab may bring Another Happy Day's button into view.
+
+    Only when the lowest name is cut off at the bottom, no locked skill shows, the last drag moved the list, the trip
+    has drags left, and the drag lets go where it ends.
+    """
+    park = park_state(task)
+    if park["skill_scrolls"] >= SKILL_SCROLL_CAP or not dream_park.cut_off_below(task) or dream_park.locked_in_view(task):
+        return False
+    if park["skill_scrolls"] and unmoved(park["skill_scroll_names"], dream_park.row_names(task)):
+        return False
+    return lets_go(task)
+
+
+def scroll_skills(task):
+    """Drag the Skill tab a short way down, as the Facilities list is dragged."""
+    park = park_state(task)
+    park["skill_scrolls"] += 1
+    park["skill_scroll_names"] = dream_park.row_names(task)
+    task.log_info(f"dragging the Skill tab from {dream_park.SCROLL_FROM} to {dream_park.SCROLL_TO} ({park['skill_scrolls']} of {SKILL_SCROLL_CAP})")
+    task.swipe_relative(*dream_park.SCROLL_FROM, *dream_park.SCROLL_TO, duration=DRAG_DURATION)
+    park["skill_scrolled"] = time.monotonic()
+    return True
+
+
 def handle_daily_skill_tab(task):
-    """Upgrade AI Automation one level per pass while a level pays for itself by the next visit, then go back to Facilities.
+    """Upgrade AI Automation one level per pass while a level pays for itself by the next visit, then Another Happy Day
+    while Happiness lags, then go back to Facilities.
 
     Any box reading as Crystals, a currency or a purchase in a row's price column, or anywhere on the panel's right
-    side, stops Daily. Only AI Automation's own Upgrade is pressed, with taps; two presses without a level rise, the
-    visit's press cap, or a tab that does not read end the trip with no further press.
+    side, stops Daily. AI Automation's own Upgrade is pressed first, with taps. Then, while Happiness lags the other
+    emotions and the next Rank's target, Another Happy Day's Acquire or Upgrade, one level per point still short and
+    under AI Automation's budget, the tab dragged a short way down when its button is below the edge. Two presses
+    without a level rise, the visit's press cap, or a tab that does not read end the trip with no further press.
     """
     if showing(task, SKILL_TITLE) is None or showing(task, FACILITIES_HINT) is None:
         return False
@@ -1114,19 +1185,31 @@ def handle_daily_skill_tab(task):
     hit = next((box for box in dream_park.list_side(task) if refused(box.name)), None)
     if hit is not None:
         return stop(task, f"Stopped: the Dream Park Skill tab reads {hit.name!r}, and Daily spends only the park's profit. Check the game, then press Start again.")
-    if shown_for < SETTLE:
+    if shown_for < SETTLE or (park["skill_scrolled"] is not None and time.monotonic() - park["skill_scrolled"] < SETTLE):
         return True
     waiting = skill_risen(task, skills)
     if waiting is not None:
         return waiting
     if park["skill_presses"] >= SKILL_CAP:
         return leave_skills(task, f"the visit's {SKILL_CAP} AI Automation presses are used")
-    skill, reason = dream_park.choose_skill(skills, dream_park.profit(task), park["rate"])
-    if skill is None:
+    money = dream_park.profit(task)
+    skill, reason = dream_park.choose_skill(skills, money, park["rate"])
+    if skill is not None:
+        park["skill_pending"] = (dream_park.AI_AUTOMATION, skill.level, time.monotonic())
+        park["skill_presses"] += 1
+        return press(task, SKILL_UPGRADE, skill.button)
+    if happiness_left(task) <= 0:
         return leave_skills(task, reason)
-    park["skill_pending"] = (skill.level, time.monotonic())
-    park["skill_presses"] += 1
-    return press(task, SKILL_UPGRADE, skill.button)
+    if park["happy_presses"] >= SKILL_CAP:
+        return leave_skills(task, f"{reason}; the visit's {SKILL_CAP} Another Happy Day presses are used")
+    happy, why = dream_park.choose_happy_day(skills, money, park["rate"])
+    if happy is not None:
+        park["skill_pending"] = (dream_park.ANOTHER_HAPPY_DAY, happy.level or 0, time.monotonic())
+        park["happy_presses"] += 1
+        return press(task, HAPPY_DAY_UPGRADE, happy.button)
+    if why == dream_park.HAPPY_DAY_NOT_IN_VIEW and may_scroll_skills(task):
+        return scroll_skills(task)
+    return leave_skills(task, f"{reason}; {why}")
 
 
 def handle_daily_park_view(task):
