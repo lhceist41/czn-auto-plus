@@ -123,6 +123,13 @@ SUMMONED_IMAGES = tuple(Path(__file__).with_name("images") / name for name in ("
 SUMMONED_MATCH = 0.8
 # Wider than `ENEMY_BAND` at the top, which cuts through the counter of a boss standing tall enough to put it there.
 TARGET_BAND = (0.30, 0.05, 1.00, 0.60)
+# An enemy that has acted shows a grey diamond with a white X where its counter was, and so does every enemy on a turn's first frame until
+# the first input. Cut from a 1080p frame and matched in grey at the counter's own centre.
+ACTED_IMAGE = Path(__file__).with_name("images") / "enemy_acted.png"
+# Across 562 saved frames, every X beside an HP above 0 scored 0.683 or more and an X beside a dying enemy's 0 scored 0.638. Nothing else
+# scored above 0.629, a card reward's Attack icon, and no magenta counter above 0.547. An X counts without a number beside it, so this
+# margin alone keeps other icons out.
+ACTED_MATCH = 0.65
 # The row of statuses below an enemy's HP bar, as offsets from its counter's centre.
 STATUS_ROW = (0.01, 0.005, 0.17, 0.07)
 # Where an enemy's HP number sits, as offsets from its counter's centre. A counter with no number there is scenery in the same magenta.
@@ -153,7 +160,7 @@ COUNTER_DIGITS = re.compile(r"^\d{1,2}$")
 COUNTER_SURE = 0.9
 # What `enemies` knows about one enemy: its counter's x as a fraction across the frame, its current HP, how many more cards can be played
 # before it acts, and the attribute it is weak to. Each of those three is None when it was not read for sure. `sure` says the zoomed crop
-# and the full-frame pass read the same HP, which is what a kill is planned on.
+# read one HP and the full-frame pass read the same or nothing there, which is what a kill is planned on.
 Foe = namedtuple("Foe", ["x", "health", "counter", "weakness", "sure"], defaults=[False])
 
 
@@ -461,6 +468,46 @@ def enemy_counters(frame, band=ENEMY_BAND):
     return sorted(found)
 
 
+def greyscale(image):
+    """Reduce BGR pixels to grey, which the X diamond is matched in since it is drawn in grey and white.
+
+    Args:
+        image: The pixels, in BGR.
+
+    Returns:
+        A single-channel image.
+    """
+    return cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+
+def enemy_markers(frame):
+    """Find every enemy on screen by its action counter or, once it has acted, the X diamond drawn in the counter's place.
+
+    Args:
+        frame: The frame to read, or None when there is none.
+
+    Returns:
+        A list of `(x, y, acted)`, the centre in fractions of the frame and whether it is an X diamond, left to right.
+    """
+    band = TARGET_BAND
+    found = [(x, y, False) for x, y in enemy_counters(frame, band)]
+    patch = patch_of(frame, band)
+    template = icon_template(ACTED_IMAGE, frame.shape[0], greyscale) if patch is not None and patch.size else None
+    if template is None or patch.shape[0] < template.shape[0] or patch.shape[1] < template.shape[1]:
+        return found
+    height, width = frame.shape[:2]
+    scores = cv2.matchTemplate(greyscale(patch), template, cv2.TM_CCOEFF_NORMED)
+    template_height, template_width = template.shape
+    while True:
+        _, best, _, (left, top) = cv2.minMaxLoc(scores)
+        if best < ACTED_MATCH:
+            break
+        # Clear the template's own size around the peak, so one diamond is found once.
+        cv2.rectangle(scores, (left - template_width, top - template_height), (left + template_width, top + template_height), -1, -1)
+        found.append((band[0] + (left + template_width / 2) / width, band[1] + (top + template_height / 2) / height, True))
+    return sorted(found)
+
+
 def weakness(task):
     """Say which attribute the enemies are weak to.
 
@@ -577,29 +624,34 @@ def enemies(task):
     Returns:
         A tuple of `Foe`, left to right. The HP is the zoomed crop's number, or a full-frame number of three digits or more when the
         crop reads none, since that pass drops a leading 1 and can hold a number from an earlier frame. The counter is the crop's
-        number, and None for the infinity of an enemy that will not act. A counter with neither number is left out: card art in the
-        same magenta passes for one. The HP is sure when the crop read one number and the full-frame pass read the same.
+        number, and None for the infinity of an enemy that will not act or the X of one that has acted. A counter with neither number
+        is left out: card art in the same magenta passes for one. An X is kept with no HP when its number does not read, so the enemy
+        still counts and no single hit is taken to kill the others for sure. An enemy at 0 HP is dying and left out. The HP is sure
+        when the crop read one number and the full-frame pass read the same or none, since that pass drops small numbers rather than
+        misreading them.
     """
     frame = frame_of(task)
     numbers = [box for box in getattr(task, "all_texts", None) or [] if HEALTH_DIGITS.match(box.name)]
     found = []
-    for centre_x, centre_y in enemy_counters(frame, TARGET_BAND):
+    for centre_x, centre_y, acted in enemy_markers(frame):
         region = (centre_x + HEALTH_NUMBER[0], centre_y + HEALTH_NUMBER[1], centre_x + HEALTH_NUMBER[2], centre_y + HEALTH_NUMBER[3])
         full = next((box.name for box in numbers if in_region(box, region, task.width, task.height)), None)
         zoomed = set(numbers_in(task, frame, region, HEALTH_ZOOM, HEALTH_DIGITS))
-        sure = zoomed == {full}
+        sure = len(zoomed) == 1 and (full is None or full in zoomed)
         if len(zoomed) == 1:
             health = int(zoomed.pop())
         elif full is not None and (full in zoomed or not zoomed and len(full) >= 3):
             health = int(full)
         else:
             health = None
-        counted = set(numbers_in(task, frame, box_around(centre_x, centre_y, COUNTER_DIGIT_HALF), COUNTER_ZOOM, COUNTER_DIGITS,
-                                 COUNTER_SURE))
-        counter = int(counted.pop()) if len(counted) == 1 else None
-        if counter == 8 and counter_glyph_wide(frame, centre_x, centre_y):
-            counter = None
-        if health is None and counter is None:
+        counter = None
+        if not acted:
+            counted = set(numbers_in(task, frame, box_around(centre_x, centre_y, COUNTER_DIGIT_HALF), COUNTER_ZOOM, COUNTER_DIGITS,
+                                     COUNTER_SURE))
+            counter = int(counted.pop()) if len(counted) == 1 else None
+            if counter == 8 and counter_glyph_wide(frame, centre_x, centre_y):
+                counter = None
+        if health is None and counter is None and not acted or health == 0:
             continue
         badge = box_around(centre_x + WEAKNESS_OFFSET[0], centre_y + WEAKNESS_OFFSET[1], WEAKNESS_HALF)
         found.append(Foe(round(centre_x, 3), health, counter, attribute_of(patch_of(frame, badge)), sure))

@@ -491,7 +491,7 @@ class Turn:
         self.ego_held = False
         # Whether an enemy shows Absolute Invincibility, from `watch_invulnerable`, so the picker holds its attacks.
         self.invulnerable = False
-        # The fewest enemies a frame of this turn has shown, from `board.enemy_counters`. 0 until a frame shows one.
+        # The fewest enemies a frame of this turn has shown, by `board.enemy_counters` or `board.enemies`. 0 until a frame shows one.
         self.enemies = 0
 
     def settle(self):
@@ -1491,7 +1491,8 @@ def install():
             unread = read is None
             points = (UNREAD_MID_TURN if turn.played else cards.BASE_ACTION_POINTS) if unread else read
         # An attack's flash can pass for extra counters, and an enemy that dies stays gone. Too few only values all-enemy damage as before.
-        seen = len(board.enemy_counters(frame_of(task)))
+        # The enemies read also count those behind an X diamond, read or not, while one read at 0 HP is dying and stays out of both.
+        seen = max(len(board.enemy_counters(frame_of(task))), len(foes))
         if seen:
             turn.enemies = min(turn.enemies or seen, seen)
         if turn.weakness is None:

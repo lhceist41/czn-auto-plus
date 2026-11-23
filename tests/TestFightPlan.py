@@ -385,11 +385,12 @@ class TestHitsInBattle(unittest.TestCase):
 
 
 class TestReadingSureHealth(unittest.TestCase):
-    """An enemy's HP is sure only when the zoomed crop and the full-frame pass read the same number."""
+    """An enemy's HP is sure only when the zoomed crop reads one number and the full-frame pass reads the same or none."""
 
     def test_agreement_makes_a_read_sure(self):
-        # The crop wins either way, as before. A pass holding an earlier frame's HP, or none, leaves the read unsure.
-        for full, sure in (("75", True), ("175", False), (None, False)):
+        # The crop wins either way, as before. A pass holding an earlier frame's HP leaves the read unsure. One reading nothing does not,
+        # since it drops small numbers rather than misreading them: live, a 3 HP enemy the crop alone read held back a sure kill.
+        for full, sure in (("75", True), ("175", False), (None, True)):
             with self.subTest(full=full):
                 task = CropTask(["enemy_eight"], full=[health_box("enemy_eight", full)] if full else [])
                 self.assertEqual([(75, sure)], [(foe.health, foe.sure) for foe in board.enemies(task)])
@@ -399,7 +400,6 @@ class TestReadingSureHealth(unittest.TestCase):
         # the HP, so only the full read disagreeing keeps it from looking like an enemy Target Spotted's 108 would kill. A cover can stay
         # put across plans, so the second plan sees the same.
         for name, crop, full, health, sure in (("covered, full read 178", "17", "178", 17, False),
-                                               ("covered, no full read", "17", None, 17, False),
                                                ("uncovered", "178", "178", 178, True)):
             with self.subTest(name):
                 reads = {"enemy_eight": ([(crop, 0.989)], [("8", 1.0)])}
@@ -413,6 +413,38 @@ class TestReadingSureHealth(unittest.TestCase):
                         self.assertFalse(any(card.get("kills") for card in chosen))
                     # The same 17 read for sure is a kill, so it is the read, not the damage, that holds the plan back.
                     self.assertTrue(cards.plan(hand(*BUFFS_AT_8_HP), cards.Board(foes=(foes[0]._replace(sure=True),)))[0].get("kills"))
+
+
+# The hits saved at the end of a run whose sure kills came a card late.
+RUN_END = {"Mei Lin": [105, 100, 112, 112], "Selena": [101, 81, 81, 81, 79.3]}
+# Four enemies after Sniper's Domain, Deluge and Drone Bombing, with one Action Point left. Mika had only two hits seen then.
+LOW_FOUR = (Foe(0.431, 14, 1, None, True), Foe(0.566, 12, 4, None, True), Foe(0.697, 3, 4, None, True), Foe(0.828, 4, 3, None, True))
+LOW_FOUR_HAND = ("Water Arrow", "Blessing of Waves", "Flame Dragon Guardian", JEWEL)
+
+
+class TestKillsFromTheBoardRead(unittest.TestCase):
+    """Boards from logged turns where a sure kill came a card late, as the enemy read now gives them."""
+
+    def test_an_elite_read_behind_its_x_is_killed_with_the_first_card(self):
+        # The turn's first frame showed the elite's X, so the board held no enemy and High-Power Scope went before Drone Bombing.
+        held = ("Blessing of Waves", "High-Power Scope", "Drone Bombing", "Strike", "Flame Dragon Guardian")
+        state = cards.Board(action_points=3, hand=held, health=0.954, team=0.952, enemies=1)
+        with hits(RUN_END):
+            chosen = cards.plan(hand(*held), state._replace(foes=(Foe(0.636, 16, None, None, True),)))
+            self.assertEqual("Drone Bombing", chosen[0]["name"])
+            self.assertTrue(chosen[0].get("kills"))
+            self.assertNotEqual("Drone Bombing", cards.plan(hand(*held), state)[0]["name"])
+
+    def test_a_low_enemy_the_crop_alone_read_is_killed_with_the_first_card(self):
+        state = cards.Board(action_points=1, hand=LOW_FOUR_HAND, played=("Sniper's Domain", "Deluge", "Drone Bombing"),
+                            battle=("Sniper's Domain", "Deluge", "Drone Bombing"), health=0.924, team=0.989, enemies=4, foes=LOW_FOUR)
+        with hits({**RUN_END, "Mika": [39, 55, 44]}):
+            chosen = cards.plan(hand(*LOW_FOUR_HAND), state)
+            self.assertEqual("Water Arrow", chosen[0]["name"])
+            self.assertTrue(chosen[0].get("kills"))
+            # With the 3 HP enemy unsure, Water Arrow could land on it or not: no kill is planned.
+            unsure = state._replace(foes=(*LOW_FOUR[:2], LOW_FOUR[2]._replace(sure=False), LOW_FOUR[3]))
+            self.assertFalse(any(card.get("kills") for card in cards.plan(hand(*LOW_FOUR_HAND), unsure)))
 
 
 if __name__ == "__main__":

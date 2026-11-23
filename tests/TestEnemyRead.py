@@ -32,7 +32,24 @@ FIXTURES = {
     "enemy_eight": ((1039, 373), [("75", 0.999)], [("8", 1.0)]),
     # Card art thrown over the enemies, whose magenta passes every test the counter finder makes. OCR read nothing on it.
     "enemy_card_art": ((570, 433), [], []),
+    # Four enemies on a turn's first frame, each showing the X diamond in its counter's place, and the same four a turn later.
+    "acted_four_1": ((772, 285), [("33", 1.0)], []),
+    "acted_four_2": ((1023, 141), [("102", 0.998)], []),
+    "acted_four_3": ((1277, 285), [("102", 0.998)], []),
+    "acted_four_4": ((1528, 141), [("102", 0.999)], []),
+    "acted_next_1": ((789, 281), [("33", 0.999)], []),
+    "acted_next_2": ((1043, 137), [("102", 0.999)], []),
+    "acted_next_3": ((1294, 281), [("102", 0.999)], []),
+    "acted_next_4": ((1546, 137), [("102", 0.999)], []),
+    # A boss's minion that has acted, its X drawn bare over the scenery: the weakest real match, 0.683.
+    "acted_minion": ((1031, 285), [("38", 0.998)], []),
+    # A dying enemy, its X beside a 0.
+    "acted_dying": ((1284, 283), [("0", 0.682)], []),
+    # A card reward's Attack icon, the closest thing to an X diamond in 562 saved frames at 0.629.
+    "card_reward_attack": ((837, 306), [], []),
 }
+FOUR = ["acted_four_1", "acted_four_2", "acted_four_3", "acted_four_4"]
+NEXT = ["acted_next_1", "acted_next_2", "acted_next_3", "acted_next_4"]
 # Where the counter's centre sits inside each cut-out, in pixels from its left edge. The HP crop starts well right of it.
 COUNTER_INSIDE = 48
 # The framework's own threshold when a caller passes none.
@@ -160,6 +177,73 @@ class TestEnemyRead(unittest.TestCase):
         task = CropTask([])
         task.frame = None
         self.assertEqual((), board.enemies(task))
+        self.assertEqual([], board.enemy_markers(None))
+
+    def test_the_hp_is_sure_on_one_crop_number_the_full_pass_does_not_contradict(self):
+        # The full-frame pass drops small numbers rather than misreading them, so its silence leaves the crop's one number sure.
+        one = {"enemy_two_digits": ([("24", 0.998)], [("5", 0.998)])}
+        both = {"enemy_two_digits": ([("24", 0.9), ("4", 0.9)], [("5", 0.998)])}
+        for name, full, reads, expected in (("crop alone", None, one, (24, True)),
+                                            ("both agree", "24", one, (24, True)),
+                                            ("they disagree", "124", one, (24, False)),
+                                            ("crop read two", "24", both, (24, False))):
+            with self.subTest(name):
+                boxes = [health_box("enemy_two_digits", full)] if full else []
+                foes = board.enemies(CropTask(["enemy_two_digits"], full=boxes, reads=reads))
+                self.assertEqual([expected], [(foe.health, foe.sure) for foe in foes])
+
+    def test_an_enemy_read_at_0_hp_is_left_out(self):
+        # It is dying, and any attack would look like it kills it.
+        zero = {"enemy_eight": ([("0", 0.99)], [("8", 1.0)])}
+        self.assertEqual([], read("enemy_eight", full=[health_box("enemy_eight", "0")], reads=zero))
+        self.assertEqual([], read("acted_dying"))
+
+
+class TestActedEnemyRead(unittest.TestCase):
+    """An enemy showing the X diamond in its counter's place, as all do on a turn's first frame and each does once it has acted."""
+
+    def test_every_enemy_behind_an_x_is_read_with_no_counter(self):
+        for names in (FOUR, NEXT):
+            with self.subTest(names[0]):
+                task = CropTask(names)
+                self.assertEqual([], board.enemy_counters(task.frame, board.TARGET_BAND))
+                self.assertEqual([True] * 4, [acted for _, _, acted in board.enemy_markers(task.frame)])
+                foes = board.enemies(task)
+                self.assertEqual([(33, None, True), (102, None, True), (102, None, True), (102, None, True)],
+                                 [(foe.health, foe.counter, foe.sure) for foe in foes])
+                self.assertEqual(sorted(foe.x for foe in foes), [foe.x for foe in foes])
+                # An X holds no digit, so only the four HP crops are read.
+                self.assertEqual(4, len(task.processed))
+
+    def test_a_bare_x_beside_a_minion_is_read(self):
+        self.assertEqual([(38, None)], read("acted_minion"))
+
+    def test_an_x_whose_number_does_not_read_still_counts_and_keeps_a_single_hit_from_killing(self):
+        # Two enemies on a turn's first frame, the left one's HP unread. Counted as one, a 110 hit looked like a kill on the 102,
+        # while the game aims at the leftmost enemy.
+        task = CropTask(["acted_four_1", "acted_four_2"], reads={"acted_four_1": ([], [])})
+        foes = board.enemies(task)
+        self.assertEqual([(None, None, False), (102, None, True)], [(foe.health, foe.counter, foe.sure) for foe in foes])
+        self.assertEqual(0, cards.kills([(110, 0)], cards.Board(foes=foes, enemies=len(foes))))
+        # A hit on every enemy still kills the one whose HP did read.
+        self.assertEqual(1, cards.kills([(0, 110)], cards.Board(foes=foes, enemies=len(foes))))
+
+    def test_magenta_counters_alone_are_found_as_before(self):
+        task = CropTask(["enemy_card_art", "enemy_eight", "enemy_infinity"])
+        counters = board.enemy_counters(task.frame, board.TARGET_BAND)
+        self.assertEqual([(x, y, False) for x, y in counters], board.enemy_markers(task.frame))
+
+    def test_a_card_reward_icon_is_no_enemy_even_beside_a_number(self):
+        for reads in (None, {"card_reward_attack": ([("12", 0.99)], [])}):
+            with self.subTest(reads=reads):
+                task = CropTask(["card_reward_attack"], reads=reads)
+                self.assertEqual([], board.enemy_markers(task.frame))
+                self.assertEqual((), board.enemies(task))
+
+    def test_a_counter_and_an_x_on_one_frame_are_both_found(self):
+        task = CropTask(["enemy_eight", "acted_four_4"])
+        self.assertEqual([False, True], [acted for _, _, acted in board.enemy_markers(task.frame)])
+        self.assertEqual([(75, 8), (102, None)], [(foe.health, foe.counter) for foe in board.enemies(task)])
 
 
 class TestEnemiesReachThePlan(unittest.TestCase):
@@ -189,6 +273,29 @@ class TestEnemiesReachThePlan(unittest.TestCase):
 
     def test_a_board_with_no_enemies_read_has_none(self):
         self.assertEqual((), cards.Board().foes)
+
+    def test_enemies_read_behind_x_diamonds_are_counted(self):
+        # A turn's first frame shows no counter at all, so without them the plan valued damage to all enemies for one.
+        four = tuple(board.Foe(x, 102, None, None, True) for x in (0.427, 0.558, 0.69, 0.821))
+        with upstream(hand(ATTACK, BIG_ATTACK)) as (utils_sortie, task), \
+                mock.patch.object(board, "enemies", lambda task: four), \
+                mock.patch.object(board, "enemy_counters", lambda frame, band=board.ENEMY_BAND: []), \
+                mock.patch.object(cards, "plan", wraps=cards.plan) as plan:
+            battle.install()
+            utils_sortie._try_all_card_keys(task, len(task.hand_cards))
+            self.assertEqual(4, plan.call_args.args[1].enemies)
+            self.assertTrue(any("4 enemy counter(s)" in message for message in task.logged))
+
+    def test_counters_seen_beyond_the_enemies_read_still_count(self):
+        # A magenta enemy whose HP and counter both failed to read is no foe, but its counter still counts it.
+        counters = [(0.43, 0.33), (0.56, 0.19), (0.69, 0.33)]
+        with upstream(hand(ATTACK, BIG_ATTACK)) as (utils_sortie, task), \
+                mock.patch.object(board, "enemies", lambda task: self.FOES[:1]), \
+                mock.patch.object(board, "enemy_counters", lambda frame, band=board.ENEMY_BAND: counters), \
+                mock.patch.object(cards, "plan", wraps=cards.plan) as plan:
+            battle.install()
+            utils_sortie._try_all_card_keys(task, len(task.hand_cards))
+            self.assertEqual(3, plan.call_args.args[1].enemies)
 
 
 if __name__ == "__main__":
