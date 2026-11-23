@@ -837,6 +837,89 @@ class TestCardText(unittest.TestCase):
         self.assertEqual("crystal", spend_guard.marker_in(["2crystallization30crystals"], spend_guard.ACCOUNT))
 
 
+# The same dialog over Select Card Space as OCR read it, Confirm read cleanly, with a card's text showing through its
+# button strip on the left.
+SELECT_CARD_SPACE_SKIP = [
+    ("1", 0.042, 0.048), ("请选择1张转换的卡牌", 0.213, 0.047), ("Select Card Space", 0.876, 0.030), ("View Card Info Caps", 0.868, 0.066),
+    ("Strike", 0.545, 0.159), ("基础攻击", 0.567, 0.184), ("Order's Bible Page", 0.165, 0.246), ("技能", 0.125, 0.284),
+    ("Rewards cannot be obtained if you choose to skip.", 0.501, 0.413), ("Are you sure you want to skip it?", 0.501, 0.454),
+    ("ESC", 0.215, 0.594), ("进入", 0.536, 0.594), ("Exhaust", 0.144, 0.649), ("取消", 0.347, 0.632), ("确认", 0.664, 0.634),
+    ("when this card is", 0.146, 0.689), ("Exhausted, Draw 2", 0.146, 0.720), ("Draw 2 Basic Card(s) of", 0.566, 0.784),
+    ("跳过", 0.768, 0.931), ("Convert", 0.936, 0.931),
+]
+# Card names and text that hold a delete or retreat word, from `game_text.py`, and the Crystallization line again.
+DIALOG_CARD_LINES = {"Retreat": spend_guard.RETREAT, "Elimination": spend_guard.DELETION, "Delete Commitment": spend_guard.DELETION,
+                     "2 Crystallization": None}
+# What the reward skip dialog's own lines would say if it ever asked for one of these, each inside its band.
+DIALOG_SPENDS = {"Spend 1600 Crystals to make the purchase?": spend_guard.ACCOUNT, "Pay $4.99 to skip?": spend_guard.MONEY,
+                 "Retreat from the run?": spend_guard.RETREAT, "Delete this save data?": spend_guard.DELETION}
+
+
+def replaced(frame, old, new):
+    """Swap one box's text in a captured frame.
+
+    Args:
+        frame: `(name, x, y)` triples.
+        old: The text to replace.
+        new: Its replacement.
+
+    Returns:
+        The new triples.
+    """
+    return [(new if name == old else name, x, y) for name, x, y in frame]
+
+
+class TestRewardSkipDialog(unittest.TestCase):
+    """The reward skip dialog is judged by its own lines, never by the cards it is drawn over."""
+
+    def test_card_text_under_the_card_reward_skip_dialog_is_confirmed(self):
+        for line in DIALOG_CARD_LINES:
+            with self.subTest(line=line):
+                task = FakeTask(replaced(CARD_REWARD_SKIP, "2 Crystallization", line), node_status={})
+                self.assertTrue(spend_guard.shown(task, spend_guard.REWARD_SKIP_DIALOG))
+                self.assertIsNone(spend_guard.risky_confirm(task))
+                self.assertIs(True, confirm(task))
+                self.assertEqual(["确认"], task.clicked)
+                self.assertFalse(task.disabled)
+
+    def test_card_text_through_the_button_strip_is_confirmed(self):
+        for line in DIALOG_CARD_LINES:
+            with self.subTest(line=line):
+                task = FakeTask(replaced(SELECT_CARD_SPACE_SKIP, "Exhaust", line), node_status={})
+                self.assertIsNone(spend_guard.risky_confirm(task))
+
+    def test_the_same_card_text_still_stops_where_the_dialog_is_not_recognised(self):
+        """Without either of the dialog's lines or its Cancel, or on another dialog, everything is read as before."""
+        for line, group in DIALOG_CARD_LINES.items():
+            if group is None:
+                continue
+            frame = replaced(CARD_REWARD_SKIP, "2 Crystallization", line)
+            tasks = {
+                "first line missing": FakeTask([box for box in frame if not box[0].startswith("Rewards cannot")], node_status={}),
+                "second line missing": FakeTask([box for box in frame if not box[0].startswith("Are you sure")], node_status={}),
+                "Cancel missing": FakeTask([box for box in frame if box[0] != "取消"], node_status={}),
+                "lines elsewhere": dialog("Rewards cannot be obtained if you choose to skip.", "Are you sure you want to skip it?", line,
+                                          node_status={}),
+                "plain dialog": dialog("Are you sure?", line, node_status={}),
+            }
+            for case, task in tasks.items():
+                with self.subTest(line=line, case=case):
+                    self.assertFalse(spend_guard.shown(task, spend_guard.REWARD_SKIP_DIALOG))
+                    self.assertEqual(group, spend_guard.risky_confirm(task)[0])
+
+    def test_a_spend_delete_or_retreat_in_the_dialogs_own_lines_still_stops(self):
+        for frame_name, frame in (("Card Reward", CARD_REWARD_SKIP), ("Select Card Space", SELECT_CARD_SPACE_SKIP)):
+            for line, group in DIALOG_SPENDS.items():
+                for y in (0.36, 0.50):
+                    with self.subTest(frame=frame_name, line=line, y=y):
+                        task = FakeTask([*frame, (line, 0.5, y)], node_status={})
+                        self.assertTrue(spend_guard.shown(task, spend_guard.REWARD_SKIP_DIALOG))
+                        self.assertIs(True, confirm(task))
+                        self.assertTrue(task.disabled)
+                        self.assertEqual(["取消"], task.clicked)
+                        self.assertIn(group, task.notifications[0])
+
+
 class TestInstall(unittest.TestCase):
 
     def test_the_guard_is_applied_before_notify(self):

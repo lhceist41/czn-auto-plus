@@ -115,6 +115,13 @@ COMPACT_SKIP_DIALOG = Dialog("compact story skip dialog", "doyouwanttoskipthisst
 # That dialog's own box, holding its title, key hints, label and buttons. The speaker and the subtitle line stay readable
 # under it, at y 0.753 and 0.835-0.837.
 COMPACT_SKIP_AREA = (0.25, 0.37, 0.75, 0.66)
+# The dialog Chaos shows over a reward's cards when its Skip is pressed, Card Reward and Select Card Space alike: its two
+# lines at y 0.413 and 0.454, buttons at y 0.631-0.634. It names no title, so its first line stands in for one.
+REWARD_SKIP_DIALOG = Dialog("reward skip dialog", "rewardscannotbeobtainedifyouchoosetoskip", False, (0.25, 0.38, 0.75, 0.44),
+                            "areyousureyouwanttoskipit", (0.25, 0.43, 0.75, 0.48), ("取消", "确认"), (0.25, 0.60, 0.75, 0.66))
+# The solid part of that dialog's full-width band, which holds its lines. The cards' names stop above it at y 0.31, and
+# their text shows through the button strip below it (y 0.649) and under it (0.708-0.746).
+REWARD_SKIP_AREA = (0.009, 0.33, 0.977, 0.57)
 
 TAPS_TAG = "no blind tap on a spend screen"
 CONFIRM_TAG = "no Confirm on an account spend"
@@ -339,6 +346,9 @@ def risky_confirm(task):
     # So would a line of dialogue the compact dialog leaves showing under it, so only that dialog's own box is read.
     if shown(task, COMPACT_SKIP_DIALOG):
         boxes = [box for box in boxes if in_region(box, COMPACT_SKIP_AREA, task.width, task.height)]
+    # And a card named Retreat or Elimination under the reward skip dialog, so only the band holding its lines is read.
+    if shown(task, REWARD_SKIP_DIALOG):
+        boxes = [box for box in boxes if in_region(box, REWARD_SKIP_AREA, task.width, task.height)]
     texts = read_texts(boxes)
     asked = getattr(task, "node_status", None) or {}
     for group in (ACCOUNT, MONEY):
