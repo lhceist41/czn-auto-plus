@@ -7,7 +7,7 @@ hoping. This module replaces the hoping.
 """
 
 import re
-from collections import Counter, namedtuple
+from collections import Counter, deque, namedtuple
 from difflib import SequenceMatcher
 from functools import lru_cache
 from itertools import combinations
@@ -77,6 +77,24 @@ HEALTHY = 0.9
 # figure on it. Rating those zero would mean a buff never got played at all, which is worse than the guess.
 # The ordinary card costing one point does 100% damage, so an unreadable effect is priced at the same rate.
 UNREAD_VALUE = 100
+# What an Action Point a card gains is worth: the ordinary card costing one point does 100% damage. Only while the hand holds more to pay for.
+POINT_VALUE = 100
+# The share of the team's HP after the enemy's next hit from which no hit is coming, so a shield has nothing to stop. The bar reads 1.0 then.
+NO_HIT = 0.995
+# How many turns a fight has to have left for an Upgrade to pay for its points. Below it an Upgrade is worth that share of its value.
+UPGRADE_TURNS = 2
+# How many hits a combatant has to have been seen landing before any estimate of their damage is trusted.
+CALIBRATED = 3
+# The share of a combatant's hits an estimate of a sure kill must not count on beating. Buffs, Marks and crits spread one combatant's damage
+# per 100% from 63 to 154 over a night's logs, so a kill is planned on the low end, and the turns a fight has left on the middle.
+SURE_HIT = 0.25
+TYPICAL_HIT = 0.5
+# How many of a combatant's hits are remembered, the newest, so a level gained mid-run moves the estimate.
+HIT_MEMORY = 50
+# How far apart two reads of one enemy can stand, as a share of the frame's width. Enemies stand 0.06 or more apart.
+SAME_ENEMY = 0.03
+# Where in a turn the cards that kill go: after a chance to escape or the glowing card, before everything a fight that ends never needs.
+PHASE_KILL = PHASE_UPGRADE - 0.5
 # What a card lit up for an Epiphany is worth beyond what it does this turn. The upgrade is permanent and the
 # run is long, so it comfortably outweighs one turn of anything.
 EPIPHANY_BONUS = 1000
@@ -90,9 +108,14 @@ DAMAGE = re.compile(r"(\d+)%(?:\s*[×x]\s*(\d+))?[^\n]{0,24}?Damage(?!\s+Amount)
 SHIELD = re.compile(r"(\d+)%[^\n]{0,20}?Shield")
 DRAW = re.compile(r"\bDraw (\d+)")
 # A line that gains Action Points outright, as Source of Water's "Gain 1 AP". Seven Arms' "If ..., gain 2 AP" has a condition, so it does not count.
-AP_GAIN = re.compile(r"^(?:Draw \d+,? and )?gain \d+ AP\b", re.I | re.M)
+AP_GAIN = re.compile(r"^(?:Draw \d+,? and )?gain (\d+) AP\b", re.I | re.M)
+# A figure the generator left as X, as Rising Dragon Spire's "Add X Hit(s)". A card carrying one does more than its text says, by an unknown amount.
+UNKNOWN_FIGURE = re.compile(r"\bX\b")
 # A heal the card makes when played, as in "Heal 100%". Mid-line ones are triggers, as in "At the end of the turn, Fixed Heal 30%".
 HEAL = re.compile(r"^Heal (\d+)%", re.MULTILINE)
+# A line that only scales, repeats or stands in for a heal, or moves Action Points, as Blessing of Waves' "Increase Heal Amount by 30% for
+# each AP" or Fresh Raw Meat's "Recover 15% of Max HP". With the heal or the points not needed, such a line has nothing else to offer.
+HEAL_OR_POINTS_LINE = re.compile(r"\bHeal\b|\bRecover \d+% of Max HP\b|\bAP\b")
 # A line of damage that lands on every enemy, as in Vulture Ejection's "120% Defense-Based Damage to all enemies". The data's own target
 # misses some, Diagonal Slash among them. "To random enemies" spreads its hits instead, so that stays one target's worth.
 ALL_ENEMIES = re.compile(r"\bto all enemies\b")
@@ -108,6 +131,8 @@ COPIES = {}
 DECK = {}
 # How many times a battle a card comes back to hand after it is played, by canonical name, summed over its copies, from the deck read.
 RETRIEVES = {}
+# Damage per 100% printed that each combatant's attacks were seen doing, by combatant, newest last. Kept for the whole run, across fights.
+HITS = {}
 
 # What a card does, in the terms the ordering cares about.
 Features = namedtuple("Features", [
@@ -152,7 +177,9 @@ Board = namedtuple("Board", [
     "health",
     # Every enemy read off the screen, as `board.Foe` left to right: where it stands, its HP and how soon it acts. Empty when not read.
     "foes",
-], defaults=[BASE_ACTION_POINTS, None, None, (), (), (), (), 0, (), DECK, False, 1, None, ()])
+    # The share of the team's HP it has now, from the readout over the team bar. A heal cannot store HP for a hit still to come. None when not read.
+    "team",
+], defaults=[BASE_ACTION_POINTS, None, None, (), (), (), (), 0, (), DECK, False, 1, None, (), None])
 
 # How many distinct readings to remember the folding of. OCR invents new misspellings all session, so this
 # is bounded rather than unlimited, and it is far larger than the ten names one frame ever asks about.
@@ -674,21 +701,273 @@ def rated(name, board):
         board: The `Board` it would be played into.
 
     Returns:
-        A single figure combining the damage, shield and draw the card states, with damage raised when the
-        card's attribute is the one the enemies are weak to.
+        A single figure combining the damage, shield, heal, draw and Action Points the card states, with damage raised when the
+        card's attribute is the one the enemies are weak to. A heal with nothing to restore, now or after the next hit, a shield
+        with no hit coming and points with nothing to pay for count for nothing, and an Upgrade is cut while the fight has under
+        `UPGRADE_TURNS` turns left.
     """
     doing = features(name)
     matched = board.weakness is not None and attribute_of(name) == board.weakness
     if wasted(name, board):
         return 0
     hit = doing.damage + doing.spread * (board.enemies - 1)
-    heal = 0 if board.health is not None and board.health >= HEALTHY else doing.heal
-    worth = strength(doing._replace(damage=0 if board.invulnerable else hit * (WEAKNESS_BONUS if matched else 1), heal=heal), COMBATANT_ROLE.get(owner(name)))
-    if not worth and not doing.heal:
+    full = board.team is not None and board.team >= 1
+    heal = 0 if full or board.health is not None and board.health >= HEALTHY else doing.heal
+    shield = doing.shield if hit_coming(board) else 0
+    worth = strength(doing._replace(damage=0 if board.invulnerable else hit * (WEAKNESS_BONUS if matched else 1), heal=heal, shield=shield),
+                     COMBATANT_ROLE.get(owner(name)))
+    gained = points_gained(name)
+    if gained and points_wanted(name, board):
+        worth += POINT_VALUE * gained
+    # A heal, a shield or points judged not needed are why such a card is worth nothing, not a text the parser could not read. Such a card
+    # with a line nothing here reads, as Tactical Maneuver's Tenacity Damage or Shadow Reload's dagger, still has that line to offer.
+    needless = (doing.heal or gained) and not unread_line(name, HEAL_OR_POINTS_LINE) or doing.shield and not unread_line(name)
+    if not worth and not needless:
         worth = UNREAD_VALUE * max(cost(name), 1)
+    if category(name) == SETUP_CATEGORY:
+        turns = fight_turns(board)
+        if turns is not None and turns < UPGRADE_TURNS:
+            worth *= turns / UPGRADE_TURNS
     if lit_up(name, board):
         worth += EPIPHANY_BONUS
     return worth
+
+
+def points_gained(name):
+    """Say how many Action Points a card gains outright when played.
+
+    Args:
+        name: The card name, in any spelling.
+
+    Returns:
+        The points, 0 for a card that gains none or only under a condition.
+    """
+    return sum(int(found) for found in AP_GAIN.findall(on_play(name)))
+
+
+def points_wanted(name, board):
+    """Say whether the rest of the hand has a use for more Action Points than the turn has left.
+
+    Args:
+        name: The card that would gain them, left out of the hand once.
+        board: The `Board` it would be played into, whose `hand` holds every card in hand.
+
+    Returns:
+        True when the other cards worth playing cost more than the points left, or one of them spends every point there is.
+    """
+    others = list(board.hand)
+    if canonical(name) in others:
+        others.remove(canonical(name))
+    prices = [cost(other) for other in others if worth_playing(other)]
+    return X_COST in prices or sum(prices) > board.action_points
+
+
+def unread_line(name, passed=None):
+    """Say whether a card's played text has a line none of the figures here read, as "2 Tenacity Damage" or "3 Vulnerable to all enemies".
+
+    Args:
+        name: The card name, in any spelling.
+        passed: A pattern for lines to pass over as offering nothing more, or None to count every line.
+
+    Returns:
+        True when some line of what happens on play states no damage, shield, draw, heal or Action Points, and `passed` does not match it.
+    """
+    return any(not any(figures(line)) and not AP_GAIN.search(line) and not (passed and passed.search(line))
+               for line in on_play(name).splitlines() if line.strip())
+
+
+def plays_within(board):
+    """Count the most cards the hand could still play this turn, cheapest first, which is how many times every action counter could tick.
+
+    Args:
+        board: The `Board`, whose `hand` and `action_points` bound the count.
+
+    Returns:
+        The number of cards.
+    """
+    left, count = board.action_points, 0
+    prices = sorted(0 if price == X_COST else price for price in (cost(name) for name in board.hand if worth_playing(name)))
+    for price in prices:
+        if price > left:
+            break
+        left -= price
+        count += 1
+    return count
+
+
+def hit_coming(board):
+    """Say whether the team is to be hit before the turn ends, so a shield has something to stop.
+
+    Args:
+        board: The `Board`, with the team bar's prediction in `health` and each enemy's action counter in `foes`.
+
+    Returns:
+        True when the bar shows a hit coming or did not read, or when an enemy's counter runs out within the cards the hand could
+        still play: every card played takes one off every counter, and an enemy acts at 0. A counter that did not read counts as no hit.
+    """
+    if board.health is None or board.health < NO_HIT:
+        return True
+    reach = plays_within(board)
+    return any(foe.counter is not None and foe.counter <= reach for foe in board.foes)
+
+
+def note_hit(name, before, after):
+    """Learn what one of a combatant's attacks did, from the enemies read before it was played and after.
+
+    Only a plain hit on one enemy teaches anything: an attack with damage to all enemies, with a figure the text leaves as X or with
+    no owner is skipped, and so is any pair of reads where not exactly one enemy lost HP, any enemy gained some, or the HP of the one
+    that lost it was not read for sure both times. A hit that kills leaves no HP to compare, so the figures lean low, the safe way.
+
+    Args:
+        name: The card the game took.
+        before: The `board.Foe` reads the card was chosen against.
+        after: The reads of the frame that showed it played.
+
+    Returns:
+        The damage per 100% printed it did, now remembered for its owner, or None when it taught nothing.
+    """
+    doing = features(name)
+    who = owner(canonical(name))
+    if who is None or not doing.damage or doing.spread or UNKNOWN_FIGURE.search(on_play(name)):
+        return None
+    pairs = []
+    for foe in before:
+        later = [other for other in after if abs(other.x - foe.x) <= SAME_ENEMY]
+        if foe.health is not None and len(later) == 1 and later[0].health is not None:
+            pairs.append((foe, later[0]))
+    dropped = [(foe, later) for foe, later in pairs if later.health < foe.health]
+    if len(dropped) != 1 or any(later.health > foe.health for foe, later in pairs):
+        return None
+    foe, later = dropped[0]
+    if not (foe.sure and later.sure):
+        return None
+    figure = (foe.health - later.health) * 100 / doing.damage
+    HITS.setdefault(who, deque(maxlen=HIT_MEMORY)).append(figure)
+    return figure
+
+
+def per_hundred(who, share):
+    """Say what a combatant's attacks do per 100% printed, at a given point of the hits seen.
+
+    Args:
+        who: The combatant.
+        share: Which point of their hits, from 0 for the weakest to 1 for the strongest: `SURE_HIT` or `TYPICAL_HIT`.
+
+    Returns:
+        The damage, or None until `CALIBRATED` hits have been seen.
+    """
+    seen = sorted(HITS.get(who, ()))
+    if len(seen) < CALIBRATED:
+        return None
+    # Linear between the two hits either side of the point, as the inclusive quantiles count it.
+    place = share * (len(seen) - 1)
+    low = int(place)
+    return seen[low] + (seen[min(low + 1, len(seen) - 1)] - seen[low]) * (place - low)
+
+
+def expected_damage(name, share):
+    """Estimate a card's damage in HP from what its owner's hits have done, split into the part on one enemy and the part on all.
+
+    Args:
+        name: The card name, in any spelling.
+        share: Which point of the owner's hits to plan on, as `per_hundred` takes it.
+
+    Returns:
+        A pair of HP figures, to the one enemy hit and to every enemy, or None when the owner has too few hits seen.
+    """
+    figure = per_hundred(owner(canonical(name)), share)
+    if figure is None:
+        return None
+    doing = features(name)
+    return (doing.damage - doing.spread) * figure / 100, doing.spread * figure / 100
+
+
+def fight_turns(board):
+    """Estimate how many turns the fight has left: the enemies' HP over what a turn's worth of the hand's attacks typically does.
+
+    Args:
+        board: The `Board`, with each enemy's HP in `foes`.
+
+    Returns:
+        The turns, or None when an enemy's HP is unknown, too few hits have been seen to put a figure on any attack, or the turn can
+        do no damage.
+    """
+    count = max(len(board.foes), board.enemies)
+    if not board.foes or count > len(board.foes) or any(foe.health is None for foe in board.foes) or board.invulnerable:
+        return None
+    attacks = []
+    for name in board.hand:
+        price, estimate = cost(name), expected_damage(name, TYPICAL_HIT)
+        if estimate and price != X_COST and worth_playing(name) and features(name).damage:
+            attacks.append((price, estimate[0] + estimate[1] * count))
+    budget = max(board.action_points, BASE_ACTION_POINTS)
+    most = max((sum(damage for _, damage in picked) for size in range(1, len(attacks) + 1) for picked in combinations(attacks, size)
+                if sum(price for price, _ in picked) <= budget), default=0)
+    return sum(foe.health for foe in board.foes) / most if most else None
+
+
+def kills(picked, board):
+    """Count the enemies a set of attacks kills for sure, wherever the game aims each one.
+
+    Damage to all enemies is counted first, since the set plays it first. Hits on one enemy go where the game aims them, so with
+    several enemies left one only counts when it would kill the toughest of them, and is taken to kill the weakest. Once one enemy
+    is left every hit lands on it.
+
+    Args:
+        picked: Pairs of HP figures, to one enemy and to all, as `expected_damage` gives them at `SURE_HIT`.
+        board: The `Board`, whose enemies with a sure HP read are counted. An enemy without one, or not read at all, cannot be killed for sure.
+
+    Returns:
+        The number of enemies.
+    """
+    count = max(len(board.foes), board.enemies)
+    known = [foe.health for foe in board.foes if foe.sure and foe.health is not None]
+    spread = sum(every for _, every in picked)
+    alive = sorted(health - spread for health in known if health > spread)
+    killed = len(known) - len(alive)
+    if count > len(known):
+        # A hit on one enemy could land on the one whose HP is not known.
+        return killed
+    single = sorted((one for one, _ in picked if one), reverse=True)
+    while single and alive:
+        if len(alive) == 1:
+            return killed + (sum(single) >= alive[0])
+        if single.pop(0) >= alive[-1]:
+            killed += 1
+            alive.pop(0)
+    return killed
+
+
+def lethal(fixed, board):
+    """Find the cheapest set of affordable attacks that kills the most enemies for sure, to play before anything else.
+
+    A kill is only planned on HP read the same by the zoomed crop and the full-frame pass, and on the low end of the damage the
+    attacker's own hits have done, `SURE_HIT`, once `CALIBRATED` of them have been seen. Live, the bot buffed three cards deep into a
+    turn whose first attack would have finished the fight.
+
+    Args:
+        fixed: The playable hand cards with a fixed price.
+        board: The `Board` they would be played into.
+
+    Returns:
+        The cards, in the order to play them: damage to all enemies first while several are left, then the turn's usual order. Empty
+        when no set kills anything.
+    """
+    if board.invulnerable or not any(foe.sure for foe in board.foes):
+        return []
+    attacks = [(card, expected_damage(card["name"], SURE_HIT)) for card in fixed if features(card["name"]).damage]
+    attacks = [(card, estimate) for card, estimate in attacks if estimate]
+    best, best_key = (), (0,)
+    for size in range(1, len(attacks) + 1):
+        for picked in combinations(attacks, size):
+            spent = sum(price(card) for card, _ in picked)
+            if spent > board.action_points:
+                continue
+            key = (kills([estimate for _, estimate in picked], board), -spent, -size)
+            if key[0] and key > best_key:
+                best, best_key = picked, key
+    several = max(len(board.foes), board.enemies) > 1
+    return [card for card, estimate in sorted(best, key=lambda pair: (several and not pair[1][1], phase(pair[0]["name"], board)))]
 
 
 def wasted(name, board):
@@ -807,8 +1086,10 @@ def best_buy(ranked, budget, board):
         board: The `Board` they would be played into.
 
     Returns:
-        The cards to buy, best buy first. A tie goes to the set spending more points, then to the set of more cards.
+        The cards to buy, best buy first. A tie goes to the set spending more points, then to the set of more cards. A card whose text
+        does nothing here is never bought, while one a kit rates at nothing is still bought on points nothing else wants.
     """
+    ranked = [card for card in ranked if rated(card["name"], board) > 0 or value(card["name"], board) > 0]
     worth = [value(card["name"], board) for card in ranked]
     prices = [price(card) for card in ranked]
     best, best_key = (), (0, 0, 0)
@@ -826,14 +1107,16 @@ def plan(hand, board):
 
     Two questions, answered in order, because answering them together gets both wrong. What the budget buys is
     settled on the most value the points can buy, so a cheap card cannot crowd out a dear one that wins the fight. Only then are the survivors put into phase order, and
-    cards that tie keep the order the hand had.
+    cards that tie keep the order the hand had. Attacks that kill an enemy for sure are bought before both, and played before
+    everything but a chance to escape and the glowing card.
 
     Args:
         hand: Hand cards as `_hand_cards` reads them, each a dict with at least a `name`.
         board: The `Board` this is being decided against.
 
     Returns:
-        The hand cards to play, in order, costing no more than the Action Points available.
+        The hand cards to play, in order, costing no more than the Action Points available. A card that is part of a sure kill
+        carries `kills`.
     """
     if not board.hand:
         board = board._replace(hand=tuple(canonical(card["name"]) for card in hand))
@@ -842,9 +1125,16 @@ def plan(hand, board):
                 and not wasted(card["name"], board))
     budget = board.action_points
     ranked = sorted(playable, key=lambda held: buying_order(held, board))
+    kill = lethal([card for card in ranked if price(card) != X_COST], board)
+    ranked = [card for card in ranked if not any(card is killing for killing in kill)]
+    budget -= sum(price(card) for card in kill)
+    kill = [{**card, "kills": True} for card in kill]
     fixed = [card for card in ranked if price(card) != X_COST]
-    # An Upgrade pays off every turn left in the battle, so its first copy is bought first and the rest of the hand shares what is left.
-    first = [category(card["name"]) == SETUP_CATEGORY and canonical(card["name"]) not in board.battle for card in fixed]
+    # An Upgrade pays off every turn left in the battle, so its first copy is bought first and the rest of the hand shares what is left,
+    # unless the fight looks to be over before it could pay.
+    turns = fight_turns(board)
+    lasting = turns is None or turns >= UPGRADE_TURNS
+    first = [lasting and category(card["name"]) == SETUP_CATEGORY and canonical(card["name"]) not in board.battle for card in fixed]
     upgrades = best_buy([card for card, new in zip(fixed, first) if new], budget, board)
     left = budget - sum(price(card) for card in upgrades)
     # A cheap card that hurts while held goes next, as long as a point stays for the rest of the hand.
@@ -854,8 +1144,8 @@ def plan(hand, board):
             cleared.append(card)
             left -= price(card)
     chosen = upgrades + cleared + best_buy([card for card, new in zip(fixed, first) if not new], left, board)
-    spenders = [card for card in ranked if price(card) == X_COST]
+    spenders = [card for card in ranked if price(card) == X_COST and rated(card["name"], board) > 0]
     if spenders and sum(price(card) for card in chosen) < budget:
         # It takes the rest of the turn's points, so it is worth playing only while some remain, and nothing can follow it.
         chosen.append(spenders[0])
-    return sorted(chosen, key=lambda held: phase(held["name"], board))
+    return sorted(kill + chosen, key=lambda held: PHASE_KILL if held.get("kills") else phase(held["name"], board))

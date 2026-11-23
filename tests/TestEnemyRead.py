@@ -163,7 +163,7 @@ class TestEnemyRead(unittest.TestCase):
 
 
 class TestEnemiesReachThePlan(unittest.TestCase):
-    """The enemies ride along on the board the plan is made against, without changing what it picks."""
+    """The enemies ride along on the board the plan is made against. With no hits seen and the team bar unread or showing a hit, they change nothing."""
 
     FOES = (board.Foe(0.55, 75, 8, None), board.Foe(0.83, 3, None, "Justice"))
 
@@ -180,10 +180,10 @@ class TestEnemiesReachThePlan(unittest.TestCase):
             self.assertEqual([foe._asdict() for foe in self.FOES], logged["foes"])
             self.assertEqual([ATTACK, BIG_ATTACK], logged["hand"])
 
-    def test_the_plan_picks_the_same_with_or_without_the_enemies(self):
+    def test_with_no_hits_seen_the_plan_picks_the_same_with_or_without_the_enemies(self):
         for held, state in (((ATTACK, BIG_ATTACK), cards.Board()), ((ATTACK, BIG_ATTACK), cards.Board(action_points=1)),
                             ((SHIELD, ATTACK), cards.Board(health=0.3)), ((ATTACK, SHIELD), cards.Board(enemies=2))):
-            with self.subTest(held=held, state=state):
+            with self.subTest(held=held, state=state), mock.patch.dict(cards.HITS, clear=True):
                 cards_in_hand = hand(*held)
                 self.assertEqual(cards.plan(cards_in_hand, state), cards.plan(cards_in_hand, state._replace(foes=self.FOES)))
 

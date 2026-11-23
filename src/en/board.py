@@ -152,8 +152,9 @@ COUNTER_DIGITS = re.compile(r"^\d{1,2}$")
 # and every infinity taken for an 8 under 0.85, while the 225 that scored 0.9 or more were all right.
 COUNTER_SURE = 0.9
 # What `enemies` knows about one enemy: its counter's x as a fraction across the frame, its current HP, how many more cards can be played
-# before it acts, and the attribute it is weak to. Each of the last three is None when it was not read for sure.
-Foe = namedtuple("Foe", ["x", "health", "counter", "weakness"])
+# before it acts, and the attribute it is weak to. Each of those three is None when it was not read for sure. `sure` says the zoomed crop
+# and the full-frame pass read the same HP, which is what a kill is planned on.
+Foe = namedtuple("Foe", ["x", "health", "counter", "weakness", "sure"], defaults=[False])
 
 
 def box_around(centre_x, centre_y, half):
@@ -577,7 +578,7 @@ def enemies(task):
         A tuple of `Foe`, left to right. The HP is the zoomed crop's number, or a full-frame number of three digits or more when the
         crop reads none, since that pass drops a leading 1 and can hold a number from an earlier frame. The counter is the crop's
         number, and None for the infinity of an enemy that will not act. A counter with neither number is left out: card art in the
-        same magenta passes for one.
+        same magenta passes for one. The HP is sure when the crop read one number and the full-frame pass read the same.
     """
     frame = frame_of(task)
     numbers = [box for box in getattr(task, "all_texts", None) or [] if HEALTH_DIGITS.match(box.name)]
@@ -586,6 +587,7 @@ def enemies(task):
         region = (centre_x + HEALTH_NUMBER[0], centre_y + HEALTH_NUMBER[1], centre_x + HEALTH_NUMBER[2], centre_y + HEALTH_NUMBER[3])
         full = next((box.name for box in numbers if in_region(box, region, task.width, task.height)), None)
         zoomed = set(numbers_in(task, frame, region, HEALTH_ZOOM, HEALTH_DIGITS))
+        sure = zoomed == {full}
         if len(zoomed) == 1:
             health = int(zoomed.pop())
         elif full is not None and (full in zoomed or not zoomed and len(full) >= 3):
@@ -600,7 +602,7 @@ def enemies(task):
         if health is None and counter is None:
             continue
         badge = box_around(centre_x + WEAKNESS_OFFSET[0], centre_y + WEAKNESS_OFFSET[1], WEAKNESS_HALF)
-        found.append(Foe(round(centre_x, 3), health, counter, attribute_of(patch_of(frame, badge))))
+        found.append(Foe(round(centre_x, 3), health, counter, attribute_of(patch_of(frame, badge)), sure))
     return tuple(found)
 
 

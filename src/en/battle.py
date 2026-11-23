@@ -10,6 +10,7 @@ keeps the frame around it, and a card the Play Priority list names is still play
 import collections
 import json
 import math
+import os
 import re
 import time
 from pathlib import Path
@@ -40,6 +41,9 @@ HAND_CACHE = "_en_hand_for"
 # The combatants in the party, parked on the task. Read off the Combatants screen at the start of a run, then topped up from the
 # owners of cards read in hand.
 PARTY = "_en_party"
+# Each combatant's hits per 100% printed, kept across runs so a run's first fights can already plan a kill. `data/` is in `.gitignore`,
+# and deleting the file only costs the hits a run needs to see again before it plans one.
+HITS_FILE = os.path.join("data", "hits.json")
 # Set by Sortie's team read when a turn had a card or end turn in flight, so the next turn opens with a frame spare for the tap.
 TEAM_WANTED = "_en_team_wanted"
 
@@ -202,6 +206,8 @@ PILE_CONFIRM = (0.94, 0.93)
 PROMPT = "_en_prompt"
 
 _patched = False
+# Whether `HITS_FILE` has been read this run.
+_hits_loaded = False
 
 
 Blind = collections.namedtuple("Blind", [
@@ -440,6 +446,8 @@ class Turn:
         self.retrieved = collections.Counter(retrieved)
         self.attempted = None
         self.attempted_copies = 0
+        # The enemies the card tried was chosen against, so the frame that shows it played can say what it did to them.
+        self.attempted_foes = ()
         # The draw toasts up when that card's key was pressed, so one it brings up can be told from those already there.
         self.draws_at_press = 0
         self.refused = set()
@@ -672,6 +680,67 @@ def points_left(task, frame):
     return None
 
 
+def load_hits():
+    """Add the hits earlier runs saved to `cards.HITS`, once a run, ahead of any seen this run."""
+    global _hits_loaded
+    if _hits_loaded:
+        return
+    _hits_loaded = True
+    try:
+        with open(HITS_FILE, encoding="utf-8") as saved:
+            for who, figures in json.load(saved).items():
+                kept = usable_hits(figures)
+                if kept:
+                    cards.HITS[who] = collections.deque([*kept, *cards.HITS.get(who, ())], maxlen=cards.HIT_MEMORY)
+    except FileNotFoundError:
+        pass
+    except Exception as error:
+        logger.warning(f"could not read the saved hits from {HITS_FILE}, learning them again: {error}")
+
+
+def usable_hits(figures):
+    """Keep the saved hits a plan can count on.
+
+    The file can be edited by hand. A null sorted among the numbers stops the fight, and a NaN reads every sure enemy as killed.
+
+    Args:
+        figures: One combatant's value in the saved file.
+
+    Returns:
+        Its finite numbers above 0, in order, none for a value that is not a list.
+    """
+    if not isinstance(figures, list):
+        return []
+    return [figure for figure in figures
+            if isinstance(figure, (int, float)) and not isinstance(figure, bool) and math.isfinite(figure) and figure > 0]
+
+
+def save_hits():
+    """Write every combatant's hits to `HITS_FILE`, so the next run starts with them. A failed write is logged and never ends the fight."""
+    try:
+        os.makedirs(os.path.dirname(HITS_FILE), exist_ok=True)
+        with open(HITS_FILE, "w", encoding="utf-8") as file:
+            json.dump({who: [round(figure, 1) for figure in figures] for who, figures in sorted(cards.HITS.items())}, file)
+    except Exception as error:
+        logger.warning(f"could not save the hits to {HITS_FILE}: {error}")
+
+
+def team_share(task):
+    """Read the share of the team's HP it has now off the readout over the team bar, as "1850/3116".
+
+    Args:
+        task: The running task, whose `all_texts` holds the readout.
+
+    Returns:
+        The share, 1.0 at full HP, or None when the readout does not read.
+    """
+    for box in getattr(task, "all_texts", None) or []:
+        read = ego.TEAM_HP.search(box.name) if in_region(box, ego.TEAM_READOUT, task.width, task.height) else None
+        if read and int(read.group(2)):
+            return min(1.0, int(read.group(1)) / int(read.group(2)))
+    return None
+
+
 def board_line(state, unread):
     """Write down what a plan was made against, so a run's decisions can be judged afterwards from its log.
 
@@ -684,7 +753,8 @@ def board_line(state, unread):
     """
     return json.dumps({"action_points": state.action_points, "points_read": not unread, "hand": list(state.hand), "played": list(state.played),
                        "weakness": state.weakness, "invulnerable": state.invulnerable, "enemies": state.enemies,
-                       "health": None if state.health is None else round(state.health, 3), "foes": [foe._asdict() for foe in state.foes]},
+                       "health": None if state.health is None else round(state.health, 3), "foes": [foe._asdict() for foe in state.foes],
+                       "team": state.team},
                       ensure_ascii=False)
 
 
@@ -1376,9 +1446,15 @@ def install():
             task.sleep(KIT_PAUSE)
             return
         turn.hand = list(names)
+        load_hits()
+        foes = board.enemies(task)
 
         drew = bool(cards.DRAW.search(cards.description(turn.attempted or ""))) and draws_shown(task) > turn.draws_at_press
         if turn.attempted is not None and not was_refused(turn.attempted, turn.attempted_copies, names, drew):
+            hit = cards.note_hit(turn.attempted, turn.attempted_foes, foes)
+            if hit is not None:
+                task.log_info(f"{turn.attempted} hit for {hit:.0f} per 100% printed, {len(cards.HITS[cards.owner(turn.attempted)])} hit(s) seen")
+                save_hits()
             turn.settle()
         elif turn.attempted is not None and turn.retrieved[turn.attempted] < cards.RETRIEVES.get(turn.attempted, 0):
             # Live, Harmonization: Residual Herb shielded and came straight back, and was given up on as refused.
@@ -1416,7 +1492,7 @@ def install():
             task.log_info(f"turn opens with {budget}, {turn.enemies} enemy counter(s), {against}, hand {names}")
         state = cards.Board(action_points=points, weakness=turn.weakness, hand=tuple(names), played=tuple(turn.played),
                             last_turn=turn.last_turn, battle=(*turn.earlier, *turn.played), hand_size=count or 0, kept=turn.kept, invulnerable=turn.invulnerable, enemies=turn.enemies or 1,
-                            health=board.team_after_hit(frame_of(task)), foes=board.enemies(task))
+                            health=board.team_after_hit(frame_of(task)), foes=foes, team=team_share(task))
         task.log_info(f"board {board_line(state, unread)}")
         card = choose(hand, state, turn.refused)
         if card is None and unread and points < cards.BASE_ACTION_POINTS:
@@ -1451,9 +1527,10 @@ def install():
 
         name = card["name"]
         task.log_info(f"playing {name} for {cards.price(card)} AP on key {card['key']}, "
-                      f"worth {cards.value(name, state):.0f}")
+                      f"worth {cards.value(name, state):.0f}{', to kill an enemy' if card.get('kills') else ''}")
         turn.attempted = name
         turn.attempted_copies = names.count(name)
+        turn.attempted_foes = state.foes
         turn.draws_at_press = draws_shown(task)
         tested.played(name)
         if not play_key(task, card["key"], name):
