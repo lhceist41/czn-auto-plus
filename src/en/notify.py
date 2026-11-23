@@ -30,7 +30,7 @@ LAST_STUCK = "_en_last_stuck_notice"
 LOBBY_STORY_POINT = (0.887, 0.160)
 LOBBY_STORY = "故事"
 LOBBY_STOPS = {
-    "ChaosMode": ("Stopped: Chaos starts on the Chaos Team Formation or inside a run, not on the Lobby. "
+    "ChaosMode": ("Stopped: Chaos could not open The Blue Pot from the Lobby. "
                   "Open Chaos Manifestation in the game, then press Start again."),
     "SortieMode": "Stopped: Sortie starts on its own screens, not on the Lobby. Open Sortie in the game, then press Start again.",
 }
