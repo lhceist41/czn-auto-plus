@@ -19,7 +19,7 @@ import cv2
 import numpy as np
 from ok import Logger
 
-from src.en import board, cards, ego, kits, observe, story, tested
+from src.en import board, cards, ego, fight_log, kits, observe, story, tested
 from src.en.game_battle import CARD_TARGET
 from src.en.handlers import StandIn, insert_before, loaded, register, replace, standing_in
 from src.en.kits.kit import base_name
@@ -319,7 +319,7 @@ class KeepHeld(StandIn):
         return self.original.choice([option for option in options if id(option) not in kept] or options)
 
 
-def choose(hand, board, refused):
+def choose(hand, board, refused, made=None):
     """Pick the card to play next, or nothing when the turn is done.
 
     A turn is planned against the points the readout shows, or a full three when it does not read. The game refuses
@@ -329,12 +329,15 @@ def choose(hand, board, refused):
         hand: Hand cards as `_hand_cards` reads them.
         board: The `cards.Board` to decide against.
         refused: Names the game has already declined to play this turn.
+        made: A list the cards offered, the points and the plan are added to, for the fight record. None for no record.
 
     Returns:
         The hand card to play, or None when nothing is left worth playing.
     """
     playable = [card for card in hand if card.get("key") and card["name"] not in refused]
     chosen = cards.plan(playable, board)
+    if made is not None:
+        made.append((playable, board.action_points, chosen))
     if chosen:
         return chosen[0]
     # Nothing is worth playing for its own sake, so what is left goes on getting rid of cards that hurt while held.
@@ -1284,6 +1287,8 @@ def turn_of(task, hand_count):
     elif new_turn(turn.hand_count, hand_count, turn.ended):
         # A Finale ends the turn before its press settles, so the deal after it is what says it played.
         played = [*turn.played, turn.attempted] if turn.attempted else turn.played
+        if turn.attempted:
+            fight_log.resolved(task, turn.attempted, "played", "deal")
         # With no node to tell fights apart, the battle is only known back to the turn before.
         earlier = (*turn.earlier, *played) if fight is not None else played
         turn = Turn(hand_count, played, turn.hand, earlier, fight, turn.retrieved if fight is not None else ())
@@ -1304,6 +1309,7 @@ def end_of_turn(task):
     if turn.attempted is not None:
         if turn.attempted in turn.hand:
             turn.hand.remove(turn.attempted)
+        fight_log.resolved(task, turn.attempted, "played", "end turn")
         turn.settle()
     turn.ended = True
 
@@ -1455,11 +1461,13 @@ def install():
             if hit is not None:
                 task.log_info(f"{turn.attempted} hit for {hit:.0f} per 100% printed, {len(cards.HITS[cards.owner(turn.attempted)])} hit(s) seen")
                 save_hits()
+            fight_log.resolved(task, turn.attempted, "played", "hand", foes, hit)
             turn.settle()
         elif turn.attempted is not None and turn.retrieved[turn.attempted] < cards.RETRIEVES.get(turn.attempted, 0):
             # Live, Harmonization: Residual Herb shielded and came straight back, and was given up on as refused.
             task.log_info(f"{turn.attempted} came back to hand on its Retrieve")
             turn.retrieved[turn.attempted] += 1
+            fight_log.resolved(task, turn.attempted, "played", "retrieve", foes)
             turn.settle()
         elif turn.attempted is not None:
             turn.misses[turn.attempted] += 1
@@ -1468,6 +1476,7 @@ def install():
             if turn.misses[turn.attempted] >= (1 if turn.objected else REFUSALS):
                 turn.refused.add(turn.attempted)
                 task.log_info(f"the game would not play {turn.attempted}, leaving it for the rest of this turn")
+                fight_log.resolved(task, turn.attempted, "refused", "hand", foes)
 
         # A turn whose count does not read is planned against a full three and corrected by what the game will actually accept.
         points = 0
@@ -1494,13 +1503,15 @@ def install():
                             last_turn=turn.last_turn, battle=(*turn.earlier, *turn.played), hand_size=count or 0, kept=turn.kept, invulnerable=turn.invulnerable, enemies=turn.enemies or 1,
                             health=board.team_after_hit(frame_of(task)), foes=foes, team=team_share(task))
         task.log_info(f"board {board_line(state, unread)}")
-        card = choose(hand, state, turn.refused)
+        made = []
+        card = choose(hand, state, turn.refused, made)
         if card is None and unread and points < cards.BASE_ACTION_POINTS:
-            card = choose(hand, state._replace(action_points=cards.BASE_ACTION_POINTS), turn.refused)
+            card = choose(hand, state._replace(action_points=cards.BASE_ACTION_POINTS), turn.refused, made)
         if card is None and turn.objected:
             # The game said a card is still playable, so the best of those passed over for cost is tried as if affordable.
             card = choose([held for held in hand if cards.price(held) > 0], state._replace(action_points=cards.BASE_ACTION_POINTS),
-                          turn.refused)
+                          turn.refused, made)
+        fight_log.planned(task, turn, state, hand, made, card, unread)
         turn.priced_out = []
         if card is None:
             if not names:
@@ -1538,6 +1549,7 @@ def install():
             task.log_info(f"not enough AP for {name}, moving on")
             turn.refused.add(name)
             turn.attempted = None
+            fight_log.resolved(task, name, "refused", "toast")
         elif kits.ends_turn(name):
             # A Finale ends the turn with no end-turn key, and the next deal only starts a fresh turn once one has been ended. The press
             # still settles as played or refused like any other, since the game can refuse a Finale too.
@@ -1565,6 +1577,7 @@ def install():
             # blanks the whole screen instead, and a hand prompt rising hides only the counter. Live, the cards each added then grew
             # the hand into a false new turn.
             turn.ended = True
+            fight_log.left(task)
         elif count == 0 and turn is not None and turn.ended:
             # The hand is discarded at end turn, so the next deal is a new turn even when it is no bigger than what was left.
             turn.hand_count = 0
