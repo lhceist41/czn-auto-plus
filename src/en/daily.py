@@ -247,6 +247,9 @@ BANNER_MATCH = 0.92
 UNKNOWN_SECONDS = 30
 FADED_SECONDS = 20
 FADED_CONFIDENCE = 0.7
+# Right of this the Lobby writes its captions, Story to Combatants, and the right of its top bar. A faded Lobby reads at
+# most its character's speech bubble, read at (0.258, 0.278).
+CAPTION_SIDE = 0.70
 # The faded Lobby without a Lobby read, as at a start on an idle Lobby, is told by its scene: the ring's left arm, cut
 # from a 1080p capture, which the Lobby's level and name cover while its UI shows. It scored 0.94 to 0.96 on four
 # other faded Lobby captures, the character standing or gone, and 0.46 at most over 651 other captures, black, loading,
@@ -547,9 +550,16 @@ def claim_all_greyed(task):
     return colour_share(patch_of(frame_of(task), CLAIM_ALL_FACE), GREYED_LOW, GREYED_HIGH) >= GREYED_SHARE
 
 
-def reads_nothing(task):
-    """Say whether OCR read no confident text, as on a Lobby whose UI has faded out."""
-    return not any(box.name.strip() and getattr(box, "confidence", 1.0) >= FADED_CONFIDENCE for box in getattr(task, "all_texts", None) or [])
+def reads_as_faded_lobby(task):
+    """Say whether OCR read no more than a Lobby whose UI has faded out shows.
+
+    That is no Lobby caption, and at most one confident line, the character's speech bubble, left of where the Lobby
+    writes its captions. The scene still has to tell the faded Lobby from any other screen reading as little.
+    """
+    if showing(task, LOBBY_STORY) is not None:
+        return False
+    confident = [box for box in getattr(task, "all_texts", None) or [] if box.name.strip() and getattr(box, "confidence", 1.0) >= FADED_CONFIDENCE]
+    return len(confident) <= 1 and all(centre_of(box, task.width, task.height)[0] < CAPTION_SIDE for box in confident)
 
 
 def handle_daily_tutorial(task):
@@ -1334,11 +1344,11 @@ def handle_daily_lobby(task):
 def handle_daily_faded_lobby(task):
     """Bring back the UI of a Lobby that has faded out.
 
-    Only on the faded Lobby's own scene, since a screen that reads nothing could be anything else, as a popup still
-    loading. Moments after a Lobby read, with a chore pending, it gets the Menu tap the Lobby would get, which brings the
-    UI back or opens the menu. Without that read, as at a start on an idle Lobby, it gets the wake tap on open sky.
+    Only on the faded Lobby's own scene, since a screen that reads nothing or a single line could be anything else, as a
+    popup still loading. Moments after a Lobby read, with a chore pending, it gets the Menu tap the Lobby would get, which
+    brings the UI back or opens the menu. Without that read, as at a start on an idle Lobby, it gets the wake tap on open sky.
     """
-    if not reads_nothing(task):
+    if not reads_as_faded_lobby(task):
         return False
     if find_icon(frame_of(task), FADED_SCENE_IMAGE, FADED_SCENE_MATCH, FADED_SCENE_REGION, grey) is None:
         return False

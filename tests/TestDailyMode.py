@@ -105,6 +105,8 @@ ATTENDANCE_STAMPED = (
 )
 # 264, the Lobby a few idle seconds later, its UI faded out: OCR reads nothing.
 FADED = ()
+# A live start's faded Lobby: only the character's speech bubble reads.
+FADED_BUBBLE = (("oh, I was writing a poem. t's my hobby.", 0.258, 0.278),)
 # Where the faded-scene crops sit: x 0-441 and y 21-302 of a 1080p capture.
 SCENE_REGION = (0.0, 0.02, 0.23, 0.28)
 # Claim All's crops, from 274 (orange) and the live run's empty popup (greyed): x 57-480 and y 928-1026.
@@ -766,7 +768,7 @@ class TestFadedLobby(Daily):
                 self.assertFalse(daily.handle_daily_faded_lobby(self.task.show(FADED, frame)))
                 self.assertPressed(daily.MENU)
 
-    def test_a_screen_with_any_confident_text_is_not_a_faded_lobby(self):
+    def test_a_line_of_text_without_the_faded_scene_is_not_a_faded_lobby(self):
         run_pass(self.task.show(LOBBY))
         self.assertFalse(daily.handle_daily_faded_lobby(self.task.show((("Loading", 0.5, 0.5),))))
         self.assertPressed(daily.MENU)
@@ -780,6 +782,11 @@ class TestFadedLobby(Daily):
         self.task.all_texts[0].confidence = 0.69
         self.assertTrue(daily.handle_daily_faded_lobby(self.task))
         self.task.all_texts[0].confidence = 0.7
+        self.assertTrue(daily.reads_as_faded_lobby(self.task))
+        self.task.show(FADED_BUBBLE + (("rort", 0.083, 0.531),), faded_lobby())
+        self.task.all_texts[-1].confidence = 0.69
+        self.assertTrue(daily.reads_as_faded_lobby(self.task))
+        self.task.all_texts[-1].confidence = 0.7
         self.assertFalse(daily.handle_daily_faded_lobby(self.task))
         self.assertPressed(daily.MENU, daily.MENU, daily.MENU)
 
@@ -832,8 +839,8 @@ class TestFadedStart(Daily):
         self.assertTrue(run_pass(self.task.show(FADED, frame)))
         self.assertEqual([], self.task.clicks)
 
-    def test_the_faded_scene_under_confident_text_gets_no_wake(self):
-        """A popup over the faded scene reads its own text, and only a screen reading nothing can be the faded Lobby."""
+    def test_the_faded_scene_under_a_popup_gets_no_wake(self):
+        """A popup over the faded scene reads many lines, more than the one speech bubble a faded Lobby may show."""
         self.assertFalse(daily.handle_daily_faded_lobby(self.task.show(SETTINGS, faded_lobby())))
         self.assertEqual([], self.task.clicks)
 
@@ -858,6 +865,54 @@ class TestFadedStart(Daily):
                 self.assertGreater(max(abs(point[0] - 0.300), abs(point[1] - 0.420)), 0.08, target)
         for screen in (LOBBY, MENU, TUTORIAL_LOBBY):
             self.assertEqual([], daily.boxes_at(self.task.show(screen), POINTS[daily.WAKE]))
+
+
+class TestFadedBubble(Daily):
+    """The faded Lobby with its character's speech bubble still reading, the one line it may show."""
+
+    def test_a_start_on_a_faded_lobby_with_a_speech_bubble_is_woken_once_then_runs_on(self):
+        for crop in ("daily_faded_lobby", "daily_faded_lobby_character"):
+            with self.subTest(crop):
+                self.task = Task()
+                for _ in range(daily.WAKE_WAIT):
+                    self.assertTrue(run_pass(self.task.show(FADED_BUBBLE, faded_lobby(crop))))
+                    self.tick()
+                self.assertPressed(daily.WAKE)
+                self.assertTrue(run_pass(self.task.show(LOBBY)))
+                self.assertPressed(daily.WAKE, daily.MENU)
+                self.assertEqual(0, self.task.disabled)
+
+    def test_a_faded_lobby_with_a_speech_bubble_moments_after_a_lobby_read_gets_the_menu_tap(self):
+        run_pass(self.task.show(LOBBY))
+        self.tick()
+        self.assertTrue(run_pass(self.task.show(FADED_BUBBLE, faded_lobby())))
+        self.assertPressed(daily.MENU, daily.MENU)
+
+    def test_a_low_confidence_scrap_beside_the_bubble_still_counts_as_faded(self):
+        self.task.show(FADED_BUBBLE + (("rort", 0.083, 0.531),), faded_lobby())
+        self.task.all_texts[-1].confidence = 0.585
+        self.assertTrue(daily.handle_daily_faded_lobby(self.task))
+        self.assertPressed(daily.WAKE)
+
+    def test_the_faded_scene_under_more_than_a_bubble_gets_no_wake(self):
+        """A Lobby caption read at any confidence, a second confident line, or a line where the Lobby writes its captions."""
+        story = FakeBox("故事", 0.884, 0.156)
+        story.confidence = 0.5
+        for label, texts, extra in (("a faint Story caption", FADED_BUBBLE, story),
+                                    ("two lines", FADED_BUBBLE + (("Loading", 0.5, 0.5),), None),
+                                    ("a line on the caption side", (("Combatants", daily.CAPTION_SIDE, 0.617),), None)):
+            with self.subTest(label):
+                self.task = Task()
+                self.task.show(texts, faded_lobby())
+                if extra is not None:
+                    self.task.all_texts.append(extra)
+                self.assertFalse(daily.handle_daily_faded_lobby(self.task))
+                self.assertEqual([], self.task.clicks)
+
+    def test_the_bubble_just_left_of_the_caption_side_still_counts_as_faded(self):
+        self.task.show((("oh, I was writing a poem.", daily.CAPTION_SIDE - 0.01, 0.278),), faded_lobby())
+        self.assertTrue(daily.handle_daily_faded_lobby(self.task))
+        self.assertPressed(daily.WAKE)
 
 
 class TestTutorial(Daily):

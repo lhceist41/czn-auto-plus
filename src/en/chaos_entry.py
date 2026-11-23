@@ -60,10 +60,6 @@ PLANET_REGION = (0.20, 0.62, 0.50, 0.72)
 RESUME_LINE = "enterthestageinprogress"
 RESUME_LINE_REGION = (0.30, 0.79, 0.70, 0.87)
 RESUME_ENTER_REGION = (0.55, 0.87, 0.72, 0.95)
-# Right of this the Lobby writes its captions, Story to Combatants, and the right of its top bar. A faded Lobby reads at
-# most a speech bubble, read at (0.258, 0.278).
-CAPTION_SIDE = 0.70
-
 # Parked on Chaos for one run: how often each target was pressed, and when the faded Lobby was last woken.
 TAPS = "_en_chaos_walk_taps"
 WOKEN = "_en_chaos_walk_woken"
@@ -202,14 +198,9 @@ def handle_chaos_lobby(task):
 def handle_chaos_faded_lobby(task):
     """Bring back the UI of a Lobby that has faded out, told by its scene, at most once every `daily.WAKE_WAIT` seconds.
 
-    Daily's own wake asks for a screen reading nothing, which a speech bubble over the faded Lobby defeats. Here the scene
-    decides, with one confident line allowed away from where the Lobby writes its captions.
+    What the screen may read is Daily's check, which lets a speech bubble over the faded Lobby through.
     """
-    if not walking(task) or daily.showing(task, daily.LOBBY_STORY) is not None:
-        return False
-    confident = [box for box in getattr(task, "all_texts", None) or []
-                 if box.name.strip() and getattr(box, "confidence", 1.0) >= daily.FADED_CONFIDENCE]
-    if len(confident) > 1 or any(centre_of(box, task.width, task.height)[0] >= CAPTION_SIDE for box in confident):
+    if not walking(task) or not daily.reads_as_faded_lobby(task):
         return False
     if find_icon(frame_of(task), daily.FADED_SCENE_IMAGE, daily.FADED_SCENE_MATCH, daily.FADED_SCENE_REGION, grey) is None:
         return False
