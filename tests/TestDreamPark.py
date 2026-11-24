@@ -750,11 +750,11 @@ PARK_NEVER = {
 
 
 class Park(Daily):
-    """Daily on the park step, the mail already claimed."""
+    """Daily on the park step, the chores before it done and the mail claimed."""
 
     def setUp(self):
         super().setUp()
-        self.state()["steps"]["mail"], self.state()["mail"] = daily.DONE, "claimed"
+        self.to_park()
 
     def park(self):
         return self.state()["park"]
@@ -769,9 +769,9 @@ class Park(Daily):
             self.tick()
 
     def fresh(self):
-        """Start again on a new task, the mail claimed."""
+        """Start again on a new task, the chores before the park done."""
         self.task = Task()
-        self.state()["steps"]["mail"], self.state()["mail"] = daily.DONE, "claimed"
+        self.to_park()
 
     def settled(self, screen, frame=None):
         """Show a park screen, then again once it has had time to draw."""

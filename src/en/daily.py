@@ -1,9 +1,13 @@
-"""Run the daily chores from the Lobby: close its entry popups, claim attendance and all mail, visit Nightmare Dream Park, and stop on a clean Lobby.
+"""Run the daily chores from the Lobby: close its popups, claim attendance, mail, Activity rewards and achievements, visit Dream Park, stop on the Lobby.
 
 The Lobby, its menu and the Mail screen sit next to buttons that delete mail, open the Shop, refill Aether with Crystals,
 open Rescue or quit the game. So Daily presses only the fixed targets in `TARGETS`, each on the one screen it belongs to,
 every press goes through `press`, which refuses a box that reads as any of those, and each target has a per-run limit.
 A screen Daily does not know for 30 seconds, and the tutorial, stop it with nothing pressed.
+
+The Activity window and the Achievement screen pay out for free, one tap per claim. A claim is pressed only while its
+button reads ready, by its caption or its orange or blue face, never a `Move` that leaves the window, and two claims in
+a row that open nothing stop Daily. The Activity window's two unlabelled middle tabs are never pressed.
 
 The park spends only its own profit, a free counter that refills while the player is away. Its rows are read by
 `dream_park`, and one is pressed only when its price reads as a plain park number. When the ride it wants is further
@@ -78,7 +82,27 @@ SKILL_TAB = "the park panel's Skill tab"
 FACILITIES_TAB = "the park panel's Facilities tab"
 SKILL_UPGRADE = "AI Automation's Upgrade"
 HAPPY_DAY_UPGRADE = "Another Happy Day's Upgrade"
-# Every Dream Park screen draws its back arrow at the same place, and each press of it takes one screen back.
+ACTIVITY = "the menu's Activity"
+GUIDE_TAB = "the Activity window's Growth Guide tab"
+SCHEDULE_TAB = "the Activity window's daily schedule tab"
+WEEKLY_TAB = "the Activity window's weekly schedule tab"
+LOG_TAB = "the Activity window's Achievement Log tab"
+ACTIVITY_CLOSE = "the Activity window's X"
+GUIDE_CLAIM = "a Growth Guide card's Claim Reward"
+STAGE_CLAIM = "the Growth Guide's stage reward"
+SCHEDULE_CLAIM = "the daily schedule's Claim All"
+GOAL_CLAIM = "a weekly goal's Goal Achieved"
+MILESTONE_CLAIM = "a weekly milestone"
+LOG_CLAIM = "the Achievement Log's claim"
+ACHIEVEMENT_ENTRY = "the menu's Achievement"
+JOURNEY_CARD = "the Achievement screen's Journey Log card"
+CATEGORY_TABS = ("the Achievement screen's Journey Log tab", "the Achievement screen's Exploration Attitude tab",
+                 "the Achievement screen's Traces of Obliteration tab", "the Achievement screen's Overcoming Adversity tab")
+CATEGORY_CLAIM = "an achievement category's Claim All"
+CARDS_LEAVE = "the Achievement screen's back arrow"
+CATEGORY_LEAVE = "an achievement category's back arrow"
+# Every Dream Park screen draws its back arrow at the same place, and each press of it takes one screen back. The
+# Achievement screen draws its own there too.
 BACK = (0.041, 0.046)
 TARGETS = {
     BANNER_CLOSE: (0.968, 0.049),
@@ -120,6 +144,27 @@ TARGETS = {
     FACILITIES_TAB: (0.714, 0.185),
     SKILL_UPGRADE: None,
     HAPPY_DAY_UPGRADE: None,
+    ACTIVITY: None,
+    GUIDE_TAB: (0.057, 0.120),
+    SCHEDULE_TAB: (0.057, 0.231),
+    WEEKLY_TAB: (0.057, 0.340),
+    LOG_TAB: (0.057, 0.680),
+    ACTIVITY_CLOSE: (0.940, 0.115),
+    GUIDE_CLAIM: None,
+    STAGE_CLAIM: (0.873, 0.247),
+    SCHEDULE_CLAIM: None,
+    GOAL_CLAIM: None,
+    MILESTONE_CLAIM: None,
+    LOG_CLAIM: (0.800, 0.290),
+    ACHIEVEMENT_ENTRY: None,
+    JOURNEY_CARD: (0.141, 0.600),
+    CATEGORY_TABS[0]: (0.111, 0.138),
+    CATEGORY_TABS[1]: (0.111, 0.220),
+    CATEGORY_TABS[2]: (0.111, 0.302),
+    CATEGORY_TABS[3]: (0.111, 0.387),
+    CATEGORY_CLAIM: None,
+    CARDS_LEAVE: BACK,
+    CATEGORY_LEAVE: BACK,
 }
 # How many upgrades one park visit may press, one level each, so the cap only bounds a loop that has gone wrong, and how
 # many achievement claims: the event has 23 achievements.
@@ -140,13 +185,17 @@ DRAG_DURATION = 2
 # How often each target may be pressed in one run. Claim All, the wake tap, Rank Up and Claim Reward get one retry for a
 # tap the game ignored, and the skip dialog's box is tapped once a run; the rest allow two retries for a screen slow to
 # change. A target leading to another screen counts only until that screen shows (`ARRIVALS`), so a later step, or the
-# next round of the park, may press it again.
+# next round of the park, may press it again. The Activity claims only bound a loop gone wrong: a Growth Guide stage has
+# up to 10 cards and the next stage may have ready ones, and one milestone press took every reached tier. An achievement
+# category's Claim All counts afresh for each category.
 TAP_LIMITS = {BANNER_CLOSE: 3, NOTICE_CLOSE: 3, MENU: 3, ENVELOPE: 3, MENU_CLOSE: 3, MAIL_CLOSE: 3, WAKE: 2, CLAIM_ALL: 2, ITEMS_CLOSE: 3,
               EVENT: 3, DREAM_PARK: 3, EVENT_LEAVE: 3, ENTER_PARK: 3, PARK_ACHIEVEMENTS: 3, PAGE_LEAVE: 3, PARK_MANAGE: 3, PARK_OPERATE: 3,
               PANEL_CLOSE: 3, PARK_LEAVE: 3, PARK_RANK: 3, RANK_UP: 2, RANK_CLOSE: 3, RANK_RESULT_CLOSE: 3, UPGRADE: UPGRADE_CAP, BUILD: 3,
               CLAIM: CLAIM_CAP, MANAGEMENT_TAB: 3, ACHIEVEMENTS_LEAVE: 3, RULES_CANCEL: 3, PROFIT_CLOSE: 3, STORY_SKIP: 3, SKIP_TICK: 1,
               SKIP_CONFIRM: 3, ATTENDANCE_CLAIM: 2, ATTENDANCE_CLOSE: 3, SKILL_TAB: 3, FACILITIES_TAB: 3, SKILL_UPGRADE: SKILL_CAP,
-              HAPPY_DAY_UPGRADE: SKILL_CAP}
+              HAPPY_DAY_UPGRADE: SKILL_CAP, ACTIVITY: 3, GUIDE_TAB: 3, SCHEDULE_TAB: 3, WEEKLY_TAB: 3, LOG_TAB: 3, ACTIVITY_CLOSE: 3,
+              GUIDE_CLAIM: 15, STAGE_CLAIM: 3, SCHEDULE_CLAIM: 2, GOAL_CLAIM: 6, MILESTONE_CLAIM: 2, LOG_CLAIM: 2, ACHIEVEMENT_ENTRY: 3,
+              JOURNEY_CARD: 3, **{tab: 3 for tab in CATEGORY_TABS}, CATEGORY_CLAIM: 2, CARDS_LEAVE: 3, CATEGORY_LEAVE: 3}
 TOWARD_MAIL = (MENU, ENVELOPE)
 
 # What `press` refuses whatever it was asked to press: mail deletion, the Shop, a purchase, Crystals or any account
@@ -243,6 +292,60 @@ PROFIT_CAPTION = ("点击屏幕关闭窗口", (0.40, 0.90, 0.60, 0.97))
 BANNER_CORNER = (0.90, 0.0, 1.0, 0.12)
 BANNER_MATCH = 0.92
 
+# The open menu's Activity, at (0.790, 0.232). The Activity window is told by its tab's title at (0.17-0.21, 0.112), which
+# OCR reads with a stray `I` or `|` in front at times. The Achievement screen's `Journey Log` tab label reads at
+# (0.09-0.11, 0.138), inside that band, and never holds a title. The order is the order the tabs are visited in.
+MENU_ACTIVITY = ("Activity", (0.75, 0.21, 0.83, 0.26))
+ACTIVITY_TITLE_REGION = (0.10, 0.08, 0.40, 0.14)
+GUIDE, SCHEDULE, WEEKLY, LOG = "Growth Guide", "Achievement schedule", "Weekly Schedule", "Achievement Log"
+ACTIVITY_TABS = {GUIDE: GUIDE_TAB, SCHEDULE: SCHEDULE_TAB, WEEKLY: WEEKLY_TAB, LOG: LOG_TAB}
+ACTIVITY_PHASES = tuple(ACTIVITY_TABS)
+# The ready faces' colours, in OpenCV's HSV: orange on the Activity window, blue on the Achievement screen. A greyed
+# button or ring has none of either.
+ORANGE_LOW, ORANGE_HIGH = np.array((5, 120, 150)), np.array((25, 255, 255))
+BLUE_LOW, BLUE_HIGH = np.array((100, 120, 150)), np.array((125, 255, 255))
+FACE_SHARE = 0.5
+# Growth Guide: ready cards read `Claim Reward` at y 0.854, x 0.391, 0.584 and 0.780, and sort first; a fourth card is
+# cut at the right edge (`Clai` at 0.934), outside the band. Unfinished cards read `Move`, which leaves the window. Once
+# every card is claimed the stage ring at (0.873, 0.247) turns orange: 0.25-0.31 of its patch, against 0.0 otherwise.
+GUIDE_CLAIMS = ("Claim Reward", (0.30, 0.82, 0.86, 0.89))
+STAGE_RING = (0.858, 0.225, 0.888, 0.270)
+STAGE_SHARE = 0.15
+# Daily schedule: Claim All at (0.226, 0.838), its face orange (0.87) while a reached tier waits and a flat grey after.
+SCHEDULE_BUTTON_REGION = (0.12, 0.80, 0.30, 0.87)
+SCHEDULE_FACE = (0.12, 0.81, 0.27, 0.87)
+# Weekly schedule: a finished goal's button reads `Goal Achieved` at y 0.869, its face orange (0.75-0.77) around the
+# caption; `Mission Records Shop` at (0.188, 0.844) lies left of the band. A goal opens no Items Obtained: its card leaves
+# the row and the progress at (0.176, 0.560), `220/1000`, rises by 100. A reached, unclaimed milestone draws its label
+# (100, 200, 400, 600) orange, 0.13 of the label's patch against 0.0 claimed or unreached, and one press on its icon above
+# took every reached tier.
+GOAL_REGION = (0.30, 0.84, 0.86, 0.90)
+GOAL_FACE_HALF = (0.055, 0.02)
+WEEKLY_PROGRESS_REGION = (0.12, 0.54, 0.24, 0.58)
+WEEKLY_PROGRESS = re.compile(r"(\d+)/\d+")
+MILESTONES = (((0.405, 0.22), (0.385, 0.290, 0.430, 0.320)), ((0.545, 0.22), (0.525, 0.290, 0.570, 0.320)),
+              ((0.685, 0.22), (0.665, 0.290, 0.710, 0.320)), ((0.825, 0.22), (0.805, 0.290, 0.850, 0.320)))
+MILESTONE_SHARE = 0.05
+# Achievement Log: reached, unclaimed levels sort first, and the top row's claim at (0.800, 0.290) is then orange
+# (0.17-0.32); claimed or unreached it shows a grey waveform (0.0). One press takes every reached level.
+LOG_RING = (0.785, 0.265, 0.815, 0.315)
+LOG_SHARE = 0.1
+# What a claim press must never land on, besides what `press` refuses: the `Move` that leaves the window for a mission.
+NEVER_CLAIM = ("move",)
+# The Achievement screen: its title at (0.143, 0.045). It opens on four category cards, `Journey Log` captioned at
+# (0.141, 0.689); inside a category the same name labels the first left tab at (0.105, 0.138), and the open category's
+# name heads the list at (0.376-0.428, 0.131), read as `Exploratin Atitude` at times, so each is told by its start.
+# Claim All at (0.910, 0.163) has a blue face (0.81) while anything in that category is ready and a flat grey after.
+ACHIEVEMENT_TITLE = ("Achievement", (0.08, 0.02, 0.22, 0.08))
+CARDS_JOURNEY = ("Journey Log", (0.08, 0.66, 0.20, 0.72))
+CATEGORY_JOURNEY_TAB = ("Journey Log", (0.04, 0.11, 0.18, 0.17))
+CATEGORY_HEADER_REGION = (0.25, 0.10, 0.60, 0.16)
+CATEGORY_NAMES = ("journey", "explor", "traces", "overcom")
+CATEGORY_BUTTON_REGION = (0.84, 0.12, 0.98, 0.20)
+CATEGORY_FACE = (0.85, 0.14, 0.97, 0.19)
+# Claim All as OCR reads it: `Claim AIl`, `Claim AlI` and `Claim AIll` as well.
+CLAIM_ALL_TEXT = re.compile(r"clalmal{2,3}")
+
 # How long the screen may stay one Daily does not know before it stops, and how long a Lobby read stays good for a
 # Lobby whose UI has faded out after a few idle seconds, which OCR reads as nothing but the odd low-confidence scrap:
 # `rort` at 0.585 off the art on one capture, against 0.8 and up for every caption Daily reads.
@@ -287,8 +390,11 @@ RUN = "_en_daily_run"
 PENDING, DONE = "pending", "done"
 Step = namedtuple("Step", "name lobby_entry menu_entry")
 # One entry per chore, in the order they run. Each starts from the Lobby with its entry tap and ends back on the Lobby.
-STEPS = (Step("mail", MENU, ENVELOPE), Step("dream_park", MENU, EVENT))
+STEPS = (Step("mail", MENU, ENVELOPE), Step("activity", MENU, ACTIVITY), Step("achievement", MENU, ACHIEVEMENT_ENTRY),
+         Step("dream_park", MENU, EVENT))
 PARK = "dream_park"
+# The menu captions pressed by the box OCR read, for the chores whose menu entry is a text button.
+MENU_ENTRIES = {ACTIVITY: MENU_ACTIVITY, ACHIEVEMENT_ENTRY: MENU_ACHIEVEMENT}
 # Where the park visit stands: reading the Manage panel, upgrading in Facilities, or on its way out to the achievements.
 TO_MANAGE, TO_OPERATE, TO_LEAVE = "manage", "operate", "leave"
 # The targets that lead into each park screen, which count afresh once it shows. None is pressed on the screen it leads to.
@@ -321,13 +427,14 @@ def run_state(task):
     Returns:
         A dict: each step's state, the presses per target, when the run started, when the Lobby was last read, when an
         unknown screen, the Mail screen and the attendance popup were first seen, when Claim All, the wake, Claim Reward
-        and the attendance popup's X were last pressed, what the mail step found, and the park visit's own state.
+        and the attendance popup's X were last pressed, what the mail step found, the park visit's own state and the Activity
+        and Achievement claims' own state.
     """
     state = vars(task).get(RUN)
     if state is None:
         state = {"steps": {step.name: PENDING for step in STEPS}, "taps": Counter(), "started": time.monotonic(),
                  "lobby_seen": None, "unknown_since": None, "mail_seen": None, "claim_pressed": None, "woken": None, "mail": None,
-                 "attendance_seen": None, "attendance_claimed": None, "attendance_closed": None, "park": new_park()}
+                 "attendance_seen": None, "attendance_claimed": None, "attendance_closed": None, "park": new_park(), "claims": new_claims()}
         setattr(task, RUN, state)
     return state
 
@@ -358,6 +465,17 @@ def new_park():
             "scrolls": 0, "opening_scrolls": 0, "scrolled": None, "scroll_names": None,
             "claims_done": False, "claim_pressed": None, "claim_misses": 0, "ranks": [], "rank_ups": 0,
             "upgrades": 0, "builds": [], "claims": 0, "note": None, "result": None}
+
+
+def new_claims():
+    """Start the Activity and Achievement claims' state.
+
+    Returns:
+        A dict: the claim screen showing and since when, when each of their targets was last pressed, the Activity tab
+        and the achievement category being worked through, the claim press awaiting its outcome, how many claims in a row
+        opened nothing, and the claims counted for the finish line.
+    """
+    return {"screen": None, "since": None, "pressed": {}, "phase": 0, "category": 0, "pending": None, "misses": 0, "claimed": Counter()}
 
 
 def pending_step(task):
@@ -593,7 +711,7 @@ def handle_daily_overtime(task):
 
 
 def handle_daily_items_obtained(task):
-    """Close Items Obtained, and count the mail as claimed when Claim All opened it, or the achievement whose ring was pressed."""
+    """Close Items Obtained, counting what opened it: the mail's Claim All, a park achievement's ring, or an Activity or Achievement claim."""
     if showing(task, ITEMS_TITLE) is None:
         return False
     caption = showing(task, ITEMS_CAPTION)
@@ -607,6 +725,12 @@ def handle_daily_items_obtained(task):
     if park["claim_pressed"] is not None:
         park["claim_pressed"], park["claim_misses"] = None, 0
         park["claims"] += 1
+    claims = state["claims"]
+    if claims["pending"] is not None:
+        claims["claimed"][claims["pending"][0]] += 1
+        claims["pending"], claims["misses"] = None, 0
+        # The screen under it redraws its cards, so it gets time to settle again before it is read.
+        claims["screen"] = None
     return press(task, ITEMS_CLOSE, caption)
 
 
@@ -689,6 +813,314 @@ def handle_daily_mail(task):
         return nothing_to_claim(task, "no Claim All on the Mail screen")
     state["claim_pressed"] = now
     return press(task, CLAIM_ALL, button)
+
+
+def claim_step_active(task, name):
+    """Say whether the named claim chore, `activity` or `achievement`, is the one under way."""
+    step = pending_step(task)
+    return step is not None and step.name == name
+
+
+def claims_state(task):
+    """Give the Activity and Achievement claims' state."""
+    return run_state(task)["claims"]
+
+
+def arrive_claim_screen(task, screen, entries):
+    """Note that a claim screen shows: restart the unknown-screen clock and count afresh the targets that lead to it.
+
+    Items Obtained's caption counts afresh too, as under the attendance popup, since every claim here opens it and its
+    run limit would otherwise stop Daily at the third claim.
+
+    Args:
+        task: The Daily task.
+        screen: What shows, for how long it has shown.
+        entries: The targets that lead to this screen.
+
+    Returns:
+        How long, in seconds, this screen has shown without another claim screen or Items Obtained in between.
+    """
+    recognised(task)
+    taps = run_state(task)["taps"]
+    for target in (ITEMS_CLOSE, *entries):
+        taps[target] = 0
+    claims = claims_state(task)
+    now = time.monotonic()
+    if claims["screen"] != screen:
+        claims["screen"], claims["since"] = screen, now
+    return now - claims["since"]
+
+
+def press_settled(task, target, box=None):
+    """Press a claim screen's tab, card or exit, unless it was pressed moments ago and the screen may still be changing.
+
+    Args:
+        task: The Daily task.
+        target: A key of `TARGETS`.
+        box: The OCR box for a text button, None for a fixed point.
+
+    Returns:
+        True, which claims the frame.
+    """
+    pressed = claims_state(task)["pressed"]
+    now = time.monotonic()
+    if target in pressed and now - pressed[target] < NAV_WAIT:
+        return True
+    pressed[target] = now
+    return press(task, target, box)
+
+
+def face_share(task, region, low, high):
+    """Say how much of a region of the frame is drawn in one band of colour, 0 when there is no frame."""
+    return colour_share(patch_of(frame_of(task), region), low, high)
+
+
+def captions_in(task, caption):
+    """Find every box of a caption in its region, left to right.
+
+    Args:
+        task: The Daily task.
+        caption: A `(text, region)` pair.
+
+    Returns:
+        The boxes.
+    """
+    wanted, region = folded(caption[0]), caption[1]
+    boxes = (box for box in getattr(task, "all_texts", None) or [] if wanted in folded(box.name) and in_region(box, region, task.width, task.height))
+    return sorted(boxes, key=lambda box: box.x)
+
+
+def claim_all_in(task, region):
+    """Find a Claim All button in a region, however OCR mixed up its capital I and small l.
+
+    Args:
+        task: The Daily task.
+        region: A `(left, top, right, bottom)` tuple in screen fractions.
+
+    Returns:
+        The box, or None.
+    """
+    return next((box for box in getattr(task, "all_texts", None) or []
+                 if CLAIM_ALL_TEXT.fullmatch(folded(box.name).replace("i", "l")) and in_region(box, region, task.width, task.height)), None)
+
+
+def weekly_progress(task):
+    """Read the weekly schedule's progress points, or None when they do not read."""
+    for box in getattr(task, "all_texts", None) or []:
+        found = WEEKLY_PROGRESS.fullmatch(folded(box.name))
+        if found and in_region(box, WEEKLY_PROGRESS_REGION, task.width, task.height):
+            return int(found.group(1))
+    return None
+
+
+def goal_lit(task, box):
+    """Say whether a `Goal Achieved` button is drawn orange around its caption."""
+    x, y = centre_of(box, task.width, task.height)
+    half_x, half_y = GOAL_FACE_HALF
+    return face_share(task, (x - half_x, y - half_y, x + half_x, y + half_y), ORANGE_LOW, ORANGE_HIGH) >= FACE_SHARE
+
+
+def ready_activity_claim(task, tab):
+    """Find the next ready claim on an Activity tab.
+
+    Args:
+        task: The Daily task.
+        tab: The tab's title, a key of `ACTIVITY_TABS`.
+
+    Returns:
+        `(target, kind, box)` for `press_claim`, the box None for a fixed point, or None when nothing on the tab is ready.
+    """
+    if tab == GUIDE:
+        cards = captions_in(task, GUIDE_CLAIMS)
+        if cards:
+            return GUIDE_CLAIM, "guide", cards[0]
+        if face_share(task, STAGE_RING, ORANGE_LOW, ORANGE_HIGH) >= STAGE_SHARE:
+            return STAGE_CLAIM, "stage", None
+    elif tab == SCHEDULE:
+        button = claim_all_in(task, SCHEDULE_BUTTON_REGION)
+        if button is not None and face_share(task, SCHEDULE_FACE, ORANGE_LOW, ORANGE_HIGH) >= FACE_SHARE:
+            return SCHEDULE_CLAIM, "schedule", button
+    elif tab == WEEKLY:
+        goal = next((box for box in captions_in(task, ("Goal Achieved", GOAL_REGION)) if goal_lit(task, box)), None)
+        if goal is not None:
+            return GOAL_CLAIM, "goal", goal
+        for (x, y), label in MILESTONES:
+            if face_share(task, label, ORANGE_LOW, ORANGE_HIGH) >= MILESTONE_SHARE:
+                return MILESTONE_CLAIM, "milestone", Spot("milestone", x * task.width - 1, y * task.height - 1, 2, 2)
+    elif tab == LOG:
+        if face_share(task, LOG_RING, ORANGE_LOW, ORANGE_HIGH) >= LOG_SHARE:
+            return LOG_CLAIM, "log", None
+    return None
+
+
+def press_claim(task, target, kind, box=None):
+    """Press a ready claim and await what it opens, unless a `Move` lies under it.
+
+    Args:
+        task: The Daily task.
+        target: A key of `TARGETS`.
+        kind: What is claimed, a key of the finish line's counts.
+        box: The OCR box or spot pressed, None for the target's fixed point.
+
+    Returns:
+        True, which claims the frame.
+    """
+    point = centre_of(box, task.width, task.height) if box is not None else TARGETS[target]
+    hit = next((hit for hit in ([box] if box is not None else []) + boxes_at(task, point) if folded(hit.name) in NEVER_CLAIM), None)
+    if hit is not None:
+        task.log_info(f"not pressing {target}: the box there reads {hit.name!r}")
+        return stop(task, f"Stopped: {target} would have pressed {hit.name!r}. Check the game, then press Start again.")
+    before = (weekly_progress(task), len(captions_in(task, ("Goal Achieved", GOAL_REGION)))) if kind == "goal" else None
+    claims_state(task)["pending"] = (kind, time.monotonic(), before)
+    return press(task, target, box)
+
+
+def goal_taken(task, before):
+    """Say whether a pressed weekly goal was taken: the progress rose, or fewer goals read `Goal Achieved`.
+
+    Args:
+        task: The Daily task.
+        before: The progress and the number of `Goal Achieved` buttons when it was pressed.
+    """
+    progress, goals = before
+    now = weekly_progress(task)
+    if progress is not None and now is not None and now > progress:
+        return True
+    return len(captions_in(task, ("Goal Achieved", GOAL_REGION))) < goals
+
+
+def claim_outcome(task):
+    """Await the last claim press's outcome, and count one that opened nothing.
+
+    Items Obtained clears the press when it shows. A weekly goal opens none, so it counts as taken by `goal_taken` instead.
+
+    Args:
+        task: The Daily task.
+
+    Returns:
+        True while the outcome is awaited or once Daily has stopped on a second claim in a row that opened nothing, None
+        when the screen may be read.
+    """
+    claims = claims_state(task)
+    if claims["pending"] is None:
+        return None
+    kind, pressed, before = claims["pending"]
+    if time.monotonic() - pressed < CLAIM_WAIT:
+        return True
+    claims["pending"] = None
+    if kind == "goal" and goal_taken(task, before):
+        claims["claimed"][kind] += 1
+        claims["misses"] = 0
+        return None
+    claims["misses"] += 1
+    task.log_info(f"the {kind} claim opened nothing")
+    if claims["misses"] >= 2:
+        return stop(task, "Stopped: two Activity or Achievement claims in a row opened nothing. Check the game, then press Start again.")
+    return None
+
+
+def activity_tab(task):
+    """Give the title of the Activity tab that shows, or None when the Activity window does not."""
+    return next((title for title in ACTIVITY_PHASES if text_in_region(task, title, ACTIVITY_TITLE_REGION) is not None), None)
+
+
+def handle_daily_activity(task):
+    """Claim what is ready on the Activity window's Growth Guide, daily schedule, weekly schedule and Achievement Log, then close it.
+
+    The tabs are worked through in that order, each given time to draw before what it lacks counts, and a tab with
+    nothing ready hands over to the next. Off the Activity step the window is only closed.
+    """
+    tab = activity_tab(task)
+    if tab is None:
+        return False
+    shown_for = arrive_claim_screen(task, tab, (MENU, ACTIVITY, ACTIVITY_TABS[tab]))
+    if not claim_step_active(task, "activity"):
+        return press_settled(task, ACTIVITY_CLOSE)
+    waiting = claim_outcome(task)
+    if waiting is not None:
+        return waiting
+    claims = claims_state(task)
+    while claims["phase"] < len(ACTIVITY_PHASES):
+        wanted = ACTIVITY_PHASES[claims["phase"]]
+        if tab != wanted:
+            return press_settled(task, ACTIVITY_TABS[wanted])
+        if shown_for < SETTLE:
+            return True
+        claim = ready_activity_claim(task, tab)
+        if claim is not None:
+            return press_claim(task, *claim)
+        claims["phase"] += 1
+    run_state(task)["steps"]["activity"] = DONE
+    return press_settled(task, ACTIVITY_CLOSE)
+
+
+def category_shown(task):
+    """Say which achievement category is open.
+
+    Returns:
+        Its index in `CATEGORY_TABS`, -1 when a category shows but its heading does not read, or None when none shows.
+    """
+    if showing(task, ACHIEVEMENT_TITLE) is None or showing(task, CATEGORY_JOURNEY_TAB) is None:
+        return None
+    for box in getattr(task, "all_texts", None) or []:
+        if in_region(box, CATEGORY_HEADER_REGION, task.width, task.height):
+            index = next((index for index, start in enumerate(CATEGORY_NAMES) if start in folded(box.name)), None)
+            if index is not None:
+                return index
+    return -1
+
+
+def handle_daily_achievement_category(task):
+    """Press Claim All in each of the four achievement categories in turn while its face is blue, then go back."""
+    index = category_shown(task)
+    if index is None:
+        return False
+    entries = (MENU, ACHIEVEMENT_ENTRY, JOURNEY_CARD) + ((CATEGORY_TABS[index],) if index >= 0 else ())
+    shown_for = arrive_claim_screen(task, ("achievement category", index), entries)
+    if not claim_step_active(task, "achievement"):
+        return press_settled(task, CATEGORY_LEAVE)
+    waiting = claim_outcome(task)
+    if waiting is not None:
+        return waiting
+    claims = claims_state(task)
+    while claims["category"] < len(CATEGORY_TABS):
+        if shown_for < SETTLE:
+            return True
+        if index != claims["category"]:
+            return press_settled(task, CATEGORY_TABS[claims["category"]])
+        button = claim_all_in(task, CATEGORY_BUTTON_REGION)
+        if button is not None and face_share(task, CATEGORY_FACE, BLUE_LOW, BLUE_HIGH) >= FACE_SHARE:
+            return press_claim(task, CATEGORY_CLAIM, "category", button)
+        claims["category"] += 1
+        run_state(task)["taps"][CATEGORY_CLAIM] = 0
+    run_state(task)["steps"]["achievement"] = DONE
+    return press_settled(task, CATEGORY_LEAVE)
+
+
+def handle_daily_achievement_cards(task):
+    """Open the first category from the Achievement screen's four cards, or go back once the achievements are done."""
+    if showing(task, ACHIEVEMENT_TITLE) is None or showing(task, CARDS_JOURNEY) is None:
+        return False
+    arrive_claim_screen(task, "achievement cards", (MENU, ACHIEVEMENT_ENTRY))
+    return press_settled(task, JOURNEY_CARD if claim_step_active(task, "achievement") else CARDS_LEAVE)
+
+
+def claims_summary(claims):
+    """Say in a few words what the Activity and Achievement claims took, for the finish line.
+
+    Args:
+        claims: The claims' state.
+
+    Returns:
+        The words.
+    """
+    claimed = claims["claimed"]
+    labels = (("guide", "Growth Guide card"), ("stage", "Growth Guide stage reward"), ("schedule", "daily schedule claim"),
+              ("goal", "weekly goal"), ("milestone", "weekly milestone claim"), ("log", "Achievement Log claim"))
+    parts = [f"{claimed[kind]} {label}{'s' if claimed[kind] != 1 else ''}" for kind, label in labels if claimed[kind]]
+    categories = claimed["category"]
+    achievements = f"Claim All in {categories} categor{'ies' if categories != 1 else 'y'}" if categories else "nothing to claim"
+    return f"Activity: {', '.join(parts) if parts else 'nothing to claim'}; Achievements: {achievements}"
 
 
 def park_active(task):
@@ -1322,12 +1754,20 @@ def handle_daily_banner(task):
 
 
 def handle_daily_lobby_menu(task):
-    """Open the next chore from the menu, or close the menu once no chore in it is left."""
+    """Open the next chore from the menu, or close the menu once no chore in it is left.
+
+    A chore whose entry is a caption is opened on the box OCR read; while that caption does not read, the menu counts as
+    a screen Daily does not know.
+    """
     if not on_menu(task):
         return False
-    recognised(task)
     step = pending_step(task)
-    return press(task, step.menu_entry if step is not None else MENU_CLOSE)
+    caption = MENU_ENTRIES.get(step.menu_entry) if step is not None else None
+    box = showing(task, caption) if caption is not None else None
+    if caption is not None and box is None:
+        return handle_daily_unknown_screen(task)
+    recognised(task)
+    return press(task, step.menu_entry if step is not None else MENU_CLOSE, box)
 
 
 def handle_daily_lobby(task):
@@ -1340,7 +1780,8 @@ def handle_daily_lobby(task):
     step = pending_step(task)
     if step is not None:
         return press(task, step.lobby_entry)
-    return stop(task, f"Daily finished: {'mail claimed' if state['mail'] == 'claimed' else 'no mail to claim'}; {park_summary(state['park'])}.")
+    mail = "mail claimed" if state["mail"] == "claimed" else "no mail to claim"
+    return stop(task, f"Daily finished: {mail}; {park_summary(state['park'])}; {claims_summary(state['claims'])}.")
 
 
 def handle_daily_faded_lobby(task):
@@ -1393,6 +1834,9 @@ PAGE_HANDLERS = [
     handle_daily_items_obtained,
     handle_daily_attendance,
     handle_daily_mail,
+    handle_daily_activity,
+    handle_daily_achievement_category,
+    handle_daily_achievement_cards,
     handle_daily_rules_dialog,
     handle_daily_profit_report,
     handle_daily_skip_dialog,
@@ -1421,7 +1865,8 @@ class DailyMode(TriggerTask):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.name = "Daily"
-        self.description = ("Start on the Lobby. Closes the entry popups, claims the daily attendance reward and all mail, then visits Nightmare "
+        self.description = ("Start on the Lobby. Closes the entry popups, claims the daily attendance reward, all mail, the ready Activity rewards "
+                            "(Growth Guide, daily and weekly schedules, Achievement Log) and the ready achievements, then visits Nightmare "
                             "Dream Park while it runs: ranks it up, builds and upgrades rides, buys its AI Automation and Another Happy Day "
                             "skills with the park's own profit and claims its achievements. "
                             "Stops on the Lobby. Presses nothing else.")
