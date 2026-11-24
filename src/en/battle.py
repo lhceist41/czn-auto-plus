@@ -45,10 +45,14 @@ HITS_FILE = os.path.join("data", "hits.json")
 # Set by Sortie's team read when a turn had a card or end turn in flight, so the next turn opens with a frame spare for the tap.
 TEAM_WANTED = "_en_team_wanted"
 # Set while the boss of the fight on screen eats its own summons: the fight and node status its intro or Enemy Info was read under, and
-# when a battle frame was last seen. Story counts no nodes, so there a gap off the battle screen is what ends the fight.
+# when a battle frame was last seen. Story counts no nodes, so there its result screen or a gap off the battle screen ends the fight.
 DEVOURS = "_en_devours"
 # Seconds off the battle screen after which the flag is dropped, as the fight record splits fights.
 DEVOUR_GAP = fight_log.FIGHT_GAP
+# A fight's result screen, as whole boxes: the loot panel's title beside the MVP or the defeat line. A promotion's detail shows the title
+# and an exploration result the MVP on their own, so it takes both.
+RESULT_LOOT = fold("Reward")
+RESULT_ENDS = (fold("MVP"), fold("Battle failed"))
 
 # Upstream's own timings for playing a card, kept so the two paths feel the same to the game.
 AFTER_KEY = 1
@@ -423,8 +427,22 @@ def fight_devours(task, seen=False):
     return True
 
 
+def fight_result(task):
+    """Say whether the screen is a fight's result, won or lost.
+
+    Args:
+        task: The running task, whose `all_texts` is the current screen.
+
+    Returns:
+        True when a `Reward` box stands beside an `MVP` or `Battle failed` box.
+    """
+    read = {fold(box.name) for box in getattr(task, "all_texts", None) or []}
+    return RESULT_LOOT in read and any(end in read for end in RESULT_ENDS)
+
+
 def handle_devour_text(task):
-    """Note a boss's intro or Enemy Info saying it eats its own summons, for the fight it opens, and leave the screen to its handler.
+    """Note a boss's intro or Enemy Info saying it eats its own summons, for the fight it opens, drop it on a fight's result screen, and
+    leave the screen to its handler.
 
     Args:
         task: The running task, whose `all_texts` is the current screen.
@@ -432,7 +450,10 @@ def handle_devour_text(task):
     Returns:
         False, always.
     """
-    if board.devours_summons(task):
+    if fight_result(task):
+        # Story's next fight can start inside `DEVOUR_GAP`, and only this screen tells it from the one that ended.
+        setattr(task, DEVOURS, None)
+    elif board.devours_summons(task):
         if not fight_devours(task):
             task.log_info("the boss eats its own summons, so damage to all enemies goes first while one stands this fight")
         setattr(task, DEVOURS, (fight_of(task), getattr(task, "node_status", None), time.monotonic()))

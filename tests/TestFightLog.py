@@ -21,6 +21,7 @@ import replay_fights  # noqa: E402
 
 from src.en import battle, board, cards, fight_log  # noqa: E402
 from tests.TestBattlePlay import ATTACK, BIG_ATTACK, SHIELD, Pressed, hand, upstream  # noqa: E402
+from tests.TestEnemyRead import DEVOUR_INTRO, screen  # noqa: E402
 import utils as real_utils  # noqa: E402
 from tests.fakes import FakeBox  # noqa: E402
 
@@ -40,6 +41,25 @@ KILLS_NO_LONGER_PLANNED = (("aether-eater-1", 70.05), ("aether-eater-1", 74.7), 
 Foe = board.Foe
 # The card reward's title, which only comes up after a won fight.
 REWARD = "卡牌奖励"
+# Full-frame reads the game gave, without the captain's level and EXP: a lost and a won Story fight's result screen, a promotion's detail
+# with its Reward and no MVP, an exploration result with its MVP and no Reward, and a battle frame. The last three must never end a fight.
+DEFEAT_RESULT = (("Chapter 2. Wolf's Requiem", 0.731, 0.238), ("Lv.20 Promotion Missions", 0.719, 0.272), ("Battle failed", 0.299, 0.717),
+                 ("Sync failed", 0.298, 0.761), ("Reward", 0.605, 0.738), ("No loot acquired.", 0.771, 0.816), ("Retry", 0.719, 0.92),
+                 ("进入", 0.817, 0.888), ("确认", 0.928, 0.918))
+WIN_RESULT = (("MVP", 0.087, 0.202), ("Chapter 2. Wolf's Requiem", 0.731, 0.237), ("Lv.20 Promotion Missions", 0.718, 0.272),
+              ("Reward", 0.607, 0.627), ("20", 0.615, 0.747), ("F1", 0.593, 0.888), ("Next Mission", 0.693, 0.918), ("进入", 0.811, 0.887),
+              ("确认", 0.921, 0.917))
+PROMOTION_DETAIL = (("Battle Missions", 0.151, 0.045), ("Chapter 2", 0.403, 0.04), ("Client information", 0.748, 0.143),
+                    ("Chaos Operations Assessment Officer", 0.824, 0.18), ("①Win the battle", 0.696, 0.262), ("Promotion Missions", 0.475, 0.415),
+                    ("Requires Lv.2", 0.573, 0.529), ("Reward", 0.665, 0.731), ("500", 0.678, 0.854), ("20", 0.739, 0.854), ("10", 0.801, 0.854),
+                    ("48,000", 0.907, 0.854), ("18/18", 0.359, 0.931), ("NORMAL", 0.523, 0.932), ("进入", 0.817, 0.931))
+EXPLORATION_RESULT = (("探险结果", 0.691, 0.119), ("MVP", 0.087, 0.2), ("Exploration Lv. 09", 0.668, 0.207), ("6/150", 0.954, 0.208),
+                      ("Final Score", 0.637, 0.326), ("698", 0.93, 0.324), (") Collect The Ghoul Kennel", 0.686, 0.419), ("+60", 0.952, 0.42),
+                      ("Collect Aqua Ball", 0.659, 0.739), ("+40", 0.953, 0.737), ("进入", 0.807, 0.888), ("下一步", 0.93, 0.917))
+BATTLE_FRAME = (("563/568", 0.212, 0.039), ("10", 0.443, 0.042), ("Ctrl", 0.895, 0.078), ("701", 0.684, 0.163), ("297", 0.593, 0.312),
+                ("297", 0.848, 0.312), ("57", 0.473, 0.387), ("157", 0.922, 0.388), ("EF", 0.03, 0.699), ("E1", 0.066, 0.752),
+                ("Water Barrier", 0.365, 0.855), ("Blessing of Waves", 0.515, 0.848), ("基础技能", 0.362, 0.877), ("技能", 0.486, 0.868),
+                ("Blessing of Waves", 0.65, 0.857), ("03/10", 0.501, 0.971), ("E", 0.888, 0.953))
 # A share of each attack's printed damage the stand-in enemies lose, so plays leave HP to read and a kill can come up.
 DAMAGE_TAKEN = 0.6
 # A Finale, which ends the turn on play with no end-turn key.
@@ -386,6 +406,39 @@ class TestRecorder(Recording):
                     battle.handle_devour_text(task)
                 play_fight(utils_sortie, task, [], [], end_texts=("a hand prompt",))
                 self.assertTrue(battle.fight_devours(task))
+
+    def test_a_result_screen_drops_the_devour_flag(self):
+        # The flag set, a battle frame 5 s later, the screen after the fight, and the next Story fight's first frame 30 s after the battle frame,
+        # where the gap alone still holds it. A result screen wins over devour text on the same frame.
+        self.assertTrue(board.devours_summons(screen(WIN_RESULT + DEVOUR_INTRO)))
+        for name, texts, drops in (("lost", DEFEAT_RESULT, True), ("won", WIN_RESULT, True), ("promotion detail", PROMOTION_DETAIL, False),
+                                   ("exploration result", EXPLORATION_RESULT, False), ("battle frame", BATTLE_FRAME, False),
+                                   ("won beside devour text", WIN_RESULT + DEVOUR_INTRO, True)):
+            now = [100.0]
+            with self.subTest(name), upstream(hand()) as (utils_sortie, task), mock.patch.object(battle.time, "monotonic", lambda: now[0]):
+                self.stand_up(utils_sortie, task, StoryMode)
+                task.node_status = None
+                with mock.patch.object(board, "devours_summons", lambda task: True):
+                    battle.handle_devour_text(task)
+                now[0] += 5
+                play_fight(utils_sortie, task, TWO_TURNS[:1], two_foes(), end_texts=None)
+                self.assertTrue(battle.fight_devours(task, seen=True))
+                task.all_texts = [FakeBox(text, x, y) for text, x, y in texts]
+                pressed = list(task.keys)
+                self.assertEqual(drops, battle.fight_result(task))
+                self.assertFalse(battle.handle_devour_text(task))
+                self.assertEqual(pressed, task.keys)
+                now[0] += battle.DEVOUR_GAP
+                self.assertEqual(not drops, battle.fight_devours(task, seen=True))
+
+    def test_only_whole_result_words_make_a_result_screen(self):
+        # Words a battle frame's effect feed or a card could carry, holding the result words inside longer text.
+        for name, texts in (("reward inside a line", [("Reward: Draw 1", 0.6, 0.7), ("MVP", 0.08, 0.2)]),
+                            ("mvp inside a line", [("Reward", 0.6, 0.7), ("MVP Bonus", 0.08, 0.2)]),
+                            ("defeat inside a line", [("Reward", 0.6, 0.7), ("Battle failed to sync", 0.3, 0.7)])):
+            with self.subTest(name):
+                self.assertFalse(battle.fight_result(screen(texts)))
+        self.assertTrue(battle.fight_result(screen([(" reward ", 0.6, 0.7), ("Battle Failed.", 0.3, 0.7)])))
 
     def test_a_short_spell_off_the_battle_screen_does_not_end_the_fight(self):
         with upstream(hand()) as (utils_sortie, task):
