@@ -18,7 +18,7 @@ class Globals(QObject):
         # Everything English-only lives under src/en/ so upstream's files stay untouched.
         from src.ui.SponsorDialog import install_sponsor_dialog
         from src.en import (  # noqa: E501
-            battle, battle_missions, boss, chaos_entry, claims, cursor, dashboard, deck, desire, devices, dialog_ticks, dialogue, dice, draft, enter, epiphany, equipment, etched_memory, events, forms, frame_log, game_language, heal, humanize,
+            battle, battle_missions, boss, chaos_entry, claims, cursor, dashboard, deck, desire, devices, dialog_ticks, dialogue, dice, draft, enter, epiphany, equipment, etched_memory, events, farm_restart, forms, frame_log, game_language, heal, humanize,
             kept_forms, language_check, log_text, loot_cards, meditation, memory_limit, monitors, move_on, navigation, obtain, observe, ocr_text, overrides, persona, picker, piles, pins, reobserve, remote, rest, rewards, sections,
             reason, route, shell, shop, shutdown, skip_tutorial, spend_guard, story, story_relay, summary, task_list, templates, notify, stuck, stuck_stop, upload, zero_system,
         )
@@ -65,6 +65,7 @@ class Globals(QObject):
         # list entry it builds - after that rename, a later wrapper looking for the original name finds
         # nothing. Order does not otherwise matter: `handlers.wrap` composes rather than replaces.
         shop.apply()
+        farm_restart.apply()
         rewards.apply()
         # Before battle and observe: both take the battle Auto check story.py wraps and build on it under another name.
         story.apply()

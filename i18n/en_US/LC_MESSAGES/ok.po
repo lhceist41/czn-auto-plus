@@ -586,6 +586,7 @@ msgstr ""
 msgid "初始任务必须包含“移除2张”，否则重新开始；不能与“刷初始卡牌”同时使用。"
 msgstr ""
 "The starting task must include Remove 2 Cards, otherwise the run restarts. "
+"The restart does nothing on the Global client yet, so the run plays on. "
 "Cannot be used together with Farm Starting Card."
 
 msgid "自动模式使用ONNX Runtime。Intel设备可手动选择OpenVINO。修改后重启程序生效。"

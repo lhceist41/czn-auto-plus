@@ -134,7 +134,8 @@ DESCRIPTIONS = {
     CODEX_MERGE: f"What a Zero System reroll pays with: Credits for {NORMAL_MERGE}, Chaos Orbs for {CHAOS_MERGE}. Never only picks among the slots.",
     MAX_MERGES: "Merges to spend hunting one Codex. Once they are spent, the best Codex on hand is entered.",
     ENTER_MEMORY_END: "Enter End of Memory after the final boss for the extra fight and its grade upgrade.",
-    "刷初始卡牌": "Reroll the starting card until this one appears. Cannot be combined with Farm Gaps.",
+    "刷初始卡牌": "Reroll the starting card until this one appears. The reroll does nothing on the Global client yet, so the run plays on."
+                 " Cannot be combined with Farm Gaps.",
     "任务优先级": "Preferred options inside an Unidentified Area, best first, matched loosely against the option's description.",
     "拉黑任务": "Never take an Unidentified Area option whose description matches one of these.",
     "领取奖励(只使用验证卡)": "Takes the Settlement's Additional Loot with one of the four weekly Loot Certification Cards.",
