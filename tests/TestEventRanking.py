@@ -32,11 +32,15 @@ from src.en.events import (  # noqa: E402
     REFINED, REWARD_RANK, RankingChoice, SPARK, SPARK_RANK, center_of, double_clicking, drop_unwanted, find_pins, fold,
     handle_unavailable_reward, leave_after_refinement, order, rank, ranking, real_options, take_substitute, tap_a_pin,
 )
-from src.en.enter import OPTION_TEMPLATES, on_the_button  # noqa: E402
+from src.en.enter import HEALTH_POINT, OPTION_TEMPLATES, on_the_button  # noqa: E402
 from src.en.etched_memory import (  # noqa: E402
     ENTER_MEMORY_END, ETCHED_MEMORY, MEMORY_BONUS, MEMORY_CARD, choosing_bonus, entering_memory_end, picking_memory, processing_for_bonus,
 )
+from src.en import navigation, piles  # noqa: E402
 from src.en.handlers import standing_in  # noqa: E402
+from src.en.stuck import CLOCK  # noqa: E402
+from tests.TestChaosEntry import DETAIL, FORMATION  # noqa: E402
+from tests.TestSpendGuard import guarded_enter  # noqa: E402
 from tests.fakes import HEIGHT, WIDTH, FakeBox  # noqa: E402
 
 # Memory Processing on the Global client, read off a 2026-10-25 capture: three rerolls of Memory: Loss, each carrying
@@ -680,6 +684,192 @@ class TestEnterButton(unittest.TestCase):
                 )
                 self.assertEqual(pressed, handle_enter(task))
                 self.assertEqual(int(pressed), len(clicked))
+
+
+# Two event screens whose round button stays grey, read off 1080p captures: the treasure room with its three chests
+# pinned, and the prisoner with three search pins over the two options.
+TREASURE_ROOM = [("693/724", 0.211, 0.038), ("252", 0.762, 0.051), ("R", 0.831, 0.078), ("Ctrl", 0.894, 0.079), ("Q", 0.96, 0.078),
+                 ("米", 0.032, 0.228), ("Beyond the gate lay a lavish chamber overflowing with treasure.", 0.499, 0.229),
+                 ("F2", 0.683, 0.334), ("F3", 0.801, 0.431), ("进入", 0.947, 0.924)]
+PRISONER = [("549/563", 0.211, 0.036), ("289", 0.761, 0.05), ("R", 0.831, 0.079), ("Ctrl", 0.894, 0.079), ("Q", 0.959, 0.08),
+            ("A prisoner, preparing to transform into a ghoul, is desperately requesting salvation", 0.501, 0.21),
+            ("from the group.", 0.5, 0.249), ("F3", 0.844, 0.361), ("E2", 0.758, 0.523), ("2", 0.632, 0.749),
+            ("Talk to the prisoner", 0.324, 0.799), ("Search the prisoner's belongings", 0.629, 0.799),
+            ("Event Encounter: Conversation", 0.371, 0.837), ("with the Prisoner", 0.321, 0.869), ("Rare-Legendary equipment", 0.619, 0.869),
+            ("Obtain random", 0.577, 0.837), ("X", 0.942, 0.883), ("进入", 0.946, 0.923)]
+# The event whose round button glowed, with an option picked.
+BROTHERS = [("543/543", 0.212, 0.037), ("111", 0.763, 0.05), ("R", 0.831, 0.079), ("Ctrl", 0.894, 0.08), ("Q", 0.96, 0.079),
+            ("One of the three brothers is lying. You must find out who among them stole the", 0.499, 0.21), ("Credit.", 0.501, 0.248),
+            ("3", 0.761, 0.749), ("Point out Steeler", 0.184, 0.798), ("Point out Snipper", 0.447, 0.799), ("Point out the Bolt Runner", 0.733, 0.798),
+            ("Results unpredictable", 0.208, 0.836), ("Results unpredictable", 0.469, 0.836), ("Results unpredictable", 0.73, 0.836),
+            ("××", 0.947, 0.88), ("进入", 0.947, 0.923)]
+# The treasure room once its last chest is open: the button has turned into Continue, with an Enter key hint over it.
+TREASURE_OPEN = [("693/724", 0.212, 0.039), ("380", 0.761, 0.05), ("R", 0.831, 0.078), ("Ctrl", 0.894, 0.079), ("Q", 0.959, 0.078),
+                 ("米", 0.033, 0.228), ("进入", 0.83, 0.878), ("继续", 0.922, 0.917)]
+# Where the ring crops in `tests/images/` were cut from the 1080p captures.
+RING_CROP_AT = (1740, 860)
+# The treasure room's badges, as the catalog lists them.
+CHESTS = [(0.523, 0.490), (0.683, 0.378), (0.801, 0.477)]
+
+
+def frame_with(*crops):
+    """Paste captured crops back where they came from, in an otherwise black frame.
+
+    Args:
+        *crops: `(file name in tests/images/, left, top)` triples, in pixels of the 1080p capture.
+
+    Returns:
+        A 1920x1080 frame showing only the crops.
+    """
+    frame = np.zeros((HEIGHT, WIDTH, 3), np.uint8)
+    for name, left, top in crops:
+        crop = cv2.imread(str(REPO_ROOT / "tests" / "images" / name))
+        frame[top:top + crop.shape[0], left:left + crop.shape[1]] = crop
+    return frame
+
+
+def ring(name):
+    """Give a frame showing one round button's ring, as the crop list for `frame_with`."""
+    return (name, *RING_CROP_AT)
+
+
+class ChaosMode(SimpleNamespace):
+    """A Chaos task on one screen, named after upstream's class."""
+
+
+class SortieMode(SimpleNamespace):
+    """A Sortie task on one screen, named after upstream's class."""
+
+
+def run_status(**extra):
+    """Build the status of a run five nodes in, whose team page has been read.
+
+    Returns:
+        The `node_status` dict.
+    """
+    status = utils._initial_node_status()
+    status.update(node_count=5, total_rounds=2, removed_card_count=1, enter_new_node=True,
+                  **{navigation.TEAM_TAPPED: (1, 0.0), piles.READ: True}, **extra)
+    return status
+
+
+def screen_task(texts, frame=None, mode=ChaosMode):
+    """Put a mode on one screen, recording what it presses and logs.
+
+    Args:
+        texts: `(name, x, y)` triples, as fractions of the screen.
+        frame: The frame, black when None.
+        mode: The task's class, whose name decides which mode it is.
+
+    Returns:
+        The task, with `clicked`, `logged` and a run's `node_status`.
+    """
+    task = mode(all_texts=[FakeBox(name, x, y) for name, x, y in texts], width=WIDTH, height=HEIGHT,
+                frame=np.zeros((HEIGHT, WIDTH, 3), np.uint8) if frame is None else frame,
+                box_of_screen=lambda *region: region, find_one=lambda feature_name=None, **_: None,
+                sleep=lambda seconds: None, node_status=run_status(), member_status={"kept": True}, clicked=[], logged=[])
+    task.click_box = lambda box: task.clicked.append((box.name, round((box.x + box.width / 2) / WIDTH, 3), round((box.y + box.height / 2) / HEIGHT, 3)))
+    task.log_info = task.logged.append
+    return task
+
+
+class TestEnterInsideARun(unittest.TestCase):
+    """Upstream resets the run's records on every Enter it presses, and an event's own Enter inside a run is not a run start."""
+
+    def setUp(self):
+        self.handle_enter = on_the_button(utils)(utils.handle_enter)
+
+    def assert_run_carried_on(self, task):
+        self.assertEqual(run_status(), task.node_status)
+        self.assertEqual({"kept": True}, task.member_status)
+        # The reset dropped the read page's markers, which sent the next frame to the team page and back on every press.
+        self.assertFalse(navigation.handle_open_team(task))
+
+    def test_a_grey_event_enter_is_left_and_the_run_carries_on(self):
+        for case, texts, crop in (("treasure room", TREASURE_ROOM, "enter_ring_grey_treasure.png"),
+                                  ("prisoner", PRISONER, "enter_ring_grey_prisoner.png")):
+            with self.subTest(case):
+                task = screen_task(texts, frame_with(ring(crop)))
+                self.assertIs(False, self.handle_enter(task))
+                self.assertEqual([], task.clicked)
+                self.assert_run_carried_on(task)
+
+    def test_a_lit_event_enter_is_pressed_without_a_reset(self):
+        task = screen_task(BROTHERS, frame_with(ring("enter_ring_lit.png")))
+        self.assertIs(True, self.handle_enter(task))
+        self.assertEqual([("进入", 0.947, 0.923)], task.clicked)
+        self.assert_run_carried_on(task)
+        self.assertFalse(any("检测到进入按钮" in line for line in task.logged))
+
+    def test_the_health_reads_with_either_slash(self):
+        # One capture read the treasure trove's gate as "693／724", which upstream's own health read misses.
+        for health in ("693/724", "693／724", "693 /724"):
+            with self.subTest(health):
+                texts = [(health, 0.211, 0.038)] + TREASURE_ROOM[1:]
+                task = screen_task(texts, frame_with(ring("enter_ring_grey_treasure.png")))
+                self.assertIs(False, self.handle_enter(task))
+                self.assertEqual([], task.clicked)
+
+    def test_a_real_run_start_still_resets(self):
+        cases = (("Blue Pot detail", DETAIL, ChaosMode, (0.935, 0.899)), ("Formation", FORMATION, ChaosMode, (0.945, 0.913)),
+                 # Sortie keeps upstream's press as it was, whatever the top left reads.
+                 ("Sortie with health up", BROTHERS, SortieMode, (0.947, 0.923)))
+        for case, texts, mode, spot in cases:
+            with self.subTest(case):
+                task = screen_task(texts, mode=mode)
+                if texts is DETAIL:
+                    # Its "Chaos Manifestation" title runs from x 171 to 505 on the capture, over the point health is read at.
+                    task.all_texts[0] = FakeBox(DETAIL[0][0], *DETAIL[0][1:], width=334)
+                    self.assertIs(task.all_texts[0], utils.find_box_at_point(task, *HEALTH_POINT))
+                self.assertIs(True, self.handle_enter(task))
+                self.assertEqual([("进入", *spot)], task.clicked)
+                self.assertEqual(0, task.node_status["node_count"])
+                self.assertEqual(2, task.node_status["total_rounds"])
+                self.assertNotIn(piles.READ, task.node_status)
+                self.assertNotIn("kept", task.member_status)
+
+    def test_the_escape_guard_still_comes_first_inside_a_run(self):
+        # An Escape read over the lit button: the guard over this change refuses it before the run is even looked at.
+        task = screen_task(BROTHERS + [("Escape", 0.947, 0.923)], frame_with(ring("enter_ring_lit.png")))
+        setattr(task, CLOCK, 1)
+        with guarded_enter() as handle_enter:
+            self.assertIs(False, handle_enter(task))
+        self.assertEqual([], task.clicked)
+        self.assertEqual(1, sum("may be the run's Escape" in line for line in task.logged))
+        self.assertEqual(run_status(), task.node_status)
+
+    def test_a_grey_enter_is_logged_once_per_appearance(self):
+        task = screen_task(TREASURE_ROOM, frame_with(ring("enter_ring_grey_treasure.png")))
+        for _ in range(3):
+            self.handle_enter(task)
+        self.assertEqual(1, sum("is grey" in line for line in task.logged))
+        with standing_in(task, all_texts=[box for box in task.all_texts if box.name != "进入"]):
+            self.handle_enter(task)
+        self.handle_enter(task)
+        self.assertEqual(2, sum("is grey" in line for line in task.logged))
+
+    def test_the_treasure_rooms_chests_are_opened_then_its_continue_pressed(self):
+        # Upstream's Continue comes before Enter, and the event handler that taps the pins after it, in Chaos's list.
+        order = [handler.__name__ for handler in utils_chaos.PAGE_HANDLERS]
+        self.assertLess(order.index("handle_continue"), order.index("handle_enter"))
+        self.assertLess(order.index("handle_enter"), order.index("handle_event_task"))
+        taps = []
+        handle_event_task = ranking(utils)(lambda task: self.fail("a pin should take the frame first"))
+        room = screen_task(TREASURE_ROOM, frame_with(("treasure_pins.png", 940, 340), ring("enter_ring_grey_treasure.png")))
+        with standing_in(utils, _move_and_click=lambda task, x, y: taps.append((x, y))):
+            for _ in range(len(CHESTS)):
+                self.assertIs(False, self.handle_enter(room))
+                self.assertIs(True, handle_event_task(room))
+        self.assertEqual([], room.clicked)
+        self.assertEqual(len(CHESTS), len(taps))
+        for x, y in taps:
+            self.assertTrue(any(abs(x - cx) < 0.01 and abs(y - cy) < 0.01 for cx, cy in CHESTS), (x, y))
+        opened = screen_task(TREASURE_OPEN)
+        self.assertIs(False, self.handle_enter(opened))
+        with standing_in(utils, _get_game_text=lambda task, text: text):
+            self.assertIs(True, utils.handle_continue(opened))
+        self.assertEqual([("继续", 0.922, 0.917)], opened.clicked)
+        self.assert_run_carried_on(opened)
 
 
 class MemoryTask:

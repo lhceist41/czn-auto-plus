@@ -5,15 +5,21 @@ Upstream presses any "进入" across the bottom fifth of the screen. The Global 
 upstream pressed before the screen's own handler had picked anything. On a Sortie event the round button attacks the
 object, so it is also left alone while an option is offered. Story mode keeps upstream's handler as it is.
 
+Upstream also takes every Enter it presses for the start of a new run and resets the run's records. Inside a Chaos run the
+round button belongs to the event on screen: it is pressed only once it lights up, and the run's records carry on.
+
 Two Chaos screens show their "Enter" away from that button, where no other handler presses it: the Entry Guide dialog
 that asks whether to enter at the current difficulty, and the Exploration record notice after a run's last Leave. Each
 is pressed on its own Enter only, once its own line and that button are both read.
 """
 
+import re
+
+import numpy as np
 from ok import Logger
 
 from src.en.handlers import insert_before, loaded, register, standing_in, wrap
-from src.en.screen import in_region
+from src.en.screen import centre_of, colour_share, frame_of, in_region, patch_of
 from src.en.spend_guard import Dialog, cleaned, folded, shown
 
 logger = Logger.get_logger(__name__)
@@ -33,6 +39,21 @@ OPTION_THRESHOLD = 0.70
 # The mode whose Enter is a wide bar on the chapter panel, centred at (0.817, 0.930) - among the key hints, so no region
 # can tell them apart.
 STORY_MODE = "StoryMode"
+CHAOS_MODE = "ChaosMode"
+# The team's health, read at (0.211-0.212, 0.037-0.039) on all sixteen in-run captures saved with the round button up, and on
+# neither The Blue Pot's detail nor the Formation, whose Enter starts a run. One capture read it with a full-width slash.
+HEALTH_POINT = (0.209, 0.040)
+HEALTH = re.compile(r"\d+\s*[/／]\s*\d+")
+# Inside a run the button is a ring with crossed swords over its "Enter" hint, grey until the event lets it be pressed (the
+# treasure room's until all three chests are open) and glowing magenta once it can. This patch above the hint, as offsets
+# from the hint's centre, was 1.3-2.0% bright and saturated on two lit captures and 0% on fourteen grey ones of four events,
+# the treasure room's purple backdrop among them.
+RING = (-0.03, -0.11, 0.03, -0.01)
+RING_LOW = np.array([0, 120, 180])
+RING_HIGH = np.array([180, 255, 255])
+RING_LIT = 0.005
+# Parked on the task while a grey ring is up, so it is logged once rather than on every frame.
+GREY_LOGGED = "_en_grey_enter_logged"
 # "Chaos Manifestation Entry Guide", read off two captures: title at (0.501, 0.389), label at (0.521, 0.624), Cancel and Enter
 # at y 0.745. Its "Do not show again for today." box is the user's choice, so it is never ticked here.
 ENTRY_GUIDE = Dialog("Chaos Manifestation Entry Guide", "chaosmanifestationentryguide", True, (0.30, 0.34, 0.70, 0.44),
@@ -47,8 +68,63 @@ CHAOS_LIST = ("utils_chaos",)
 _patched = False
 
 
+def in_a_run(task, utils):
+    """Say whether the screen is inside a Chaos run, by the team's health in the top left.
+
+    Args:
+        task: The running task, whose `all_texts` holds the current OCR pass.
+        utils: Upstream's `utils` module, for `find_box_at_point`.
+
+    Returns:
+        True when the health reads as two numbers either side of a slash.
+    """
+    if type(task).__name__ != CHAOS_MODE:
+        return False
+    box = utils.find_box_at_point(task, *HEALTH_POINT)
+    return box is not None and HEALTH.search(box.name) is not None
+
+
+def ring_lit(task, button):
+    """Say whether the round button's ring above its Enter hint is lit.
+
+    Args:
+        task: The running task, whose frame holds the current screen.
+        button: The Enter hint's OCR box.
+
+    Returns:
+        True when enough of the ring glows; False for a grey ring or a frame that cannot be read.
+    """
+    x, y = centre_of(button, task.width, task.height)
+    left, top, right, bottom = RING
+    patch = patch_of(frame_of(task), (x + left, y + top, x + right, y + bottom))
+    return colour_share(patch, RING_LOW, RING_HIGH) >= RING_LIT
+
+
+def press_in_run(task, button):
+    """Press an event's Enter inside a run, the way upstream does, minus its reset of the run's records.
+
+    Args:
+        task: The running task.
+        button: The Enter hint's OCR box.
+
+    Returns:
+        True when it was pressed, False while the ring is grey.
+    """
+    if not ring_lit(task, button):
+        if not getattr(task, GREY_LOGGED, False):
+            setattr(task, GREY_LOGGED, True)
+            task.log_info("the event's Enter is grey, so it is left until the event lights it")
+        return False
+    task.log_info("pressing the event's Enter, inside the run, so the run's records carry on")
+    task.click_box(button)
+    task.sleep(1)
+    return True
+
+
 def on_the_button(utils):
     """Build the change that keeps `handle_enter` on the round button, and off it while an event option is up.
+
+    Inside a Chaos run it presses the button itself, once lit, since upstream's press resets the run's records.
 
     Args:
         utils: Upstream's `utils` module, whose `_clean_match` is how `handle_enter` recognises "进入".
@@ -63,10 +139,13 @@ def on_the_button(utils):
             button = next((box for box in task.all_texts
                            if utils._clean_match(box.name, ENTER) and in_region(box, BUTTON, task.width, task.height)), None)
             if button is None:
+                setattr(task, GREY_LOGGED, False)
                 return False
             if task.find_one(feature_name=OPTION_TEMPLATES, box=task.box_of_screen(*OPTION_BAND), threshold=OPTION_THRESHOLD):
                 task.log_info("an event option is on screen, so Enter is left for the option to be chosen")
                 return False
+            if in_a_run(task, utils):
+                return press_in_run(task, button)
             # Upstream reads nothing else off the screen, so showing it the button alone still lets it press it itself.
             with standing_in(task, all_texts=[button]):
                 return original_handle_enter(task)
