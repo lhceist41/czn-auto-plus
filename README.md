@@ -21,7 +21,8 @@
 
 </div>
 
-- **Daily:** claims attendance and all mail, and runs Nightmare Dream Park with the park's own profit while the event is on.
+- **Daily:** claims attendance, all mail, the ready Activity rewards and achievements, the Nightmare Carnival's attendance and The
+  Path of a Captain's tiers, and runs Nightmare Dream Park with the park's own profit while the event is on.
 - **Chaos Manifestation:** walks from the Lobby to The Blue Pot and plays whole runs: routes, events, cards, shops,
   equipment and fights.
 - **Sortie:** plays whole Sortie runs and picks every card in its fights itself.
@@ -118,7 +119,9 @@ The **Settings** page holds the settings shared by every mode:
 
 Starts on the Lobby and closes its entry popups, claims the daily attendance reward and all mail, then the rewards that
 read ready in the Activity window (Growth Guide, the daily and weekly schedules, Achievement Log) and on the Achievement
-screen (Claim All in each category), then visits Nightmare
+screen (Claim All in each category). While the Nightmare Carnival runs it opens it from the Lobby's banner and claims
+every pending attendance day, never Check-In Make-Up or the Exchange. In the Event list it claims each reached tier of
+The Path of a Captain, then visits Nightmare
 Dream Park while the event runs. In the park it ranks up, builds and upgrades rides, buys the park skills AI Automation
 and Another Happy Day and claims the park's achievements, all with the park's own profit: it presses a price only when it
 reads as park profit, and stops on a Crystal or money price. Daily stops on the Lobby and presses nothing else.

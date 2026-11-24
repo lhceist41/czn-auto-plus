@@ -1,4 +1,4 @@
-"""Run the daily chores from the Lobby: close its popups, claim attendance, mail, Activity rewards and achievements, visit Dream Park, stop on the Lobby.
+"""Run the daily chores from the Lobby: close its popups, claim attendance, mail, Activity rewards, achievements and the Carnival's attendance, visit Dream Park, stop on the Lobby.
 
 The Lobby, its menu and the Mail screen sit next to buttons that delete mail, open the Shop, refill Aether with Crystals,
 open Rescue or quit the game. So Daily presses only the fixed targets in `TARGETS`, each on the one screen it belongs to,
@@ -7,7 +7,10 @@ A screen Daily does not know for 30 seconds, and the tutorial, stop it with noth
 
 The Activity window and the Achievement screen pay out for free, one tap per claim. A claim is pressed only while its
 button reads ready, by its caption or its orange or blue face, never a `Move` that leaves the window, and two claims in
-a row that open nothing stop Daily. The Activity window's two unlabelled middle tabs are never pressed.
+a row that open nothing stop Daily. The Activity window's two unlabelled middle tabs are never pressed. While the
+Lobby shows the Nightmare Carnival's banner, one press on a pending attendance day claims every pending day; without
+the banner the chore is skipped. The Event list visit opens The Path of a Captain first and claims each reached tier.
+The finish line counts what left the screen where that reads reliably, and the presses where it does not.
 
 The park spends only its own profit, a free counter that refills while the player is away. Its rows are read by
 `dream_park`, and one is pressed only when its price reads as a plain park number. When the ride it wants is further
@@ -24,6 +27,7 @@ import time
 from collections import Counter, namedtuple
 from pathlib import Path
 
+import cv2
 import numpy as np
 from ok import Logger, TriggerTask
 from ok.device.interaction_methods.post_message import PostMessageInteraction
@@ -31,7 +35,7 @@ from ok.device.interaction_methods.post_message import PostMessageInteraction
 from src.en import dream_park
 from src.en.handlers import loaded
 from src.en.runs import stop
-from src.en.screen import centre_of, colour_share, frame_of, in_region, patch_of, text_in_region
+from src.en.screen import centre_of, colour_share, frame_of, hsv_of, in_region, patch_of, text_in_region
 from src.en.dialog_ticks import UNTICKED, box_state
 from src.en.spend_guard import (ACCOUNT, DELETION, MONEY, PURCHASE, RESCUE_HEADER, RESCUE_PHRASES, RETREAT, COMPACT_SKIP_DIALOG, cleaned,
                                 folded, handle_rescue_screen, marker_in, shown)
@@ -101,6 +105,12 @@ CATEGORY_TABS = ("the Achievement screen's Journey Log tab", "the Achievement sc
 CATEGORY_CLAIM = "an achievement category's Claim All"
 CARDS_LEAVE = "the Achievement screen's back arrow"
 CATEGORY_LEAVE = "an achievement category's back arrow"
+CARNIVAL_BANNER = "the Lobby's Nightmare Carnival banner"
+CARNIVAL_TAB = "the Carnival's Attendance Check tab"
+CARNIVAL_DAY = "a pending Carnival attendance day"
+CARNIVAL_LEAVE = "the Carnival's back arrow"
+CAPTAIN_ENTRY = "the Event list's The Path of a Captain"
+CAPTAIN_CLAIM = "a Path of a Captain tier's Claim Reward"
 # Every Dream Park screen draws its back arrow at the same place, and each press of it takes one screen back. The
 # Achievement screen draws its own there too.
 BACK = (0.041, 0.046)
@@ -165,6 +175,12 @@ TARGETS = {
     CATEGORY_CLAIM: None,
     CARDS_LEAVE: BACK,
     CATEGORY_LEAVE: BACK,
+    CARNIVAL_BANNER: None,
+    CARNIVAL_TAB: (0.120, 0.330),
+    CARNIVAL_DAY: None,
+    CARNIVAL_LEAVE: BACK,
+    CAPTAIN_ENTRY: None,
+    CAPTAIN_CLAIM: None,
 }
 # How many upgrades one park visit may press, one level each, so the cap only bounds a loop that has gone wrong, and how
 # many achievement claims: the event has 23 achievements.
@@ -187,7 +203,8 @@ DRAG_DURATION = 2
 # change. A target leading to another screen counts only until that screen shows (`ARRIVALS`), so a later step, or the
 # next round of the park, may press it again. The Activity claims only bound a loop gone wrong: a Growth Guide stage has
 # up to 10 cards and the next stage may have ready ones, and one milestone press took every reached tier. An achievement
-# category's Claim All counts afresh for each category.
+# category's Claim All counts afresh for each category. One press on a Carnival day took every pending day, and The Path
+# of a Captain has five tiers.
 TAP_LIMITS = {BANNER_CLOSE: 3, NOTICE_CLOSE: 3, MENU: 3, ENVELOPE: 3, MENU_CLOSE: 3, MAIL_CLOSE: 3, WAKE: 2, CLAIM_ALL: 2, ITEMS_CLOSE: 3,
               EVENT: 3, DREAM_PARK: 3, EVENT_LEAVE: 3, ENTER_PARK: 3, PARK_ACHIEVEMENTS: 3, PAGE_LEAVE: 3, PARK_MANAGE: 3, PARK_OPERATE: 3,
               PANEL_CLOSE: 3, PARK_LEAVE: 3, PARK_RANK: 3, RANK_UP: 2, RANK_CLOSE: 3, RANK_RESULT_CLOSE: 3, UPGRADE: UPGRADE_CAP, BUILD: 3,
@@ -195,7 +212,8 @@ TAP_LIMITS = {BANNER_CLOSE: 3, NOTICE_CLOSE: 3, MENU: 3, ENVELOPE: 3, MENU_CLOSE
               SKIP_CONFIRM: 3, ATTENDANCE_CLAIM: 2, ATTENDANCE_CLOSE: 3, SKILL_TAB: 3, FACILITIES_TAB: 3, SKILL_UPGRADE: SKILL_CAP,
               HAPPY_DAY_UPGRADE: SKILL_CAP, ACTIVITY: 3, GUIDE_TAB: 3, SCHEDULE_TAB: 3, WEEKLY_TAB: 3, LOG_TAB: 3, ACTIVITY_CLOSE: 3,
               GUIDE_CLAIM: 15, STAGE_CLAIM: 3, SCHEDULE_CLAIM: 2, GOAL_CLAIM: 6, MILESTONE_CLAIM: 2, LOG_CLAIM: 2, ACHIEVEMENT_ENTRY: 3,
-              JOURNEY_CARD: 3, **{tab: 3 for tab in CATEGORY_TABS}, CATEGORY_CLAIM: 2, CARDS_LEAVE: 3, CATEGORY_LEAVE: 3}
+              JOURNEY_CARD: 3, **{tab: 3 for tab in CATEGORY_TABS}, CATEGORY_CLAIM: 2, CARDS_LEAVE: 3, CATEGORY_LEAVE: 3,
+              CARNIVAL_BANNER: 3, CARNIVAL_TAB: 2, CARNIVAL_DAY: 2, CARNIVAL_LEAVE: 3, CAPTAIN_ENTRY: 3, CAPTAIN_CLAIM: 6}
 TOWARD_MAIL = (MENU, ENVELOPE)
 
 # What `press` refuses whatever it was asked to press: mail deletion, the Shop, a purchase, Crystals or any account
@@ -330,8 +348,10 @@ MILESTONE_SHARE = 0.05
 # (0.17-0.32); claimed or unreached it shows a grey waveform (0.0). One press takes every reached level.
 LOG_RING = (0.785, 0.265, 0.815, 0.315)
 LOG_SHARE = 0.1
-# What a claim press must never land on, besides what `press` refuses: the `Move` that leaves the window for a mission.
-NEVER_CLAIM = ("move",)
+# What a claim press must never land on, besides what `press` refuses: the `Move` that leaves the window for a mission,
+# and on the Carnival `Check-In Make-Up`, which sells missed days, and Exchange's `Go`, which opens the shop.
+NEVER_CLAIM = ("move", "go")
+NEVER_CLAIM_PARTS = ("makeup",)
 # The Achievement screen: its title at (0.143, 0.045). It opens on four category cards, `Journey Log` captioned at
 # (0.141, 0.689); inside a category the same name labels the first left tab at (0.105, 0.138), and the open category's
 # name heads the list at (0.376-0.428, 0.131), read as `Exploratin Atitude` at times, so each is told by its start.
@@ -345,6 +365,41 @@ CATEGORY_BUTTON_REGION = (0.84, 0.12, 0.98, 0.20)
 CATEGORY_FACE = (0.85, 0.14, 0.97, 0.19)
 # Claim All as OCR reads it: `Claim AIl`, `Claim AlI` and `Claim AIll` as well.
 CLAIM_ALL_TEXT = re.compile(r"clalmal{2,3}")
+# How many Achievement Log levels a press took, read off the screen: every reached level's orange ring in the claim
+# column, 0.00048 of a 1080p frame each, three of them at y 0.291, 0.503 and 0.653 before one press took all three,
+# against none after.
+LOG_COLUMN = (0.77, 0.22, 0.83, 0.97)
+LOG_RING_AREA = 0.00025
+
+# The Lobby's Nightmare Carnival banner, read at (0.101, 0.396) while the event runs. Another banner in its place reads
+# otherwise, so the chore is skipped rather than its spot tapped. The Carnival window: its title at (0.169, 0.047), the
+# `Attendance Check` tab label at (0.109, 0.369), which takes a tap only on its left part, and the open tab's heading,
+# `Attendance` at (0.795, 0.165); Exchange and Welcome Gift head their tabs at (0.906, 0.169) and (0.880, 0.164).
+LOBBY_CARNIVAL = ("Nightmare Carnival", (0.02, 0.36, 0.20, 0.43))
+CARNIVAL_TITLE = ("Nightmare Carnival", (0.08, 0.02, 0.30, 0.08))
+CARNIVAL_ATTENDANCE_TAB = ("Attendance Check", (0.04, 0.33, 0.18, 0.41))
+CARNIVAL_HEADING = ("Attendance", (0.70, 0.13, 0.88, 0.20))
+# How long a Carnival window with only its title or only its tab label reading, as under a popup or after one OCR miss,
+# is given before the chore is left by the back arrow: the settle time plus a navigation wait.
+CARNIVAL_UNREAD_WAIT = 5
+# A pending day's bar under its card, y 0.872-0.915, is filled violet (HSV 133, 148, 215) round a white download icon;
+# a claimed or unreached day's bar is dark (value 72-103). Columns of violet or white, at least half the strip, make a
+# bar; a run of them 0.06 wide and mostly violet is a pending day, 0.107 wide on the capture. A card cut at the list's
+# left edge shows 0.013 of its bar and is left. `Check-In Make-Up` at (0.811, 0.398) and Exchange's `Go` lie outside it.
+CARNIVAL_BARS = (0.22, 0.875, 0.99, 0.912)
+CARNIVAL_DAY_Y = 0.885
+BAR_LOW, BAR_HIGH = np.array((120, 90, 170)), np.array((145, 220, 255))
+BAR_WHITE_LOW, BAR_WHITE_HIGH = np.array((0, 0, 200)), np.array((180, 70, 255))
+BAR_COLUMN_SHARE = 0.5
+BAR_VIOLET_SHARE = 0.5
+BAR_WIDTH = 0.06
+
+# The Event list's The Path of a Captain, read cut as `le Path of a Captain` or joined as `The Path of aCaptain`. Its
+# page: the title at (0.823, 0.166) and one button per Captain level tier at y 0.914, `Claim Reward` under a reached,
+# unclaimed tier, `Claimed` or `Insufficient level` under the others.
+CAPTAIN_ENTRY_TEXT = "pathofacaptain"
+CAPTAIN_TITLE = ("The Path of a Captain", (0.70, 0.13, 0.95, 0.20))
+CAPTAIN_CLAIMS = ("Claim Reward", (0.25, 0.89, 0.99, 0.94))
 
 # How long the screen may stay one Daily does not know before it stops, and how long a Lobby read stays good for a
 # Lobby whose UI has faded out after a few idle seconds, which OCR reads as nothing but the odd low-confidence scrap:
@@ -390,8 +445,11 @@ RUN = "_en_daily_run"
 PENDING, DONE = "pending", "done"
 Step = namedtuple("Step", "name lobby_entry menu_entry")
 # One entry per chore, in the order they run. Each starts from the Lobby with its entry tap and ends back on the Lobby.
+# The Carnival opens from the Lobby's banner, not the menu, so it comes after the menu's chores.
 STEPS = (Step("mail", MENU, ENVELOPE), Step("activity", MENU, ACTIVITY), Step("achievement", MENU, ACHIEVEMENT_ENTRY),
-         Step("dream_park", MENU, EVENT))
+         Step("carnival", CARNIVAL_BANNER, None), Step("dream_park", MENU, EVENT))
+# The claims whose count is read off the screen after Items Obtained closes, as what left it, rather than one per press.
+RECOUNTED = ("milestone", "log", "carnival", "captain")
 PARK = "dream_park"
 # The menu captions pressed by the box OCR read, for the chores whose menu entry is a text button.
 MENU_ENTRIES = {ACTIVITY: MENU_ACTIVITY, ACHIEVEMENT_ENTRY: MENU_ACHIEVEMENT}
@@ -472,10 +530,12 @@ def new_claims():
 
     Returns:
         A dict: the claim screen showing and since when, when each of their targets was last pressed, the Activity tab
-        and the achievement category being worked through, the claim press awaiting its outcome, how many claims in a row
-        opened nothing, and the claims counted for the finish line.
+        and the achievement category being worked through, the claim press awaiting its outcome, the claim awaiting its
+        count once its screen settles, how many claims in a row opened nothing, the claims counted for the finish line,
+        and what the Carnival and The Path of a Captain came to.
     """
-    return {"screen": None, "since": None, "pressed": {}, "phase": 0, "category": 0, "pending": None, "misses": 0, "claimed": Counter()}
+    return {"screen": None, "since": None, "pressed": {}, "phase": 0, "category": 0, "pending": None, "recount": None, "misses": 0,
+            "claimed": Counter(), "carnival": None, "captain": None}
 
 
 def pending_step(task):
@@ -727,7 +787,11 @@ def handle_daily_items_obtained(task):
         park["claims"] += 1
     claims = state["claims"]
     if claims["pending"] is not None:
-        claims["claimed"][claims["pending"][0]] += 1
+        kind, _, before = claims["pending"]
+        if kind in RECOUNTED:
+            claims["recount"] = (kind, before)
+        else:
+            claims["claimed"][kind] += 1
         claims["pending"], claims["misses"] = None, 0
         # The screen under it redraws its cards, so it gets time to settle again before it is read.
         claims["screen"] = None
@@ -953,46 +1017,129 @@ def ready_activity_claim(task, tab):
     return None
 
 
-def press_claim(task, target, kind, box=None):
-    """Press a ready claim and await what it opens, unless a `Move` lies under it.
+def never_claimed(text):
+    """Say whether a box reads as something no claim press may land on: a `Move`, Make-Up or `Go`."""
+    word = folded(text)
+    return word in NEVER_CLAIM or any(part in word for part in NEVER_CLAIM_PARTS)
+
+
+def press_claim(task, target, kind, box=None, before=None):
+    """Press a ready claim and await what it opens, unless a `Move`, Make-Up or `Go` lies under it.
 
     Args:
         task: The Daily task.
         target: A key of `TARGETS`.
         kind: What is claimed, a key of the finish line's counts.
         box: The OCR box or spot pressed, None for the target's fixed point.
+        before: For a claim in `RECOUNTED`, how many of its kind read ready when it was pressed.
 
     Returns:
         True, which claims the frame.
     """
     point = centre_of(box, task.width, task.height) if box is not None else TARGETS[target]
-    hit = next((hit for hit in ([box] if box is not None else []) + boxes_at(task, point) if folded(hit.name) in NEVER_CLAIM), None)
+    hit = next((hit for hit in ([box] if box is not None else []) + boxes_at(task, point) if never_claimed(hit.name)), None)
     if hit is not None:
         task.log_info(f"not pressing {target}: the box there reads {hit.name!r}")
         return stop(task, f"Stopped: {target} would have pressed {hit.name!r}. Check the game, then press Start again.")
-    before = (weekly_progress(task), len(captions_in(task, ("Goal Achieved", GOAL_REGION)))) if kind == "goal" else None
+    if kind == "goal":
+        before = (weekly_progress(task), goals_shown(task))
     claims_state(task)["pending"] = (kind, time.monotonic(), before)
     return press(task, target, box)
 
 
-def goal_taken(task, before):
-    """Say whether a pressed weekly goal was taken: the progress rose, or fewer goals read `Goal Achieved`.
+def goals_shown(task):
+    """Count the weekly goals reading `Goal Achieved`."""
+    return len(captions_in(task, ("Goal Achieved", GOAL_REGION)))
+
+
+def goals_taken(task, before):
+    """Count the weekly goals a press took: the cards that left the row, or one when only the progress rose.
 
     Args:
         task: The Daily task.
         before: The progress and the number of `Goal Achieved` buttons when it was pressed.
+
+    Returns:
+        How many were taken, 0 when nothing changed.
     """
     progress, goals = before
+    left = goals - goals_shown(task)
+    if left > 0:
+        return left
     now = weekly_progress(task)
-    if progress is not None and now is not None and now > progress:
-        return True
-    return len(captions_in(task, ("Goal Achieved", GOAL_REGION))) < goals
+    return 1 if progress is not None and now is not None and now > progress else 0
+
+
+def lit_milestones(task):
+    """Count the weekly milestones reached and unclaimed, by their orange labels."""
+    return sum(face_share(task, label, ORANGE_LOW, ORANGE_HIGH) >= MILESTONE_SHARE for _, label in MILESTONES)
+
+
+def log_rings(task):
+    """Count the Achievement Log's reached, unclaimed levels by the orange rings in its claim column, 0 without a frame."""
+    hsv = hsv_of(patch_of(frame_of(task), LOG_COLUMN))
+    if hsv is None:
+        return 0
+    lit = (cv2.inRange(hsv, ORANGE_LOW, ORANGE_HIGH) > 0).astype(np.uint8)
+    count, _, stats, _ = cv2.connectedComponentsWithStats(lit)
+    least = LOG_RING_AREA * task.width * task.height
+    return sum(1 for stat in stats[1:count] if stat[cv2.CC_STAT_AREA] >= least)
+
+
+def pending_days(task):
+    """Find the Carnival's pending attendance days by their violet bars.
+
+    Args:
+        task: The Daily task.
+
+    Returns:
+        Each pending day's bar as `(left, right)` screen fractions, left to right, empty without a frame.
+    """
+    patch = patch_of(frame_of(task), CARNIVAL_BARS)
+    hsv = hsv_of(patch)
+    if hsv is None:
+        return []
+    violet = cv2.inRange(hsv, BAR_LOW, BAR_HIGH) > 0
+    bar = (violet | (cv2.inRange(hsv, BAR_WHITE_LOW, BAR_WHITE_HIGH) > 0)).mean(axis=0) >= BAR_COLUMN_SHARE
+    left, _, right, _ = CARNIVAL_BARS
+    scale = (right - left) / bar.size
+    edges = np.flatnonzero(np.diff(np.concatenate(([0], bar.astype(np.int8), [0]))))
+    return [(left + start * scale, left + end * scale) for start, end in zip(edges[::2], edges[1::2])
+            if (end - start) * scale >= BAR_WIDTH and violet[:, start:end].mean() >= BAR_VIOLET_SHARE]
+
+
+def captain_claims(task):
+    """Find The Path of a Captain's ready tiers, by their `Claim Reward`, left to right."""
+    return captions_in(task, CAPTAIN_CLAIMS)
+
+
+# What reads, on each claim's own screen, how many of its kind are still ready.
+COUNTERS = {"milestone": lit_milestones, "log": log_rings, "carnival": lambda task: len(pending_days(task)),
+            "captain": lambda task: len(captain_claims(task))}
+
+
+def settle_recount(task, here=()):
+    """Count a claim whose Items Obtained has closed, as how many of its kind left the screen.
+
+    At least one counts, since Items Obtained showed. Off its own screen nothing can be read, so it counts as one.
+
+    Args:
+        task: The Daily task.
+        here: The kinds the screen showing can count.
+    """
+    claims = claims_state(task)
+    if claims["recount"] is None:
+        return
+    kind, before = claims["recount"]
+    claims["recount"] = None
+    left = before - COUNTERS[kind](task) if kind in here and before is not None else 1
+    claims["claimed"][kind] += max(left, 1)
 
 
 def claim_outcome(task):
     """Await the last claim press's outcome, and count one that opened nothing.
 
-    Items Obtained clears the press when it shows. A weekly goal opens none, so it counts as taken by `goal_taken` instead.
+    Items Obtained clears the press when it shows. A weekly goal opens none, so it counts by `goals_taken` instead.
 
     Args:
         task: The Daily task.
@@ -1008,15 +1155,20 @@ def claim_outcome(task):
     if time.monotonic() - pressed < CLAIM_WAIT:
         return True
     claims["pending"] = None
-    if kind == "goal" and goal_taken(task, before):
-        claims["claimed"][kind] += 1
+    taken = goals_taken(task, before) if kind == "goal" else 0
+    if taken:
+        claims["claimed"][kind] += taken
         claims["misses"] = 0
         return None
     claims["misses"] += 1
     task.log_info(f"the {kind} claim opened nothing")
     if claims["misses"] >= 2:
-        return stop(task, "Stopped: two Activity or Achievement claims in a row opened nothing. Check the game, then press Start again.")
+        return stop(task, "Stopped: two claims in a row opened nothing. Check the game, then press Start again.")
     return None
+
+
+# Which recounted claims each Activity tab can count.
+TAB_COUNTS = {WEEKLY: ("milestone",), LOG: ("log",)}
 
 
 def activity_tab(task):
@@ -1040,6 +1192,10 @@ def handle_daily_activity(task):
     if waiting is not None:
         return waiting
     claims = claims_state(task)
+    if claims["recount"] is not None:
+        if shown_for < SETTLE:
+            return True
+        settle_recount(task, TAB_COUNTS.get(tab, ()))
     while claims["phase"] < len(ACTIVITY_PHASES):
         wanted = ACTIVITY_PHASES[claims["phase"]]
         if tab != wanted:
@@ -1048,7 +1204,8 @@ def handle_daily_activity(task):
             return True
         claim = ready_activity_claim(task, tab)
         if claim is not None:
-            return press_claim(task, *claim)
+            target, kind, box = claim
+            return press_claim(task, target, kind, box, max(COUNTERS[kind](task), 1) if kind in RECOUNTED else None)
         claims["phase"] += 1
     run_state(task)["steps"]["activity"] = DONE
     return press_settled(task, ACTIVITY_CLOSE)
@@ -1105,8 +1262,63 @@ def handle_daily_achievement_cards(task):
     return press_settled(task, JOURNEY_CARD if claim_step_active(task, "achievement") else CARDS_LEAVE)
 
 
+def end_carnival(task, result="visited"):
+    """Count the Carnival chore as done, with what it came to for the finish line."""
+    claims_state(task)["carnival"] = result
+    run_state(task)["steps"]["carnival"] = DONE
+
+
+def handle_daily_carnival(task):
+    """Claim every pending Carnival attendance day with one press on one of them, then go back to the Lobby.
+
+    The window is told by its title and its Attendance Check tab before anything is pressed. With only one of them
+    reading, nothing but the back arrow is pressed, once the window has had time to read, and the chore ends with a
+    note rather than Daily stopping. On another tab, the Attendance Check tab is pressed, twice at most, and a tab that
+    will not open ends the chore. Off the chore the window is only left.
+    """
+    read = showing(task, CARNIVAL_TITLE) is not None, showing(task, CARNIVAL_ATTENDANCE_TAB) is not None
+    if not any(read):
+        return False
+    heading = showing(task, CARNIVAL_HEADING) if all(read) else None
+    shown_for = arrive_claim_screen(task, ("carnival", all(read), heading is not None), (CARNIVAL_BANNER, WAKE))
+    if not claim_step_active(task, "carnival"):
+        return press_settled(task, CARNIVAL_LEAVE)
+    waiting = claim_outcome(task)
+    if waiting is not None:
+        return waiting
+    if not all(read):
+        if shown_for < CARNIVAL_UNREAD_WAIT:
+            return True
+        settle_recount(task)
+        end_carnival(task, "Carnival: its window did not read")
+        return press_settled(task, CARNIVAL_LEAVE)
+    if shown_for < SETTLE:
+        return True
+    settle_recount(task, ("carnival",) if heading is not None else ())
+    if heading is None:
+        if run_state(task)["taps"][CARNIVAL_TAB] < TAP_LIMITS[CARNIVAL_TAB]:
+            return press_settled(task, CARNIVAL_TAB)
+        end_carnival(task, "Carnival: its Attendance Check did not open")
+        return press_settled(task, CARNIVAL_LEAVE)
+    days = pending_days(task)
+    if days:
+        x, y = (days[0][0] + days[0][1]) / 2 * task.width, CARNIVAL_DAY_Y * task.height
+        return press_claim(task, CARNIVAL_DAY, "carnival", Spot("pending day", x - 1, y - 1, 2, 2), len(days))
+    end_carnival(task)
+    return press_settled(task, CARNIVAL_LEAVE)
+
+
+def counted(number, label):
+    """Put a count before a label, the label plural unless the count is one."""
+    return f"{number} {label}{'s' if number != 1 else ''}"
+
+
 def claims_summary(claims):
-    """Say in a few words what the Activity and Achievement claims took, for the finish line.
+    """Say in a few words what the Activity, Achievement, Carnival and The Path of a Captain claims took, for the finish line.
+
+    Growth Guide cards and stage rewards take one reward a press. Weekly goals, milestone tiers, Achievement Log levels,
+    Carnival days and Path of a Captain tiers count what left the screen. The daily schedule's and each achievement
+    category's Claim All take every ready row at once, which no screen counts, so they are told as presses.
 
     Args:
         claims: The claims' state.
@@ -1115,12 +1327,21 @@ def claims_summary(claims):
         The words.
     """
     claimed = claims["claimed"]
-    labels = (("guide", "Growth Guide card"), ("stage", "Growth Guide stage reward"), ("schedule", "daily schedule claim"),
-              ("goal", "weekly goal"), ("milestone", "weekly milestone claim"), ("log", "Achievement Log claim"))
-    parts = [f"{claimed[kind]} {label}{'s' if claimed[kind] != 1 else ''}" for kind, label in labels if claimed[kind]]
+    labels = (("guide", "Growth Guide card"), ("stage", "Growth Guide stage reward"), ("schedule", None), ("goal", "weekly goal"),
+              ("milestone", "weekly milestone tier"), ("log", "Achievement Log level"))
+    parts = [counted(claimed[kind], label) if label else
+             f"Claim All on the daily schedule{'' if claimed[kind] == 1 else ' ' + counted(claimed[kind], 'time')}"
+             for kind, label in labels if claimed[kind]]
     categories = claimed["category"]
     achievements = f"Claim All in {categories} categor{'ies' if categories != 1 else 'y'}" if categories else "nothing to claim"
-    return f"Activity: {', '.join(parts) if parts else 'nothing to claim'}; Achievements: {achievements}"
+    summary = f"Activity: {', '.join(parts) if parts else 'nothing to claim'}; Achievements: {achievements}"
+    carnival = claims["carnival"]
+    if carnival is not None:
+        summary += "; " + (carnival if carnival != "visited" else
+                           f"Carnival: {counted(claimed['carnival'], 'attendance day') if claimed['carnival'] else 'nothing to claim'}")
+    if claims["captain"] == "visited":
+        summary += f"; The Path of a Captain: {counted(claimed['captain'], 'tier') if claimed['captain'] else 'nothing to claim'}"
+    return summary
 
 
 def park_active(task):
@@ -1719,13 +1940,50 @@ def handle_daily_event_page(task):
     return press_once(task, PAGE_LEAVE)
 
 
+def handle_daily_captain_page(task):
+    """Claim each reached tier on The Path of a Captain, then hand the Event list over to Dream Park.
+
+    Only a tier whose button reads `Claim Reward` is pressed; `Claimed` and `Insufficient level` are left. Once nothing
+    reads ready, the page is the Event list's to work on, which opens Dream Park from it.
+    """
+    if showing(task, CAPTAIN_TITLE) is None or showing(task, EVENT_TITLE) is None:
+        return False
+    claims = claims_state(task)
+    if not park_active(task) or claims["captain"] is not None:
+        return False
+    shown_for = arrive_claim_screen(task, "captain page", (MENU, EVENT, CAPTAIN_ENTRY))
+    waiting = claim_outcome(task)
+    if waiting is not None:
+        return waiting
+    if shown_for < SETTLE:
+        return True
+    settle_recount(task, ("captain",))
+    ready = captain_claims(task)
+    if ready:
+        return press_claim(task, CAPTAIN_CLAIM, "captain", ready[0], len(ready))
+    claims["captain"] = "visited"
+    return False
+
+
 def handle_daily_event_list(task):
-    """Open Dream Park from the Event list, which opens on another event, or end the step quietly when it is not listed."""
+    """Open The Path of a Captain, then Dream Park, from the Event list, which opens on another event.
+
+    A list without The Path of a Captain goes straight on to Dream Park, and one without Dream Park ends the step quietly.
+    """
     if showing(task, EVENT_TITLE) is None or showing(task, EVENT_HEADING) is None:
         return False
     shown_for = arrive(task, "event list")
     if not park_active(task):
         return press_once(task, EVENT_LEAVE)
+    claims = claims_state(task)
+    if claims["captain"] is None:
+        captain = text_in_region(task, CAPTAIN_ENTRY_TEXT, dream_park.EVENT_LIST_REGION)
+        if captain is not None:
+            return press_once(task, CAPTAIN_ENTRY, captain)
+        if shown_for < SETTLE:
+            return True
+        task.log_info("The Path of a Captain is not in the Event list, so its tiers are skipped")
+        claims["captain"] = "not listed"
     entry = dream_park.event_entry(task)
     if entry is not None:
         return press_once(task, DREAM_PARK, entry)
@@ -1762,24 +2020,37 @@ def handle_daily_lobby_menu(task):
     if not on_menu(task):
         return False
     step = pending_step(task)
-    caption = MENU_ENTRIES.get(step.menu_entry) if step is not None else None
+    entry = step.menu_entry if step is not None and step.menu_entry is not None else MENU_CLOSE
+    caption = MENU_ENTRIES.get(entry)
     box = showing(task, caption) if caption is not None else None
     if caption is not None and box is None:
         return handle_daily_unknown_screen(task)
     recognised(task)
-    return press(task, step.menu_entry if step is not None else MENU_CLOSE, box)
+    return press(task, entry, box)
 
 
 def handle_daily_lobby(task):
-    """Start the next chore from the Lobby, or finish once every chore is done."""
+    """Start the next chore from the Lobby, or finish once every chore is done.
+
+    The Carnival opens on its banner as OCR read it. A Lobby without the banner skips the chore, so the event ending
+    needs no date: no spot is ever tapped where the banner used to be.
+    """
     if not on_lobby(task):
         return False
     recognised(task)
     state = run_state(task)
     state["lobby_seen"] = time.monotonic()
     step = pending_step(task)
+    if step is not None and step.name == "carnival":
+        banner = showing(task, LOBBY_CARNIVAL)
+        if banner is not None:
+            return press(task, CARNIVAL_BANNER, banner)
+        task.log_info("the Lobby shows no Nightmare Carnival banner, so its attendance is skipped")
+        end_carnival(task, "Nightmare Carnival is not running")
+        step = pending_step(task)
     if step is not None:
         return press(task, step.lobby_entry)
+    settle_recount(task)
     mail = "mail claimed" if state["mail"] == "claimed" else "no mail to claim"
     return stop(task, f"Daily finished: {mail}; {park_summary(state['park'])}; {claims_summary(state['claims'])}.")
 
@@ -1789,7 +2060,8 @@ def handle_daily_faded_lobby(task):
 
     Only on the faded Lobby's own scene, since a screen that reads nothing or a single line could be anything else, as a
     popup still loading. Moments after a Lobby read, with a chore pending, it gets the Menu tap the Lobby would get, which
-    brings the UI back or opens the menu. Without that read, as at a start on an idle Lobby, it gets the wake tap on open sky.
+    brings the UI back or opens the menu. Without that read, as at a start on an idle Lobby, or with the Carnival's
+    banner next, which only a read Lobby shows, it gets the wake tap on open sky.
     """
     if not reads_as_faded_lobby(task):
         return False
@@ -1799,7 +2071,7 @@ def handle_daily_faded_lobby(task):
     now = time.monotonic()
     seen = state["lobby_seen"]
     step = pending_step(task)
-    if seen is not None and now - seen < FADED_SECONDS and step is not None:
+    if seen is not None and now - seen < FADED_SECONDS and step is not None and TARGETS[step.lobby_entry] is not None:
         recognised(task)
         return press(task, step.lobby_entry)
     recognised(task)
@@ -1824,8 +2096,8 @@ def handle_daily_unknown_screen(task):
 # The run loop takes the first handler returning True. `remote` puts its handler first and `stuck_stop` its stop ahead
 # of the Rescue stop. Overlays come before what they cover, the banner's weak check after every text check, and the Lobby
 # last of the known screens, so a popup is never taken for a clean Lobby. The park's dialogs and stories come before the
-# panels under them, its panels before the park view drawn beside them, and Dream Park's page before the Event list it
-# sits in. None of upstream's generic handlers is here: its Lobby stop would end Daily on its first frame, and its blind
+# panels under them, its panels before the park view drawn beside them, and Dream Park's and The Path of a Captain's
+# pages before the Event list they sit in. None of upstream's generic handlers is here: its Lobby stop would end Daily on its first frame, and its blind
 # taps and centred Confirm press what Daily never reads.
 PAGE_HANDLERS = [
     handle_rescue_screen,
@@ -1837,6 +2109,7 @@ PAGE_HANDLERS = [
     handle_daily_activity,
     handle_daily_achievement_category,
     handle_daily_achievement_cards,
+    handle_daily_carnival,
     handle_daily_rules_dialog,
     handle_daily_profit_report,
     handle_daily_skip_dialog,
@@ -1849,6 +2122,7 @@ PAGE_HANDLERS = [
     handle_daily_park_view,
     handle_daily_park_achievements,
     handle_daily_event_page,
+    handle_daily_captain_page,
     handle_daily_event_list,
     handle_daily_notice,
     handle_daily_banner,
@@ -1866,9 +2140,10 @@ class DailyMode(TriggerTask):
         super().__init__(*args, **kwargs)
         self.name = "Daily"
         self.description = ("Start on the Lobby. Closes the entry popups, claims the daily attendance reward, all mail, the ready Activity rewards "
-                            "(Growth Guide, daily and weekly schedules, Achievement Log) and the ready achievements, then visits Nightmare "
-                            "Dream Park while it runs: ranks it up, builds and upgrades rides, buys its AI Automation and Another Happy Day "
-                            "skills with the park's own profit and claims its achievements. "
+                            "(Growth Guide, daily and weekly schedules, Achievement Log), the ready achievements and, while the Nightmare "
+                            "Carnival runs, its pending attendance days. Then opens the Event list, claims each reached tier of The Path of "
+                            "a Captain and visits Nightmare Dream Park while it runs: ranks it up, builds and upgrades rides, buys its AI "
+                            "Automation and Another Happy Day skills with the park's own profit and claims its achievements. "
                             "Stops on the Lobby. Presses nothing else.")
         self.trigger_interval = 1
         self.all_texts = []

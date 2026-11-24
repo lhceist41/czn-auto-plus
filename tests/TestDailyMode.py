@@ -1,10 +1,11 @@
-"""Check that Daily closes the Lobby's popups, claims attendance, all mail, Activity rewards and achievements, opens Dream Park and stops on the Lobby, pressing nothing else.
+"""Check that Daily closes the Lobby's popups, claims attendance, all mail, Activity rewards, achievements, the Carnival's attendance and The Path of a Captain's tiers, opens Dream Park and stops on the Lobby, pressing nothing else.
 
 The screens are the boxes OCR read off the Global client's Lobby, its entry banner and Notice board, the open menu, the
-Mail screen before and after Claim All, the Activity window's tabs, the Achievement screen, and Items Obtained, as the
-bot sees them once the catalog has mapped them, with the player's name left out. What Daily must never do: press a
-delete, the Shop, a purchase, Crystals, a price, Rescue or the game's quit button; press a claim that reads `Move`;
-press anything on a screen it does not know; run beside another mode. The park visit itself is checked in `TestDreamPark`.
+Mail screen before and after Claim All, the Activity window's tabs, the Achievement screen, the Nightmare Carnival,
+The Path of a Captain and Items Obtained, as the bot sees them once the catalog has mapped them, with the player's name
+left out. What Daily must never do: press a delete, the Shop, a purchase, Crystals, a price, Rescue or the game's quit
+button; press a claim that reads `Move`, the Carnival's Make-Up or `Go`; press anything on a screen it does not know; run
+beside another mode. The park visit itself is checked in `TestDreamPark`.
 """
 
 import ast
@@ -131,6 +132,80 @@ EVENT_LIST = (
     ("Poised Against the(", 0.103, 0.894),
 )
 EVENT_LIST_WITHOUT_PARK = tuple(box for box in EVENT_LIST if "Dream Park" not in box[0])
+# The Lobby while the Nightmare Carnival runs, its banner read at (0.101, 0.396).
+LOBBY_CARNIVAL = (
+    ('22', 0.055, 0.09), ('等级', 0.054, 0.049), ('N', 0.136, 0.032), ('240/240+', 0.698, 0.049), ('★', 0.778, 0.056),
+    ('E', 0.835, 0.048), ('0%', 0.103, 0.084), ('F2', 0.836, 0.077), ('F3', 0.898, 0.076), ('Q', 0.959, 0.076), ('故事', 0.884, 0.156),
+    ('Act', 0.744, 0.195), ('1-Chapter 2, Episode 2', 0.838, 0.194), ('0/1', 0.064, 0.262), ('1 time(s) at the Ark City Rese', 0.147, 0.234),
+    ('Sortie', 0.884, 0.266), ('O7d 9h', 0.046, 0.332), ('Simulation', 0.874, 0.353), ('Nightmare Carnival', 0.101, 0.396), ('N', 0.048, 0.439),
+    ('Chaos', 0.891, 0.442), ('F4', 0.036, 0.5), ('Awaiting policies 3', 0.854, 0.555), ('方舟城市', 0.883, 0.521), ('Combatants', 0.868, 0.617),
+    ('EVENT', 0.822, 0.704), ('营救', 0.887, 0.703), ('N', 0.049, 0.736), ('·C4>', 0.898, 0.73), ('28d 9h', 0.936, 0.832), ('Blazebell', 0.148, 0.925),
+    ('Rate up', 0.162, 0.892), ('UpontheSnW', 0.889, 0.925), ('APromrse', 0.894, 0.887),
+)
+# The Carnival on Attendance Check with days 3 to 5 pending; Items Obtained after one press on day 3; every reached
+# day claimed; the Exchange tab, its `Go` opening the shop.
+CARNIVAL = (
+    ('Nightmare Carnival', 0.169, 0.047), ('N', 0.973, 0.031), ('Nightmare Carnival Guide', 0.109, 0.168), ('Attendance', 0.795, 0.165),
+    ('Check', 0.929, 0.164), ('Event Description', 0.827, 0.229), ('7d 9h', 0.943, 0.231),
+    ("Captain! You'll come visit the Nightmare Carnival", 0.805, 0.282), ('every day, right?', 0.916, 0.317), ('Attendance Check', 0.108, 0.369),
+    ('Check-In Make-Up', 0.811, 0.398), ('Exchange', 0.109, 0.545), ('6', 0.705, 0.508), ('14', 0.951, 0.516), ('Parade', 0.109, 0.719),
+    ('Welcome Gift', 0.109, 0.894),
+)
+CARNIVAL_AFTER = (
+    ('Nightmare Carnival', 0.169, 0.047), ('N', 0.973, 0.031), ('Nightmare Carnival Guide', 0.109, 0.166), ('Attendance', 0.795, 0.165),
+    ('Check', 0.928, 0.163), ('Event Description', 0.827, 0.229), ('7d gh', 0.943, 0.231),
+    ("Captain! You'll come visit the Nightmare Carnival", 0.805, 0.282), ('every day, right?', 0.916, 0.317), ('Attendance Check', 0.109, 0.369),
+    ('Check-In Make-Up', 0.811, 0.398), ('Exchange', 0.109, 0.543), ('6', 0.705, 0.508), ('L', 0.952, 0.516), ('Parade', 0.109, 0.719),
+    ('2', 0.448, 0.726), ('Welcome Gift', 0.109, 0.894), ('+01110+', 0.781, 0.882),
+)
+CARNIVAL_ITEMS = (
+    ('Items Obtained', 0.502, 0.377), ('点击屏幕关闭窗口', 0.501, 0.934), ('进入', 0.5, 0.977),
+)
+CARNIVAL_EXCHANGE = (
+    ('Nightmare Carnival', 0.169, 0.048), ('N', 0.972, 0.029), ('个Nightmare Carnival Guide θ', 0.109, 0.168), ('Exchange', 0.906, 0.169),
+    ('Event Description', 0.827, 0.231), ('7d 9h', 0.943, 0.231), ('Attendance Check', 0.109, 0.369), ('05', 0.651, 0.331), ('06', 0.805, 0.327),
+    ('07', 0.959, 0.33), ('02', 0.356, 0.416), ('03', 0.43, 0.416), ('04', 0.505, 0.415), ('-', 0.75, 0.409), ('Exchange', 0.109, 0.544),
+    ('2', 0.279, 0.619), ('1st Nightmare Card', 0.607, 0.671), ('[Partner]', 0.606, 0.701), ('1st Nightmare Card', 0.76, 0.673),
+    ('Parade', 0.109, 0.72), ('GEENE', 0.397, 0.707), ('[Combatant]', 0.759, 0.7), ('300-1000', 0.297, 0.782), ('-2000-4000', 0.433, 0.783),
+    ('7000', 0.603, 0.782), ('10000', 0.76, 0.782), ('15000', 0.915, 0.783), ('Until Next Reward', 0.474, 0.846), ('0/300', 0.643, 0.846),
+    ('Go', 0.954, 0.845), ('Welcome Gift', 0.11, 0.894),
+    ('* When purchasing products eligible for [Nightmare Tokens], [Nightmare Tokens] will be sent via in-game mail along with the', 0.605, 0.906),
+    ('product.', 0.603, 0.933), ('If event rewards have been claimed, refunds for the purchased product may be restricted.', 0.604, 0.962),
+)
+# Where the Carnival crops were cut: the day bars under the cards, x 384-1920 and y 918-1004 of a 1080p capture.
+CARNIVAL_CROP = (0.20, 0.85, 1.0, 0.93)
+# The Path of a Captain with the Lv 20 tier ready; Items Obtained after its claim; the tier claimed; and the same on a
+# client whose list no longer has Dream Park.
+CAPTAIN = (
+    ('Event', 0.108, 0.047), ('N', 0.972, 0.03), ('→ Recommended Events', 0.091, 0.138), ('N', 0.214, 0.111),
+    ('The Path of a Captain', 0.823, 0.166), ('ritation to a New Jol', 0.101, 0.27), ('Event Description', 0.791, 0.232),
+    ('O Permanent', 0.924, 0.231), ('achieve outstanding results deserve rewards fitting their', 0.773, 0.315),
+    ('Captains who lead the charge in exploring Chaos and', 0.784, 0.281), ('efforts. Build your expertise as a captain and earn', 0.798, 0.349),
+    ('okie Captain Missio', 0.102, 0.395), ('generous rewards.', 0.909, 0.385), ('Current Level 22', 0.91, 0.458),
+    ('The Path of aCaptain', 0.11, 0.519), ('?', 0.605, 0.514), ('N', 0.179, 0.576), ('ghtmare Dream Parl', 0.101, 0.644), ('LEVEL', 0.302, 0.617),
+    ('10', 0.303, 0.658), ('20', 0.453, 0.659), ('LEVEL', 0.452, 0.616), ('30', 0.604, 0.66), ('LEVEL', 0.604, 0.618), ('40', 0.756, 0.658),
+    ('LEVEL', 0.755, 0.618), ('50', 0.906, 0.657), ('LEVEL', 0.906, 0.617), ('Promise Upon the S', 0.099, 0.77), ('15', 0.651, 0.813),
+    ('10', 0.739, 0.813), ('20', 0.802, 0.813), ('10', 0.891, 0.813), ('20', 0.954, 0.813), ('ade Poised Against 1', 0.101, 0.894),
+    ('Claimed', 0.302, 0.913), ('Claim Reward', 0.453, 0.914), ('Insufficient level', 0.605, 0.914), ('Insufficient level', 0.755, 0.914),
+    ('Insufficient level', 0.906, 0.914), ('N', 0.178, 0.95),
+)
+CAPTAIN_ITEMS = (
+    ('Items Obtained', 0.502, 0.377), ('5', 0.486, 0.566), ('10', 0.573, 0.567), ('V', 0.499, 0.887), ('点击屏幕关闭窗口', 0.501, 0.935), ('进入', 0.5, 0.979),
+)
+CAPTAIN_AFTER = (
+    ('Event', 0.108, 0.047), ('N', 0.972, 0.03), ('→ Recommended Events', 0.091, 0.138), ('N', 0.214, 0.111),
+    ('The Path of a Captain', 0.823, 0.166), ('n to a New Journey', 0.099, 0.27), ('Event Description', 0.791, 0.231), ('O Permanent', 0.924, 0.231),
+    ('achieve outstanding results deserve rewards fitting their', 0.773, 0.315),
+    ('Captains who lead the charge in exploring Chaos and', 0.786, 0.281), ('efforts. Build your expertise as a captain and earn', 0.799, 0.35),
+    ('kie Captain Mission', 0.101, 0.394), ('generous rewards.', 0.909, 0.385), ('Current Level 22', 0.91, 0.458),
+    ('The Path of aCaptain', 0.11, 0.519), ('N', 0.179, 0.576), ('htmare Dream Park', 0.101, 0.644), ('LEVEL', 0.302, 0.617), ('10', 0.303, 0.658),
+    ('20', 0.453, 0.658), ('LEVEL', 0.453, 0.617), ('30', 0.604, 0.66), ('LEVEL', 0.604, 0.618), ('40', 0.755, 0.658), ('LEVEL', 0.755, 0.618),
+    ('50', 0.907, 0.659), ('LEVEL', 0.906, 0.618), ('lise Upon the Snow', 0.101, 0.771), ('15', 0.651, 0.813), ('10', 0.739, 0.813),
+    ('20', 0.802, 0.813), ('10', 0.891, 0.813), ('20', 0.953, 0.813), ('d Against the Cycle', 0.101, 0.894), ('Claimed', 0.302, 0.913),
+    ('Claimed', 0.454, 0.913), ('Insufficient level', 0.605, 0.914), ('Insufficient level', 0.755, 0.914), ('Insufficient level', 0.906, 0.914),
+    ('-', 0.104, 0.958), ('N', 0.178, 0.95),
+)
+CAPTAIN_WITHOUT_PARK = tuple(box for box in CAPTAIN_AFTER if "Dream Park" not in box[0])
 # 266, the Graphic Settings page, a screen Daily has no business on.
 SETTINGS = (
     ("Graphic Settings", 0.184, 0.091), (":X", 0.932, 0.091), ("Graphics", 0.138, 0.172), ("Image Quality", 0.161, 0.233), ("High", 0.797, 0.234),
@@ -292,6 +367,66 @@ LOG_LV19 = (
     ("…", 0.800, 0.802), ("1", 0.390, 0.843), ("6", 0.532, 0.844), ("10", 0.599, 0.844), ("5", 0.673, 0.844), ("1", 0.745, 0.844),
     ("EPEnFi", 0.947, 0.965),
 )
+# The weekly schedule with two goals achieved; after one press took both, tiers 100 and 200 reached; Items Obtained
+# after one press took both tiers; both tiers ticked. The Achievement Log with levels 20, 21 and 22 ready (20 read as
+# `2ǔ`), and after one press took all three.
+WEEKLY_TWO_GOALS = (
+    ('Weekly Schedule', 0.184, 0.112), ('①5d 4h until Weekly Schedule resets', 0.774, 0.108), ('1', 0.056, 0.225), ('15', 0.394, 0.256),
+    ('200', 0.451, 0.255), ('100', 0.406, 0.301), ('15', 0.523, 0.248), ('200', 0.59, 0.255), ('15', 0.665, 0.249), ('200', 0.731, 0.255),
+    ('15', 0.814, 0.256), ('200', 0.872, 0.256), ('200', 0.546, 0.302), ('400', 0.687, 0.303), ('600', 0.827, 0.303), ('7', 0.057, 0.34),
+    ('G', 0.178, 0.344), ('Weekly Schedule Progress', 0.174, 0.516), ('Total login days: 1', 0.374, 0.512), ('0/1000', 0.176, 0.56),
+    ('time(s)', 0.525, 0.546), ('Clear Chaos 2', 0.553, 0.511), ('the café', 0.726, 0.55), ('Order 2 time(s) at', 0.762, 0.511),
+    ('Consuml', 0.923, 0.55), ('Aether', 0.916, 0.512), ('1/1', 0.318, 0.641), ('212', 0.515, 0.642), ('0/2', 0.71, 0.641),
+    ('240/ 640', 0.922, 0.642), ('Operation Disks Owned', 0.176, 0.71), ('400', 0.225, 0.764), ('✨', 0.534, 0.741), ('100', 0.353, 0.78),
+    ('120', 0.549, 0.779), ('100', 0.744, 0.782), ('100', 0.94, 0.783), ('Mission Records Shop', 0.188, 0.845), ('Goal Achieved', 0.388, 0.869),
+    ('Goal Achieved', 0.584, 0.869), ('Move', 0.811, 0.868),
+)
+WEEKLY_TWO_TIERS = (
+    ('I Weekly Schedule', 0.184, 0.111), ('①5d 4h until Weekly Schedule resets', 0.774, 0.108), ('1', 0.056, 0.226), ('15', 0.394, 0.256),
+    ('-200', 0.449, 0.254), ('10', 0.407, 0.317), ('5', 0.521, 0.246), ('-200', 0.589, 0.254), ('5', 0.665, 0.248), ('200', 0.731, 0.255),
+    ('15', 0.814, 0.256), ('200', 0.871, 0.256), ('200', 0.546, 0.302), ('0-', 0.548, 0.334), ('400', 0.687, 0.302), ('600', 0.827, 0.302),
+    ('7', 0.057, 0.34), ('Weekly Schedule Progress', 0.174, 0.516), ('the café', 0.334, 0.549), ('Order 2 time(s) at', 0.372, 0.509),
+    ('Aether', 0.525, 0.511), ('Consumption: 640', 0.569, 0.548), ('Approve Ark City', 0.76, 0.511), ('220/1000', 0.176, 0.56),
+    ('Policies 10 time(s)', 0.764, 0.549), ('Schedule', 0.924, 0.549), ('Cumulati', 0.924, 0.511), ('Progress', 0.923, 0.588), ('0/2', 0.32, 0.641),
+    ('240/640', 0.532, 0.642), ('0/ 10', 0.713, 0.642), ('100/400', 0.922, 0.643), ('Operation Disks Owned', 0.176, 0.71), ('400', 0.225, 0.764),
+    ('✨', 0.534, 0.741), ('100', 0.352, 0.781), ('100', 0.549, 0.782), ('100', 0.744, 0.782), ('100', 0.94, 0.783),
+    ('Mission Records Shop', 0.188, 0.845), ('D', 0.311, 0.867), ('Move', 0.42, 0.868), ('Move', 0.615, 0.868), ('D', 0.703, 0.867),
+    ('Move', 0.811, 0.869), ('D', 0.895, 0.867),
+)
+MILESTONE_ITEMS = (
+    ('Items Obtained', 0.502, 0.377), ('30', 0.483, 0.567), ('400', 0.566, 0.568), ('V', 0.5, 0.885), ('点击屏幕关闭窗口', 0.501, 0.935), ('进入', 0.5, 0.977),
+)
+WEEKLY_TIERS_TAKEN = (
+    ('I Weekly Schedule', 0.184, 0.111), ('①5d 4h until Weekly Schedule resets', 0.774, 0.108), ('1', 0.057, 0.226), ('15', 0.394, 0.256),
+    ('200', 0.449, 0.255), ('15', 0.535, 0.255), ('200', 0.59, 0.254), ('15', 0.665, 0.248), ('200', 0.731, 0.255), ('15', 0.814, 0.256),
+    ('200', 0.871, 0.256), ('100', 0.406, 0.303), ('200', 0.546, 0.303), ('0', 0.404, 0.335), ('0', 0.545, 0.335), ('400', 0.687, 0.302),
+    ('600', 0.827, 0.302), ('Weekly Schedule Progress', 0.174, 0.516), ('the café', 0.334, 0.549), ('Order 2 time(s) at', 0.372, 0.509),
+    ('Aether', 0.525, 0.511), ('Consumption: 640', 0.569, 0.548), ('Approve Ark City', 0.76, 0.511), ('220/1000', 0.176, 0.56),
+    ('Policies 10 time(s)', 0.764, 0.549), ('Schedule', 0.924, 0.549), ('Cumulati', 0.924, 0.511), ('Progress', 0.923, 0.588), ('口', 0.031, 0.639),
+    ('0/2', 0.32, 0.641), ('240/640', 0.532, 0.642), ('0/ 10', 0.713, 0.642), ('100/400', 0.922, 0.643), ('Operation Disks Owned', 0.176, 0.71),
+    ('800', 0.225, 0.764), ('✨', 0.534, 0.741), ('100', 0.352, 0.781), ('100', 0.549, 0.782), ('100', 0.744, 0.782), ('100', 0.94, 0.783),
+    ('Mission Records Shop', 0.188, 0.844), ('D', 0.311, 0.867), ('Move', 0.42, 0.868), ('Move', 0.615, 0.868), ('D', 0.703, 0.867),
+    ('Move', 0.811, 0.868),
+)
+LOG_THREE = (
+    ('|Achievement Log', 0.182, 0.113), ('2ǔ', 0.272, 0.292), ('6', 0.531, 0.331), ('6', 0.603, 0.331), ('200,000', 0.723, 0.332),
+    ('Simulation Stage 3 unlocks upon clearing the promotion mission', 0.433, 0.393), ('Intermediate Captain', 0.736, 0.393), ('21', 0.271, 0.506),
+    ('6', 0.39, 0.544), ('6', 0.46, 0.544), ('10', 0.528, 0.544), ('5', 0.603, 0.544), ('1', 0.673, 0.543), ('200,000', 0.723, 0.544),
+    ('22', 0.272, 0.655), ('1', 0.389, 0.693), ('18', 0.457, 0.694), ('6', 0.532, 0.695), ('10', 0.598, 0.693), ('5', 0.673, 0.695),
+    ('1', 0.745, 0.695), ('$2\\$', 0.272, 0.805), ('……', 0.8, 0.801), ('6', 0.46, 0.844), ('6', 0.532, 0.844), ('6', 0.602, 0.844),
+    ('10', 0.67, 0.844), ('5', 0.745, 0.844),
+)
+LOG_THREE_TAKEN = (
+    ('|Achievement Log', 0.182, 0.112), ('23', 0.272, 0.292), ('…', 0.799, 0.288), ('7', 0.057, 0.339), ('1', 0.39, 0.331), ('6', 0.461, 0.331),
+    ('6', 0.532, 0.331), ('6', 0.603, 0.331), ('10', 0.67, 0.331), ('5', 0.745, 0.331), ('24', 0.272, 0.455), ('等级', 0.272, 0.424),
+    ('…', 0.799, 0.438), ('18', 0.385, 0.48), ('6', 0.461, 0.481), ('6', 0.532, 0.481), ('10', 0.598, 0.48), ('5', 0.673, 0.481),
+    ('200,000', 0.724, 0.481), ('25', 0.272, 0.606), ('等级', 0.272, 0.575), ('300', 0.382, 0.631), ('5', 0.461, 0.631), ('18', 0.53, 0.631),
+    ('16', 0.601, 0.631), ('12', 0.671, 0.631), ('250,000', 0.724, 0.631), ('26', 0.272, 0.756), ('等级', 0.272, 0.724), ('D', 0.508, 0.731),
+    ('16', 0.456, 0.779), ('16', 0.529, 0.781), ('16', 0.599, 0.781), ('16', 0.669, 0.78), ('8', 0.745, 0.781),
+)
+# Where the weekly and log crops were cut: both goal cards, the milestone labels, and the log's claim column.
+GOALS_CROP = (0.30, 0.84, 0.66, 0.90)
+LOG_COLUMN_CROP = (0.77, 0.22, 0.83, 0.97)
 # 972, the Achievement screen's four category cards.
 ACHIEVEMENT_CARDS = (
     ("Achievement", 0.143, 0.048), ("1", 0.907, 0.037), ("Journey Log", 0.141, 0.689), ("Exploration", 0.381, 0.674), ("Attitude", 0.379, 0.703),
@@ -415,6 +550,12 @@ POINTS = {
     daily.CATEGORY_CLAIM: (0.910, 0.163),
     daily.CARDS_LEAVE: (0.041, 0.046),
     daily.CATEGORY_LEAVE: (0.041, 0.046),
+    daily.CARNIVAL_BANNER: (0.101, 0.396),
+    daily.CARNIVAL_TAB: (0.120, 0.330),
+    daily.CARNIVAL_DAY: (0.305, 0.885),
+    daily.CARNIVAL_LEAVE: (0.041, 0.046),
+    daily.CAPTAIN_ENTRY: (0.102, 0.519),
+    daily.CAPTAIN_CLAIM: (0.453, 0.914),
 }
 # What Daily must never press, by where it sits. Power is the icon's centre in 265 (rows 972-1022 of 1080) and the
 # `End` key label under it in 273. Skip Tutorial is a box over three targets, not a point: `TestTutorial` covers it.
@@ -445,6 +586,15 @@ NEVER = {
     "the daily schedule's play arrow": (0.908, 0.406),
     "the Mission Records Shop": (0.188, 0.844),
     "a weekly goal's Move": (0.615, 0.868),
+    "the Carnival's Check-In Make-Up": (0.811, 0.398),
+    "the Carnival's Make-Up +": (0.940, 0.400),
+    "the Carnival Exchange's Go": (0.954, 0.845),
+    "the Carnival's Exchange tab": (0.120, 0.500),
+    "the Carnival's Parade tab": (0.120, 0.700),
+    "the Carnival's Welcome Gift tab": (0.120, 0.880),
+    "the Carnival's home": (0.898, 0.046),
+    "a claimed Path of a Captain tier": (0.302, 0.913),
+    "a Path of a Captain tier still locked": (0.605, 0.914),
 }
 # How close a tap may come to a point before it counts as pressing it: about 19 px across and 11 px down at 1080p. The
 # banner's dots sit 0.015 left of where the Lobby's Menu is tapped, but only on the banner, where Daily taps the X instead.
@@ -461,6 +611,7 @@ OWN = (
     daily.handle_daily_activity,
     daily.handle_daily_achievement_category,
     daily.handle_daily_achievement_cards,
+    daily.handle_daily_carnival,
     daily.handle_daily_rules_dialog,
     daily.handle_daily_profit_report,
     daily.handle_daily_skip_dialog,
@@ -473,6 +624,7 @@ OWN = (
     daily.handle_daily_park_view,
     daily.handle_daily_park_achievements,
     daily.handle_daily_event_page,
+    daily.handle_daily_captain_page,
     daily.handle_daily_event_list,
     daily.handle_daily_notice,
     daily.handle_daily_banner,
@@ -555,13 +707,17 @@ CATEGORIES_NOTHING = ((CATEGORY_JOURNEY_DONE, placed("achievement_claim_all_grey
                       (CATEGORY_OVERCOMING_DONE, placed("achievement_claim_all_greyed", CATEGORY_CROP)))
 SETTLED = daily.SETTLE + 1
 # The chores before the park.
-BEFORE_PARK = ("mail", "activity", "achievement")
+BEFORE_PARK = ("mail", "activity", "achievement", "carnival")
 # The two claim chores from the open menu with nothing ready, back to the Lobby, whose Menu is pressed for the park. Only
 # the tabs, the card and the exits are pressed.
 NOTHING_TO_CLAIM = ([MENU] + [GUIDE_NOTHING] * SETTLED + [SCHEDULE_NOTHING] * SETTLED + [WEEKLY_NOTHING] * SETTLED + [LOG_NOTHING] * SETTLED
                     + [LOBBY, MENU, ACHIEVEMENT_CARDS] + [screen for screen in CATEGORIES_NOTHING for _ in range(SETTLED)] + [ACHIEVEMENT_CARDS, LOBBY])
 NOTHING_TO_CLAIM_PRESSES = (daily.ACTIVITY, daily.SCHEDULE_TAB, daily.WEEKLY_TAB, daily.LOG_TAB, daily.ACTIVITY_CLOSE, daily.MENU,
                             daily.ACHIEVEMENT_ENTRY, daily.JOURNEY_CARD, *daily.CATEGORY_TABS[1:], daily.CATEGORY_LEAVE, daily.CARDS_LEAVE, daily.MENU)
+# The park step from the open menu on a client whose Event list no longer has Dream Park: The Path of a Captain is
+# opened first, with nothing ready, then the list is left.
+NO_PARK_ROUTE = [MENU, EVENT_LIST_WITHOUT_PARK] + [CAPTAIN_WITHOUT_PARK] * SETTLED
+NO_PARK_ROUTE_PRESSES = (daily.EVENT, daily.CAPTAIN_ENTRY, daily.EVENT_LEAVE)
 
 
 class Clock:
@@ -687,11 +843,12 @@ class Daily(unittest.TestCase):
         self.state()["mail"] = mail
 
     def to_park(self):
-        """Count the chores before the park as done, the mail claimed."""
+        """Count the chores before the park as done, the mail claimed, and The Path of a Captain as not in the Event list."""
         steps = self.state()["steps"]
         for step in BEFORE_PARK:
             steps[step] = daily.DONE
         self.state()["mail"] = "claimed"
+        self.state()["claims"]["captain"] = "not listed"
 
     def assertPressed(self, *targets):
         """Check the taps were exactly these targets, in order."""
@@ -919,11 +1076,10 @@ class TestAttendance(Daily):
 
     def test_the_popup_after_the_mail_is_claimed_and_the_run_goes_on_to_the_park(self):
         """The live order: the Mail popup's X opens the attendance popup, and its X lands on the Lobby."""
-        no_park = [MENU] + [EVENT_LIST_WITHOUT_PARK] * (daily.SETTLE + 1)
         self.run_screens([LOBBY, MENU, MAIL, ITEMS, MAIL_AFTER, ATTENDANCE, ATTENDANCE_ITEMS] + [ATTENDANCE_STAMPED] * (daily.CLAIM_WAIT - 1)
-                         + [LOBBY] + NOTHING_TO_CLAIM + no_park + [LOBBY])
+                         + [LOBBY] + NOTHING_TO_CLAIM + NO_PARK_ROUTE + [LOBBY])
         self.assertPressed(daily.MENU, daily.ENVELOPE, daily.CLAIM_ALL, daily.ITEMS_CLOSE, daily.MAIL_CLOSE, daily.ATTENDANCE_CLAIM,
-                           daily.ITEMS_CLOSE, daily.ATTENDANCE_CLOSE, daily.MENU, *NOTHING_TO_CLAIM_PRESSES, daily.EVENT, daily.EVENT_LEAVE)
+                           daily.ITEMS_CLOSE, daily.ATTENDANCE_CLOSE, daily.MENU, *NOTHING_TO_CLAIM_PRESSES, *NO_PARK_ROUTE_PRESSES)
         self.assertNothingForbidden()
         self.assertStopped("Daily finished: mail claimed; Dream Park is not running")
 
@@ -944,7 +1100,10 @@ class TestLobbyAndMenu(Daily):
         self.assertStopped("Daily finished: mail claimed")
 
     def test_the_menu_opens_each_chore_while_pending_and_closes_once_done_never_shop_or_power(self):
-        """5: on the plain menu and on the one with its key labels on, Activity and Achievement pressed on the boxes OCR read."""
+        """5: on the plain menu and on the one with its key labels on, Activity and Achievement pressed on the boxes OCR read.
+
+        The Carnival opens from the Lobby's banner, so with it next the menu is closed.
+        """
         for screen in (MENU, MENU_KEYS):
             with self.subTest(keys=screen is MENU_KEYS):
                 self.task = Task()
@@ -954,7 +1113,7 @@ class TestLobbyAndMenu(Daily):
                     self.assertTrue(run_pass(self.task))
                 self.finish_chores()
                 self.assertTrue(run_pass(self.task))
-                self.assertPressed(daily.ENVELOPE, daily.ACTIVITY, daily.ACHIEVEMENT_ENTRY, daily.EVENT, daily.MENU_CLOSE)
+                self.assertPressed(daily.ENVELOPE, daily.ACTIVITY, daily.ACHIEVEMENT_ENTRY, daily.MENU_CLOSE, daily.EVENT, daily.MENU_CLOSE)
                 self.assertNothingForbidden()
 
     def test_the_lobby_is_not_read_under_the_open_menu(self):
@@ -1325,7 +1484,8 @@ class TestStops(Daily):
     def test_the_limits_are_as_designed(self):
         special = {daily.CLAIM_ALL: 2, daily.ATTENDANCE_CLAIM: 2, daily.WAKE: 2, daily.RANK_UP: 2, daily.UPGRADE: 200, daily.CLAIM: 30, daily.SKIP_TICK: 1,
                    daily.SKILL_UPGRADE: 30, daily.HAPPY_DAY_UPGRADE: 30, daily.GUIDE_CLAIM: 15, daily.SCHEDULE_CLAIM: 2, daily.GOAL_CLAIM: 6,
-                   daily.MILESTONE_CLAIM: 2, daily.LOG_CLAIM: 2, daily.CATEGORY_CLAIM: 2}
+                   daily.MILESTONE_CLAIM: 2, daily.LOG_CLAIM: 2, daily.CATEGORY_CLAIM: 2, daily.CARNIVAL_TAB: 2, daily.CARNIVAL_DAY: 2,
+                   daily.CAPTAIN_CLAIM: 6}
         self.assertEqual({target: special.get(target, 3) for target in POINTS}, daily.TAP_LIMITS)
         self.assertEqual(set(POINTS), set(daily.TARGETS))
 
@@ -1434,8 +1594,8 @@ class TestRefusals(Daily):
 class TestWholeRun(Daily):
 
     # The park step after the mail, on a client whose Event list no longer has Dream Park.
-    NO_PARK = NOTHING_TO_CLAIM + [MENU] + [EVENT_LIST_WITHOUT_PARK] * (daily.SETTLE + 1)
-    NO_PARK_PRESSES = (daily.MENU, *NOTHING_TO_CLAIM_PRESSES, daily.EVENT, daily.EVENT_LEAVE)
+    NO_PARK = NOTHING_TO_CLAIM + NO_PARK_ROUTE
+    NO_PARK_PRESSES = (daily.MENU, *NOTHING_TO_CLAIM_PRESSES, *NO_PARK_ROUTE_PRESSES)
 
     def run_screens(self, screens):
         for screen in screens:
@@ -1631,7 +1791,8 @@ class TestActivity(Claims):
         self.on_step("activity")
 
     def test_every_tab_is_claimed_in_turn_then_the_window_is_closed(self):
-        """Six claims in one run, each closing its own Items Obtained, and a weekly goal counted by its progress rising."""
+        """Six claims in one run, each closing its own Items Obtained, a weekly goal counted by its card leaving, and one
+        milestone press counted as both tiers it took."""
         self.run_screens([GUIDE_READY] * SETTLED + [CLAIM_ITEMS] + [GUIDE_STAGE_READY] * SETTLED + [CLAIM_ITEMS] + [GUIDE_NOTHING] * SETTLED
                          + [SCHEDULE_READY] * SETTLED + [CLAIM_ITEMS] + [SCHEDULE_NOTHING] * SETTLED
                          + [WEEKLY_GOAL_READY] * SETTLED + [(WEEKLY_AFTER, WEEKLY_MILESTONES_READY[1])] * daily.CLAIM_WAIT + [CLAIM_ITEMS]
@@ -1642,7 +1803,7 @@ class TestActivity(Claims):
         self.assertNothingForbidden()
         self.assertEqual(0, self.task.disabled)
         self.assertEqual(daily.DONE, self.state()["steps"]["activity"])
-        self.assertEqual({"guide": 1, "stage": 1, "schedule": 1, "goal": 1, "milestone": 1, "log": 1}, dict(self.state()["claims"]["claimed"]))
+        self.assertEqual({"guide": 1, "stage": 1, "schedule": 1, "goal": 1, "milestone": 2, "log": 1}, dict(self.state()["claims"]["claimed"]))
 
     def test_four_claims_in_a_row_each_close_their_items_obtained(self):
         """The caption's run limit of 3 counts afresh on the Activity window, so a fourth claim is not cut short."""
@@ -1702,7 +1863,7 @@ class TestActivity(Claims):
         self.state()["claims"]["phase"] = daily.ACTIVITY_PHASES.index(daily.SCHEDULE)
         self.run_screens([SCHEDULE_READY] * (SETTLED + 2 * daily.CLAIM_WAIT))
         self.assertPressed(daily.SCHEDULE_CLAIM, daily.SCHEDULE_CLAIM)
-        self.assertStopped("two Activity or Achievement claims in a row opened nothing")
+        self.assertStopped("two claims in a row opened nothing")
 
     def test_a_goal_that_stays_in_its_row_counts_as_a_claim_that_opened_nothing(self):
         """Neither the progress nor the goals changed: one claim that opened nothing, and the goal pressed once more."""
@@ -1783,20 +1944,19 @@ class TestAchievementScreen(Claims):
 class TestClaimsInTheRun(Claims):
 
     def test_mail_then_the_claims_then_the_park_and_the_finish_line_names_each_claim(self):
-        no_park = [MENU] + [EVENT_LIST_WITHOUT_PARK] * SETTLED
         self.run_screens([LOBBY, MENU, (MAIL, claim_all(lit=True)), ITEMS, (MAIL_AFTER, claim_all(lit=False)), LOBBY, MENU]
                          + [GUIDE_READY] * SETTLED + [CLAIM_ITEMS] + [GUIDE_NOTHING] * SETTLED + [SCHEDULE_READY] * SETTLED + [CLAIM_ITEMS]
                          + [SCHEDULE_NOTHING] * SETTLED + [WEEKLY_NOTHING] * SETTLED + [LOG_NOTHING] * SETTLED
                          + [LOBBY, MENU, ACHIEVEMENT_CARDS] + [CATEGORY_READY] * SETTLED + [CLAIM_ITEMS]
-                         + [screen for screen in CATEGORIES_NOTHING for _ in range(SETTLED)] + [ACHIEVEMENT_CARDS, LOBBY] + no_park + [LOBBY])
+                         + [screen for screen in CATEGORIES_NOTHING for _ in range(SETTLED)] + [ACHIEVEMENT_CARDS, LOBBY] + NO_PARK_ROUTE + [LOBBY])
         self.assertPressed(daily.MENU, daily.ENVELOPE, daily.CLAIM_ALL, daily.ITEMS_CLOSE, daily.MAIL_CLOSE, daily.MENU, daily.ACTIVITY,
                            daily.GUIDE_CLAIM, daily.ITEMS_CLOSE, daily.SCHEDULE_TAB, daily.SCHEDULE_CLAIM, daily.ITEMS_CLOSE, daily.WEEKLY_TAB,
                            daily.LOG_TAB, daily.ACTIVITY_CLOSE, daily.MENU, daily.ACHIEVEMENT_ENTRY, daily.JOURNEY_CARD, daily.CATEGORY_CLAIM,
-                           daily.ITEMS_CLOSE, *daily.CATEGORY_TABS[1:], daily.CATEGORY_LEAVE, daily.CARDS_LEAVE, daily.MENU, daily.EVENT,
-                           daily.EVENT_LEAVE)
+                           daily.ITEMS_CLOSE, *daily.CATEGORY_TABS[1:], daily.CATEGORY_LEAVE, daily.CARDS_LEAVE, daily.MENU,
+                           *NO_PARK_ROUTE_PRESSES)
         self.assertNothingForbidden()
-        self.assertStopped("Daily finished: mail claimed; Dream Park is not running; Activity: 1 Growth Guide card, 1 daily schedule claim; "
-                           "Achievements: Claim All in 1 category.")
+        self.assertStopped("Daily finished: mail claimed; Dream Park is not running; Activity: 1 Growth Guide card, Claim All on the daily schedule; "
+                           "Achievements: Claim All in 1 category; Nightmare Carnival is not running; The Path of a Captain: nothing to claim.")
 
     def test_negative_control_everything_greyed_presses_only_the_tabs_the_card_and_the_exits(self):
         self.on_step("activity")
@@ -1806,7 +1966,7 @@ class TestClaimsInTheRun(Claims):
         self.assertEqual(0, self.task.disabled)
         self.finish_chores()
         run_pass(self.task.show(LOBBY))
-        self.assertStopped("Activity: nothing to claim; Achievements: nothing to claim.")
+        self.assertStopped("Activity: nothing to claim; Achievements: nothing to claim; Nightmare Carnival is not running.")
 
     def test_a_menu_whose_activity_does_not_read_presses_nothing_and_counts_as_unknown(self):
         self.on_step("activity")
@@ -1814,6 +1974,229 @@ class TestClaimsInTheRun(Claims):
         self.run_screens([unread] * (daily.UNKNOWN_SECONDS + 1))
         self.assertEqual([], self.task.clicks)
         self.assertStopped("Daily does not know this screen")
+
+
+CARNIVAL_PENDING = (CARNIVAL, placed("daily_carnival_days_pending", CARNIVAL_CROP))
+CARNIVAL_CLAIMED = (CARNIVAL_AFTER, placed("daily_carnival_days_claimed", CARNIVAL_CROP))
+CARNIVAL_ON_EXCHANGE = (CARNIVAL_EXCHANGE, placed("daily_carnival_exchange_bottom", CARNIVAL_CROP))
+# The pending bar's violet, HSV (133, 148, 215), as a BGR pixel.
+BAR_VIOLET = cv2.cvtColor(np.uint8([[[133, 148, 215]]]), cv2.COLOR_HSV2BGR)[0, 0]
+
+
+def bar_frame(*spans, colour=BAR_VIOLET):
+    """Give a frame with blocks of one colour where the Carnival's day bars sit, x spans as fractions."""
+    frame = np.zeros((HEIGHT, WIDTH, 3), dtype=np.uint8)
+    for left, right in spans:
+        frame[int(0.872 * HEIGHT):int(0.915 * HEIGHT), int(left * WIDTH):int(right * WIDTH)] = colour
+    return frame
+
+
+class TestCarnival(Claims):
+
+    def setUp(self):
+        super().setUp()
+        self.on_step("carnival")
+
+    def test_the_lobby_s_banner_opens_the_carnival(self):
+        self.assertTrue(run_pass(self.task.show(LOBBY_CARNIVAL)))
+        self.assertPressed(daily.CARNIVAL_BANNER)
+
+    def test_a_lobby_without_the_banner_skips_the_chore_and_goes_on_to_the_park(self):
+        self.assertTrue(run_pass(self.task.show(LOBBY)))
+        self.assertPressed(daily.MENU)
+        self.assertEqual(daily.DONE, self.state()["steps"]["carnival"])
+        self.assertEqual(0, self.task.disabled)
+        self.assertIn("Nightmare Carnival is not running", daily.claims_summary(self.state()["claims"]))
+
+    def test_another_banner_in_its_place_is_never_tapped(self):
+        """Once the event ends another banner takes its spot, and no date keeps the old spot tapped."""
+        self.assertTrue(run_pass(self.task.show(edited_text(LOBBY_CARNIVAL, "Nightmare Carnival", "Blazebell Rate up"))))
+        self.assertPressed(daily.MENU)
+
+    def test_every_pending_day_is_claimed_with_one_press_and_counted_from_the_bars_that_left(self):
+        """Days 3 to 5 pending, one press on day 3, Items Obtained, then every reached day claimed."""
+        self.run_screens([CARNIVAL_PENDING] * SETTLED + [CARNIVAL_ITEMS] + [CARNIVAL_CLAIMED] * SETTLED + [LOBBY])
+        self.assertPressed(daily.CARNIVAL_DAY, daily.ITEMS_CLOSE, daily.CARNIVAL_LEAVE, daily.MENU)
+        self.assertNothingForbidden()
+        self.assertEqual(0, self.task.disabled)
+        self.assertEqual(3, self.state()["claims"]["claimed"]["carnival"])
+        self.assertIn("Carnival: 3 attendance days", daily.claims_summary(self.state()["claims"]))
+
+    def test_with_every_day_claimed_no_day_is_pressed(self):
+        self.run_screens([CARNIVAL_CLAIMED] * SETTLED)
+        self.assertPressed(daily.CARNIVAL_LEAVE)
+        self.assertIn("Carnival: nothing to claim", daily.claims_summary(self.state()["claims"]))
+
+    def test_the_window_is_told_by_its_text_and_given_time_before_any_press(self):
+        self.run_screens([CARNIVAL_PENDING] * daily.SETTLE)
+        self.assertEqual([], self.task.clicks)
+        texts, frame = CARNIVAL_PENDING
+        unread = tuple(box for box in texts if box[0] not in ("Nightmare Carnival", "Attendance Check"))
+        self.assertFalse(daily.handle_daily_carnival(self.task.show(unread, frame)))
+        self.assertEqual([], self.task.clicks)
+
+    def test_a_window_that_does_not_read_is_left_with_a_note_and_daily_goes_on(self):
+        """Under a popup or after an OCR miss only the title or only the tab label reads: no day press and no stop, just the
+        back arrow once the window has had time, a note on the finish line, and the park's Menu next."""
+        texts, frame = CARNIVAL_PENDING
+        for caption in ("Attendance Check", "Nightmare Carnival"):
+            with self.subTest(missing=caption):
+                self.task = Task()
+                self.on_step("carnival")
+                unread = (tuple(box for box in texts if box[0] != caption), frame)
+                self.run_screens([LOBBY_CARNIVAL] + [unread] * (daily.CARNIVAL_UNREAD_WAIT + 1) + [LOBBY])
+                self.assertPressed(daily.CARNIVAL_BANNER, daily.CARNIVAL_LEAVE, daily.MENU)
+                self.assertNothingForbidden()
+                self.assertEqual(0, self.task.disabled)
+                self.assertEqual(daily.DONE, self.state()["steps"]["carnival"])
+                self.assertIn("Carnival: its window did not read", daily.claims_summary(self.state()["claims"]))
+
+    def test_on_another_tab_attendance_check_is_opened_and_make_up_and_go_are_never_pressed(self):
+        self.run_screens([CARNIVAL_ON_EXCHANGE] * SETTLED + [CARNIVAL_PENDING] * SETTLED + [CARNIVAL_ITEMS] + [CARNIVAL_CLAIMED] * SETTLED)
+        self.assertPressed(daily.CARNIVAL_TAB, daily.CARNIVAL_DAY, daily.ITEMS_CLOSE, daily.CARNIVAL_LEAVE)
+        self.assertNothingForbidden()
+
+    def test_a_tab_that_will_not_open_ends_the_chore_without_a_stop(self):
+        self.run_screens([CARNIVAL_ON_EXCHANGE] * (SETTLED + 2 * daily.NAV_WAIT))
+        self.assertPressed(daily.CARNIVAL_TAB, daily.CARNIVAL_TAB, daily.CARNIVAL_LEAVE)
+        self.assertEqual(0, self.task.disabled)
+        self.assertIn("Carnival: its Attendance Check did not open", daily.claims_summary(self.state()["claims"]))
+
+    def test_a_make_up_or_go_under_the_day_point_stops_daily_with_nothing_pressed(self):
+        texts, frame = CARNIVAL_PENDING
+        for word in ("Check-In Make-Up", "Go"):
+            with self.subTest(word=word):
+                self.task = Task()
+                self.on_step("carnival")
+                self.run_screens([(texts + ((word, *POINTS[daily.CARNIVAL_DAY]),), frame)] * SETTLED)
+                self.assertEqual([], self.task.clicks)
+                self.assertStopped(f"{daily.CARNIVAL_DAY} would have pressed {word!r}")
+
+    def test_off_the_chore_the_window_is_only_left(self):
+        self.finish_chores()
+        self.run_screens([CARNIVAL_PENDING])
+        self.assertPressed(daily.CARNIVAL_LEAVE)
+
+    def test_the_open_menu_with_the_carnival_next_is_closed(self):
+        self.assertTrue(run_pass(self.task.show(MENU)))
+        self.assertPressed(daily.MENU_CLOSE)
+
+    def test_a_faded_lobby_with_the_carnival_next_gets_the_wake_tap_not_a_guess_at_the_banner(self):
+        self.state()["lobby_seen"] = self.clock.now
+        self.tick()
+        self.assertTrue(run_pass(self.task.show(FADED, faded_lobby())))
+        self.assertPressed(daily.WAKE)
+
+    def test_the_pending_days_are_read_off_their_violet_bars(self):
+        days = daily.pending_days(self.task.show(*CARNIVAL_PENDING))
+        self.assertEqual(3, len(days))
+        self.assertAlmostEqual(POINTS[daily.CARNIVAL_DAY][0], (days[0][0] + days[0][1]) / 2, delta=0.005)
+        for screen in (CARNIVAL_CLAIMED, CARNIVAL_ON_EXCHANGE):
+            self.assertEqual([], daily.pending_days(self.task.show(*screen)))
+        self.assertEqual([], daily.pending_days(self.task.show(CARNIVAL)))
+
+    def test_a_bar_cut_at_the_list_s_edge_or_drawn_white_is_no_pending_day(self):
+        self.assertEqual([], daily.pending_days(self.task.show(CARNIVAL, bar_frame((0.229, 0.242)))))
+        self.assertEqual([], daily.pending_days(self.task.show(CARNIVAL, bar_frame((0.30, 0.40), colour=(255, 255, 255)))))
+        self.assertEqual(1, len(daily.pending_days(self.task.show(CARNIVAL, bar_frame((0.229, 0.242), (0.30, 0.40))))))
+
+
+class TestCaptain(Claims):
+
+    def setUp(self):
+        super().setUp()
+        self.to_park()
+        self.state()["claims"]["captain"] = None
+
+    def test_the_event_list_opens_the_path_of_a_captain_before_dream_park(self):
+        self.assertTrue(run_pass(self.task.show(EVENT_LIST)))
+        self.assertPressed(daily.CAPTAIN_ENTRY)
+
+    def test_a_reached_tier_is_claimed_counted_and_dream_park_opened_next(self):
+        """The Lv 20 tier's Claim Reward, Items Obtained, then the tier reads Claimed."""
+        self.run_screens([CAPTAIN] * SETTLED + [CAPTAIN_ITEMS] + [CAPTAIN_AFTER] * SETTLED)
+        self.assertPressed(daily.CAPTAIN_CLAIM, daily.ITEMS_CLOSE, daily.DREAM_PARK)
+        self.assertNothingForbidden()
+        self.assertEqual(1, self.state()["claims"]["claimed"]["captain"])
+        self.assertIn("The Path of a Captain: 1 tier", daily.claims_summary(self.state()["claims"]))
+
+    def test_claimed_and_locked_tiers_are_never_pressed(self):
+        self.run_screens([CAPTAIN_AFTER] * SETTLED)
+        self.assertPressed(daily.DREAM_PARK)
+        self.assertIn("The Path of a Captain: nothing to claim", daily.claims_summary(self.state()["claims"]))
+
+    def test_a_list_without_it_goes_on_to_dream_park(self):
+        self.run_screens([tuple(box for box in EVENT_LIST if "Path of a" not in box[0])] * SETTLED)
+        self.assertPressed(daily.DREAM_PARK)
+        self.assertEqual("not listed", self.state()["claims"]["captain"])
+        self.assertNotIn("Path of a Captain", daily.claims_summary(self.state()["claims"]))
+
+    def test_a_move_under_a_claim_reward_is_never_pressed(self):
+        self.run_screens([CAPTAIN + (("Move", *POINTS[daily.CAPTAIN_CLAIM]),)] * SETTLED)
+        self.assertEqual([], self.task.clicks)
+        self.assertStopped("would have pressed 'Move'")
+
+    def test_off_the_park_step_its_page_is_only_left(self):
+        self.finish_chores()
+        self.run_screens([CAPTAIN])
+        self.assertPressed(daily.EVENT_LEAVE)
+
+
+TWO_GOALS_READY = (WEEKLY_TWO_GOALS, composed(("activity_goals_two_lit", GOALS_CROP), ("activity_milestones_two_claimed", MILESTONES_CROP)))
+TWO_TIERS_READY = (WEEKLY_TWO_TIERS, composed(("activity_goals_two_gone", GOALS_CROP), ("activity_milestones_two_lit", MILESTONES_CROP)))
+TWO_TIERS_TAKEN = (WEEKLY_TIERS_TAKEN, composed(("activity_goals_two_gone", GOALS_CROP), ("activity_milestones_two_claimed", MILESTONES_CROP)))
+THREE_LEVELS_READY = (LOG_THREE, placed("activity_log_three_rings", LOG_COLUMN_CROP))
+THREE_LEVELS_TAKEN = (LOG_THREE_TAKEN, placed("activity_log_three_claimed", LOG_COLUMN_CROP))
+
+
+class TestCountsFromTheScreen(Claims):
+    """Captures where one press took two weekly goals, one took two milestone tiers, one took three Achievement Log levels."""
+
+    def setUp(self):
+        super().setUp()
+        self.on_step("activity")
+        self.state()["claims"]["phase"] = daily.ACTIVITY_PHASES.index(daily.WEEKLY)
+
+    def test_the_live_presses_count_two_goals_two_tiers_and_three_levels(self):
+        self.run_screens([TWO_GOALS_READY] * SETTLED + [TWO_TIERS_READY] * daily.CLAIM_WAIT + [MILESTONE_ITEMS] + [TWO_TIERS_TAKEN] * SETTLED
+                         + [THREE_LEVELS_READY] * SETTLED + [CLAIM_ITEMS] + [THREE_LEVELS_TAKEN] * SETTLED)
+        self.assertPressed(daily.GOAL_CLAIM, daily.MILESTONE_CLAIM, daily.ITEMS_CLOSE, daily.LOG_TAB, daily.LOG_CLAIM, daily.ITEMS_CLOSE,
+                           daily.ACTIVITY_CLOSE)
+        self.assertNothingForbidden()
+        self.assertEqual({"goal": 2, "milestone": 2, "log": 3}, dict(self.state()["claims"]["claimed"]))
+        self.assertTrue(daily.claims_summary(self.state()["claims"]).startswith(
+            "Activity: 2 weekly goals, 2 weekly milestone tiers, 3 Achievement Log levels;"))
+
+    def test_the_readers_count_what_is_ready(self):
+        self.assertEqual(2, daily.goals_shown(self.task.show(*TWO_GOALS_READY)))
+        self.assertEqual(2, daily.lit_milestones(self.task.show(*TWO_TIERS_READY)))
+        self.assertEqual(0, daily.lit_milestones(self.task.show(*TWO_TIERS_TAKEN)))
+        self.assertEqual(3, daily.log_rings(self.task.show(*THREE_LEVELS_READY)))
+        self.assertEqual(0, daily.log_rings(self.task.show(*THREE_LEVELS_TAKEN)))
+        self.assertEqual(0, daily.log_rings(self.task.show(LOG_THREE)))
+
+    def test_a_count_off_its_own_screen_is_one(self):
+        claims = self.state()["claims"]
+        claims["recount"] = ("log", 3)
+        daily.settle_recount(self.task.show(*THREE_LEVELS_TAKEN))
+        self.assertEqual(1, claims["claimed"]["log"])
+        self.assertIsNone(claims["recount"])
+
+    def test_a_claim_that_reads_as_still_ready_counts_one(self):
+        """Items Obtained showed, so something was taken, even when as many read ready as before."""
+        claims = self.state()["claims"]
+        claims["recount"] = ("log", 3)
+        daily.settle_recount(self.task.show(*THREE_LEVELS_READY), ("log",))
+        self.assertEqual(1, claims["claimed"]["log"])
+
+    def test_the_finish_line_words_each_claim(self):
+        """Claim All takes every ready row at once, which no screen counts, so it is told as presses."""
+        claims = daily.new_claims()
+        claims["claimed"].update(guide=1, schedule=2, goal=2, milestone=2, log=3, category=4, carnival=3, captain=1)
+        claims["carnival"], claims["captain"] = "visited", "visited"
+        self.assertEqual("Activity: 1 Growth Guide card, Claim All on the daily schedule 2 times, 2 weekly goals, 2 weekly milestone tiers, "
+                         "3 Achievement Log levels; Achievements: Claim All in 4 categories; Carnival: 3 attendance days; "
+                         "The Path of a Captain: 1 tier", daily.claims_summary(claims))
 
 
 def stand_in(module):

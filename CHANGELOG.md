@@ -10,11 +10,13 @@ The newest changes come first. Each section is the day a change reached the proj
 
 ## 2026-11-24
 
-Daily claims the Activity rewards and achievements, Chaos opens the chests in event rooms, kill plans skip an enemy that shrugs off hits, and the bot presses nothing while a run's menu is open.
+Daily claims the Activity rewards, achievements, the Carnival's attendance and The Path of a Captain's tiers, Chaos opens the chests in event rooms, kill plans skip an enemy that shrugs off hits, and the bot presses nothing while a run's menu is open.
 
 ### New
 
-- **Daily:** after the mail, Daily claims every reward that reads ready in the Activity window: Growth Guide cards and stage rewards, the daily schedule's Claim All, finished weekly goals and milestones, and the Achievement Log's reward. Then it presses Claim All in each of the Achievement screen's four categories. A claim is pressed only while its button reads ready, never a Move button that leaves the window, and Daily stops when two claims in a row open nothing. The finish message lists what was claimed.
+- **Daily:** after the mail, Daily claims every reward that reads ready in the Activity window: Growth Guide cards and stage rewards, the daily schedule's Claim All, finished weekly goals and milestones, and the Achievement Log's reward. Then it presses Claim All in each of the Achievement screen's four categories. A claim is pressed only while its button reads ready, never a Move button that leaves the window, and Daily stops when two claims in a row open nothing. The finish message counts what was taken: weekly goals, milestone tiers, Achievement Log levels, Carnival days and Path of a Captain tiers, even when one press took several, and names each Claim All press.
+- **Daily:** while the Nightmare Carnival runs, Daily opens it from the Lobby's banner and claims every pending attendance day with one press. It never presses Check-In Make-Up or the Exchange, and once the banner is gone the chore is skipped.
+- **Daily:** on the Event list, Daily opens The Path of a Captain before Dream Park and claims each tier your Captain level has reached.
 
 ### Changed
 
@@ -30,7 +32,7 @@ Daily claims the Activity rewards and achievements, Chaos opens the chests in ev
 
 - **Chaos Manifestation** and **Sortie:** **First Floor Only**, and in Chaos **Farm a Specific Epiphany on Floor 1**, do not leave the run yet. After the first floor the bot opens the run's menu but looks for a Retreat button where the menu shows Escape, so the run waits on the menu until the five-minute stop.
 - **Chaos Manifestation**, **Sortie** and **Story:** the bot does not close a run's menu left open. The run waits on it, and the five-minute stop ends the mode with its usual notification.
-- **Daily:** a screen in the Activity window or on the Achievement screen that Daily does not know yet, such as a reward animation, stops Daily after 30 seconds with nothing pressed, before Dream Park.
+- **Daily:** a screen in the Activity window, on the Achievement screen or on The Path of a Captain that Daily does not know yet, such as a reward animation, stops Daily after 30 seconds with nothing pressed, before Dream Park. A Nightmare Carnival window that does not read is left by its back arrow instead, and the finish message says so.
 
 ## 2026-11-23
 
