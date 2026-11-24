@@ -8,6 +8,30 @@ The newest changes come first. Each section is the day a change reached the proj
 
 ---
 
+## 2026-11-24
+
+Daily claims the Activity rewards and achievements, Chaos opens the chests in event rooms, kill plans skip an enemy that shrugs off hits, and the bot presses nothing while a run's menu is open.
+
+### New
+
+- **Daily:** after the mail, Daily claims every reward that reads ready in the Activity window: Growth Guide cards and stage rewards, the daily schedule's Claim All, finished weekly goals and milestones, and the Achievement Log's reward. Then it presses Claim All in each of the Achievement screen's four categories. A claim is pressed only while its button reads ready, never a Move button that leaves the window, and Daily stops when two claims in a row open nothing. The finish message lists what was claimed.
+
+### Changed
+
+- **Fights:** in the fights the bot plays itself, an enemy that loses only 1 or 2 HP to a hit planned to take 20 or more, or nothing to two such hits, such as the Aether Eater, is no longer aimed at as a kill, its share of damage that hits all enemies no longer counts toward a card's worth, and it teaches the bot no hit values. A later hit that takes 20 HP or more from it makes it a target again.
+- **Spending safety:** while a run's menu is open (Chaos Info or Stage Info) in Chaos, Sortie or Story, the bot presses nothing, so a misread caption can no longer press the menu's Escape, which abandons the run. Only the retreat that **First Floor Only**, or in Chaos **Farm a Specific Epiphany on Floor 1**, asks for is still allowed there, in Chaos and Sortie, and it does not leave the run yet (see Known issues).
+
+### Fixed
+
+- **Chaos Manifestation:** in an Unidentified Area event such as the treasure room, the bot no longer presses the event's grey Enter, which made it treat the run as just started and stay in the room. It now opens the room's chests and carries on with Continue. A lit Enter is still pressed.
+- **Fights:** the bot no longer learns how hard a combatant hits from a card after which an enemy disappeared from the board, which could record a wrong value.
+
+### Known issues
+
+- **Chaos Manifestation** and **Sortie:** **First Floor Only**, and in Chaos **Farm a Specific Epiphany on Floor 1**, do not leave the run yet. After the first floor the bot opens the run's menu but looks for a Retreat button where the menu shows Escape, so the run waits on the menu until the five-minute stop.
+- **Chaos Manifestation**, **Sortie** and **Story:** the bot does not close a run's menu left open. The run waits on it, and the five-minute stop ends the mode with its usual notification.
+- **Daily:** a screen in the Activity window or on the Achievement screen that Daily does not know yet, such as a reward animation, stops Daily after 30 seconds with nothing pressed, before Dream Park.
+
 ## 2026-11-23
 
 Chaos now walks itself from the Lobby to The Blue Pot, the fights the bot plays itself plan kills, Dream Park buys Another Happy Day while Happiness lags, and the bot's fallback presses leave a run's Escape alone.

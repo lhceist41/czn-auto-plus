@@ -116,7 +116,9 @@ The **Settings** page holds the settings shared by every mode:
 
 ### Daily
 
-Starts on the Lobby and closes its entry popups, claims the daily attendance reward and all mail, then visits Nightmare
+Starts on the Lobby and closes its entry popups, claims the daily attendance reward and all mail, then the rewards that
+read ready in the Activity window (Growth Guide, the daily and weekly schedules, Achievement Log) and on the Achievement
+screen (Claim All in each category), then visits Nightmare
 Dream Park while the event runs. In the park it ranks up, builds and upgrades rides, buys the park skills AI Automation
 and Another Happy Day and claims the park's achievements, all with the park's own profit: it presses a price only when it
 reads as park profit, and stops on a Crystal or money price. Daily stops on the Lobby and presses nothing else.
@@ -134,8 +136,8 @@ reads as park profit, and stops on a Crystal or money price. Daily stops on the 
 - Handles the season mechanics: Season 3 Persona cards, the Season 4 **Desire Faction** you pick, and Season 5 Memory
   cards and End of Memory.
 - Claims the Settlement's Additional Loot with the weekly Loot Certification Cards only.
-- Stops after a set number of runs, or pauses before a chosen boss so you can take over. **First Floor Only** leaves
-  each run after its first floor.
+- Stops after a set number of runs, or pauses before a chosen boss so you can take over. **First Floor Only** does not
+  leave a run yet: after the first floor the run waits on its menu until the five-minute stop ends it.
 
 ### Sortie
 
