@@ -10,6 +10,7 @@ import random
 import sys
 import tempfile
 import time
+import types
 import unittest
 from collections import deque
 from contextlib import contextmanager
@@ -21,8 +22,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from src.en import battle, board, cards  # noqa: E402
-from tests.TestBattlePlay import hand, upstream  # noqa: E402
-from tests.TestEnemyRead import CropTask, health_box  # noqa: E402
+from tests.TestBattlePlay import hand, handlers_of, upstream  # noqa: E402
+from tests.TestEnemyRead import DEVOUR_INTRO, CropTask, health_box, screen  # noqa: E402
 
 Foe = board.Foe
 # Damage per 100% printed. Selena's spread like one night's logs, so the low end a kill is planned on is 72 and the middle 78.
@@ -878,6 +879,193 @@ class TestKillsFromTheBoardRead(unittest.TestCase):
             swapped = state._replace(foes=(foes[1]._replace(x=0.552), foes[0]._replace(x=0.747)))
             chosen = cards.plan(hand(*held), swapped)
             self.assertEqual(("Engagement Fire", True, 0.747), (chosen[0]["name"], chosen[0].get("kills"), chosen[0].get("target")))
+
+
+# A boss that eats its summons, the turn after it summoned again: its own 1152 between four summons of 157 and 297, read with the
+# summoned mark, and the hand held against it with three points.
+PROMOTION = (Foe(0.409, 157, 9, None, True, True, True), Foe(0.526, 297, 7, None, True, True, True), Foe(0.589, 1152, None, None, True, True),
+             Foe(0.783, 297, 9, None, True, True, True), Foe(0.858, 157, 8, None, True, True, True))
+PROMOTION_HAND = ("Tactical Analysis", "Engagement Fire", "High-Power Scope", "Drone Bombing", "Strike", "Spirit of the Aromata")
+PROMOTION_BOARD = cards.Board(action_points=3, hand=PROMOTION_HAND, enemies=5, foes=PROMOTION, devours=True)
+# The same boss's next summoning turn in another fight: 57, 297, the boss's 1215 behind a Shield, 297 and 157, and a hand with no damage to
+# all. Each enemy stands where its HP number reads, less the offset measured on the board above. The rings over the 57 and over the boss
+# sit at 0.473 and 0.686. Live, a summon had died the turn before, and every card aimed at one enemy could only be played on the boss.
+CHARGE = (Foe(0.402, 57, None, None, True, True, True), Foe(0.522, 297, None, None, True, True, True), Foe(0.583, 1215, None, None, True, True),
+          Foe(0.778, 297, None, None, True, True, True), Foe(0.852, 157, None, None, True, True, True))
+CHARGE_HAND = ("Water Barrier", "Blessing of Waves", "Blessing of Waves", "Engagement Fire", "Emergency Shielding", "Flame Dragon's Sovereignty")
+CHARGE_BOARD = cards.Board(action_points=3, hand=CHARGE_HAND, enemies=5, foes=CHARGE, devours=True)
+SUMMON_RING, BOSS_RING = 0.473, 0.686
+# Selena's hits as strong as a Save Data team's, so Drone Bombing's 120% to all kills a 157 for sure.
+STRONG_SELENA = {**CALIBRATED, "Selena": [140, 140, 140, 140, 140]}
+
+
+def eaten_by_the_boss(task):
+    """Open the fight on a task with a boss intro saying the boss eats its summons.
+
+    Args:
+        task: The running task.
+    """
+    with mock.patch.object(board, "devours_summons", lambda task: True):
+        battle.handle_devour_text(task)
+
+
+class TestSummonsFirst(unittest.TestCase):
+    """Against a boss that eats its summons, damage to all goes first while a summon stands, and only damage to all is planned on one."""
+
+    def setUp(self):
+        self.folder = tempfile.TemporaryDirectory()
+        self.file = Path(self.folder.name) / "data" / "hits.json"
+        self.patches = [mock.patch.object(battle, "HITS_FILE", str(self.file)), mock.patch.object(battle, "_hits_loaded", False)]
+        for patch in self.patches:
+            patch.start()
+
+    def tearDown(self):
+        for patch in self.patches:
+            patch.stop()
+        self.folder.cleanup()
+
+    def plays(self, task):
+        """Find the lines saying which card was played.
+
+        Returns:
+            Those lines.
+        """
+        return [line for line in task.logged if line.startswith("playing ")]
+
+    def test_damage_to_all_goes_first(self):
+        with hits({}):
+            self.assertEqual("Drone Bombing", cards.plan(hand(*PROMOTION_HAND), PROMOTION_BOARD)[0]["name"])
+            self.assertNotEqual("Drone Bombing", cards.plan(hand(*PROMOTION_HAND), PROMOTION_BOARD._replace(devours=False))[0]["name"])
+
+    def test_a_summon_is_killed_only_by_damage_to_all(self):
+        # Drone Bombing kills both 157s and leaves the 297s on 129, which Engagement Fire would finish without the flag.
+        with hits(STRONG_SELENA):
+            chosen = cards.plan(hand(*PROMOTION_HAND), PROMOTION_BOARD)
+            self.assertEqual([("Drone Bombing", None)], [(card["name"], card.get("target")) for card in chosen if card.get("kills")])
+            today = cards.plan(hand(*PROMOTION_HAND), PROMOTION_BOARD._replace(devours=False))
+            self.assertIn(("Engagement Fire", 0.526), [(card["name"], card.get("target")) for card in today if card.get("kills")])
+
+    def test_on_the_next_summoning_turn_no_kill_is_planned_on_a_summon(self):
+        # With no damage to all in hand, Engagement Fire and Sovereignty would each kill a summon by count, which the game refuses.
+        with hits(CALIBRATED):
+            self.assertFalse(any(card.get("kills") for card in cards.plan(hand(*CHARGE_HAND), CHARGE_BOARD)))
+            today = cards.plan(hand(*CHARGE_HAND), CHARGE_BOARD._replace(devours=False))
+            self.assertEqual({0.402, 0.522}, {card["target"] for card in today if card.get("kills")})
+
+    def test_in_battle_a_card_aimed_at_one_enemy_goes_to_the_boss_as_today(self):
+        self.file.parent.mkdir(parents=True)
+        self.file.write_text(json.dumps(CALIBRATED), encoding="utf-8")
+        for devours in (True, False):
+            rings = iter([SUMMON_RING, BOSS_RING])
+            bosses = []
+            with self.subTest(devours=devours), upstream(hand("Engagement Fire")) as (utils_sortie, task), \
+                    mock.patch.object(board, "enemies", lambda task: CHARGE), mock.patch.object(board, "reticle_x", lambda frame: next(rings)), \
+                    mock.patch.object(board, "boss_x", lambda task: bosses.append(1) or BOSS_RING), mock.patch.object(battle, "_hits_loaded", False):
+                battle.install()
+                if devours:
+                    eaten_by_the_boss(task)
+                utils_sortie._try_all_card_keys(task, 1)
+                # The game raises the card on the 57 at the left: a kill there needs no TAB, the boss needs one.
+                self.assertEqual(["1", battle.TAB_KEY, battle.CONFIRM_KEY] if devours else ["1", battle.CONFIRM_KEY], task.keys)
+                if devours:
+                    self.assertEqual([1], bosses)
+                    self.assertFalse(self.plays(task)[0].endswith("to kill an enemy"))
+                    self.assertTrue(any(f"pressing TAB to move it to the boss at {BOSS_RING:.3f}" in line for line in task.logged))
+                else:
+                    self.assertEqual([], bosses)
+                    self.assertTrue(self.plays(task)[0].endswith("to kill an enemy"))
+
+    def test_with_no_summon_standing_the_boss_gets_todays_burst(self):
+        alone = PROMOTION_BOARD._replace(foes=(PROMOTION[2],), enemies=1)
+        unmarked = PROMOTION_BOARD._replace(foes=tuple(foe._replace(summoned=False) for foe in PROMOTION))
+        for seen in ({}, CALIBRATED, STRONG_SELENA):
+            with self.subTest(hits=seen), hits(seen):
+                for state in (alone, unmarked, PROMOTION_BOARD._replace(devours=False)):
+                    self.assertEqual(cards.plan(hand(*PROMOTION_HAND), state._replace(devours=False)), cards.plan(hand(*PROMOTION_HAND), state))
+
+    def test_a_boss_the_hand_can_kill_counts_as_every_enemy_standing(self):
+        # Two Strikes kill the boss on 150. Without the flag they kill the 157 at the left instead, which needs no TAB.
+        foes = (Foe(0.40, 157, None, None, True, True, True), Foe(0.60, 150, None, None, True, True), Foe(0.80, 157, None, None, True, True, True))
+        state = cards.Board(action_points=2, hand=("Strike", "Strike"), enemies=3, foes=foes, devours=True)
+        with hits(CALIBRATED):
+            self.assertEqual([0.60, 0.60], [card["target"] for card in cards.plan(hand("Strike", "Strike"), state)])
+            self.assertEqual([0.40, 0.40], [card["target"] for card in cards.plan(hand("Strike", "Strike"), state._replace(devours=False))])
+            # A boss whose HP is unsure or that shrugs off hits is no sure kill, and Strikes are planned on no summon.
+            for name, changed in (("an unsure boss", state._replace(foes=(foes[0], foes[1]._replace(sure=False), foes[2]))),
+                                  ("a boss that shrugs off hits", state._replace(shrugging=(0.60,)))):
+                with self.subTest(name):
+                    self.assertFalse(any(card.get("kills") for card in cards.plan(hand("Strike", "Strike"), changed)))
+            # With a second enemy read without the mark, neither is taken for the boss: one Strike kills the 100 on the right, and two on
+            # the 150 would count one kill, not every enemy.
+            unsure_which = state._replace(foes=(*foes[:2], foes[2]._replace(health=100, summoned=False)))
+            chosen = cards.plan(hand("Strike", "Strike"), unsure_which)
+            self.assertEqual([("Strike", 0.80)], [(card["name"], card.get("target")) for card in chosen if card.get("kills")])
+        # Drone Bombing and a Strike kill the 57 with no TAB, and that set is tried first, but two Strikes on a boss of 190 still win.
+        tougher = state._replace(foes=(foes[0]._replace(health=57), foes[1]._replace(health=190), foes[2]))
+        with hits(CALIBRATED):
+            chosen = cards.plan(hand("Drone Bombing", "Strike", "Strike"), tougher)
+            self.assertEqual([("Strike", 0.60), ("Strike", 0.60)], [(card["name"], card.get("target")) for card in chosen])
+        # Fan of Daggers hits a random enemy, which may be a summon, so with one Strike it kills nothing for sure.
+        with hits({**CALIBRATED, "Hugo": [100, 100, 100]}):
+            self.assertFalse(any(card.get("kills") for card in cards.plan(hand("Strike", "Fan of Daggers"), state)))
+
+    def test_the_flag_holds_for_the_fight_it_was_read_in(self):
+        now = [100.0]
+        with upstream(hand("Strike")) as (utils_sortie, task), mock.patch.object(battle.time, "monotonic", lambda: now[0]):
+            task.all_texts = screen(DEVOUR_INTRO).all_texts
+            self.assertFalse(battle.handle_devour_text(task))
+            self.assertFalse(battle.handle_devour_text(task))
+            self.assertEqual(1, sum("the boss eats its own summons" in line for line in task.logged))
+            # Story counts no nodes: every battle frame keeps the flag, and a gap off the battle screen drops it.
+            now[0] += 20
+            self.assertTrue(battle.fight_devours(task, seen=True))
+            now[0] += battle.DEVOUR_GAP - 1
+            self.assertTrue(battle.fight_devours(task))
+            now[0] += 2
+            self.assertFalse(battle.fight_devours(task))
+            self.assertFalse(battle.fight_devours(task))
+            # Where nodes are counted, the next node or the next run's status drops it at once.
+            task.node_status = {"node_count": 1}
+            battle.handle_devour_text(task)
+            self.assertTrue(battle.fight_devours(task))
+            task.node_status["node_count"] = 2
+            self.assertFalse(battle.fight_devours(task))
+            battle.handle_devour_text(task)
+            task.node_status = dict(task.node_status)
+            self.assertFalse(battle.fight_devours(task))
+
+    def test_every_battle_frame_keeps_the_flag(self):
+        now = [100.0]
+        with upstream([]) as (utils_sortie, task), mock.patch.object(battle.time, "monotonic", lambda: now[0]):
+            battle.install()
+            eaten_by_the_boss(task)
+            page = handlers_of(utils_sortie)["handle_battle_page"]
+            for _ in range(3):
+                now[0] += battle.DEVOUR_GAP - 1
+                page(task)
+            self.assertTrue(battle.fight_devours(task))
+
+    def test_a_frame_without_the_hand_counter_does_not_keep_the_flag(self):
+        now = [100.0]
+        with upstream([]) as (utils_sortie, task), mock.patch.object(battle.time, "monotonic", lambda: now[0]):
+            battle.install()
+            eaten_by_the_boss(task)
+            utils_sortie._read_hand_count = lambda task: None
+            page = handlers_of(utils_sortie)["handle_battle_page"]
+            for _ in range(3):
+                now[0] += battle.DEVOUR_GAP - 1
+                page(task)
+            self.assertFalse(battle.fight_devours(task))
+
+    def test_the_intro_is_read_ahead_of_whatever_closes_it(self):
+        close = types.SimpleNamespace(__name__="handle_close_page")
+        utils_chaos = types.SimpleNamespace(PAGE_HANDLERS=[close, types.SimpleNamespace(__name__="handle_center_confirm")])
+        with upstream(hand("Strike")), mock.patch.dict(sys.modules, utils_chaos=utils_chaos):
+            battle.install()
+            battle.install()
+            at = utils_chaos.PAGE_HANDLERS.index(close)
+            self.assertIs(battle.handle_devour_text, utils_chaos.PAGE_HANDLERS[at - 1])
+            self.assertEqual(1, utils_chaos.PAGE_HANDLERS.count(battle.handle_devour_text))
 
 
 if __name__ == "__main__":

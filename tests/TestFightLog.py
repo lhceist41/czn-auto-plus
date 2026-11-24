@@ -80,6 +80,10 @@ class ChaosMode(Waiting):
     """A stand-in task named like the real mode, the only kind of task the record writes for."""
 
 
+class StoryMode(Waiting):
+    """A stand-in task named like the real Story mode, which counts no nodes."""
+
+
 def next_run(task):
     """Start the task's next run the way upstream does on the result page: one more run counted, floor and node back to 0, and the
     task's start time left as it is."""
@@ -225,9 +229,10 @@ class TestRecorder(Recording):
         self.assertEqual(("ChaosMode", 1, 3, True), (first["mode"], first["turn"], first["ap"], first["ap_read"]))
         self.assertEqual([{"name": ATTACK, "key": "1", "cost": 1, "shown": False}, {"name": SHIELD, "key": "2", "cost": 1, "shown": False},
                           {"name": BIG_ATTACK, "key": "3", "cost": cards.cost(BIG_ATTACK), "shown": False}], first["hand"])
-        self.assertEqual([{"x": 0.55, "hp": 300, "hp_source": "both", "counter": 3, "weakness": None},
-                          {"x": 0.70, "hp": 200, "hp_source": "both", "counter": 5, "weakness": None}], first["foes"])
+        self.assertEqual([{"x": 0.55, "hp": 300, "hp_source": "both", "counter": 3, "weakness": None, "summoned": False},
+                          {"x": 0.70, "hp": 200, "hp_source": "both", "counter": 5, "weakness": None, "summoned": False}], first["foes"])
         self.assertEqual((406, 406, 1.0, 0), (first["team_hp"], first["team_max"], first["team_share"], first["shield"]))
+        self.assertFalse(first["devours"])
         self.assertEqual(first["chosen"]["name"], first["plans"][0]["plan"][0])
         self.assertIn(f"worth {first['chosen']['worth']:.0f}", next(line for line in task.logged if line.startswith("playing ")))
         plays = [line for line in lines if line["kind"] == "play"]
@@ -262,7 +267,8 @@ class TestRecorder(Recording):
             play_fight(utils_sortie, task, [{"hand": [ATTACK, SHIELD], "points": 3, "team": None}], [Foe(0.55, None, None, None, False)])
         first = self.lines()[0]
         self.assertEqual((None, None, None, None), (first["team_hp"], first["team_max"], first["team_share"], first["shield"]))
-        self.assertEqual({"x": 0.55, "hp": None, "hp_source": None, "counter": None, "weakness": None}, first["foes"][0])
+        self.assertEqual({"x": 0.55, "hp": None, "hp_source": None, "counter": None, "weakness": None,
+                          "summoned": False}, first["foes"][0])
 
     def test_a_number_json_cannot_hold_is_written_as_null(self):
         self.assertEqual({"a": [None, 1.5, None], "b": None}, fight_log.finite({"a": [float("nan"), 1.5, float("inf")], "b": float("-inf")}))
@@ -359,6 +365,27 @@ class TestRecorder(Recording):
     def test_a_defeat_title_ends_the_fight_lost(self):
         self.fight(end_texts=("战斗失败",))
         self.assertEqual(("lost", "defeat title"), (self.lines()[-1]["outcome"], self.lines()[-1]["why"]))
+
+    def test_a_title_that_ends_the_fight_drops_the_devour_flag(self):
+        # Story counts no nodes, so only the end of the fight tells the next one, starting inside the gap, from the devouring boss's.
+        for title, ends in ((REWARD, True), ("战斗失败", True), ("a hand prompt", False)):
+            now = [100.0]
+            with self.subTest(title=title), upstream(hand()) as (utils_sortie, task), mock.patch.object(battle.time, "monotonic", lambda: now[0]):
+                self.stand_up(utils_sortie, task, StoryMode)
+                task.node_status = None
+                with mock.patch.object(board, "devours_summons", lambda task: True):
+                    battle.handle_devour_text(task)
+                play_fight(utils_sortie, task, TWO_TURNS[:1], two_foes(), end_texts=None)
+                self.assertTrue(battle.fight_devours(task))
+                now[0] += 1
+                play_fight(utils_sortie, task, [], [], end_texts=(title,))
+                now[0] += battle.DEVOUR_GAP - 2
+                self.assertEqual(not ends, battle.fight_devours(task, seen=True))
+                # The next fight's intro sets it again, and a frame off the battle screen after the ended fight leaves it standing.
+                with mock.patch.object(board, "devours_summons", lambda task: True):
+                    battle.handle_devour_text(task)
+                play_fight(utils_sortie, task, [], [], end_texts=("a hand prompt",))
+                self.assertTrue(battle.fight_devours(task))
 
     def test_a_short_spell_off_the_battle_screen_does_not_end_the_fight(self):
         with upstream(hand()) as (utils_sortie, task):

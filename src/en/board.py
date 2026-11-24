@@ -121,6 +121,11 @@ HUE_TOLERANCE = 20
 SUMMONED_IMAGES = tuple(Path(__file__).with_name("images") / name for name in ("summoned_horns.png", "summoned_ghost.png"))
 # Real ones scored 0.92 to 1.0. Across 197 counters in 851 captures, nothing else scored above 0.60.
 SUMMONED_MATCH = 0.8
+# The lines a boss that eats its own summons shows, on its intro ("Devour the summoned monsters with Devour") or its Enemy Info ("When
+# this monster kills another monster"). Whole words, so card names such as Flower of Devoured Fate stay out.
+DEVOUR_LINE = re.compile(r"\bDevour\b|\bkills another monster\b|\bdefeats other monsters\b", re.I)
+# The tag both of those screens print beside the boss's name, needed as well, so a card's text alone is not enough.
+BOSS_TAG = "Boss"
 # Wider than `ENEMY_BAND` at the top, which cuts through the counter of a boss standing tall enough to put it there.
 TARGET_BAND = (0.30, 0.05, 1.00, 0.60)
 # An enemy that has acted shows a grey diamond with a white X where its counter was, and so does every enemy on a turn's first frame until
@@ -177,8 +182,9 @@ COUNTER_SURE = 0.9
 # What `enemies` knows about one enemy: its counter's x as a fraction across the frame, its current HP, how many more cards can be played
 # before it acts, and the attribute it is weak to. Each of those three is None when it was not read for sure. `sure` says the zoomed crop
 # read one HP and the full-frame pass read the same or nothing there, which is what a kill is planned on. `agreed` says that pass read the
-# same HP, not nothing: a crop alone can read a covered 178 as 17, and a hit learnt from that would stay in the saved figures.
-Foe = namedtuple("Foe", ["x", "health", "counter", "weakness", "sure", "agreed"], defaults=[False, False])
+# same HP, not nothing: a crop alone can read a covered 178 as 17, and a hit learnt from that would stay in the saved figures. `summoned`
+# says its statuses show a summoned enemy's mark.
+Foe = namedtuple("Foe", ["x", "health", "counter", "weakness", "sure", "agreed", "summoned"], defaults=[False, False, False])
 
 
 def box_around(centre_x, centre_y, half):
@@ -547,6 +553,34 @@ def weakness(task):
     return seen.pop() if len(seen) == 1 else None
 
 
+def summoned_mark(frame, centre_x, centre_y):
+    """Say whether an enemy's statuses show the mark the game gives a summoned enemy.
+
+    Args:
+        frame: The frame to read.
+        centre_x: The enemy's counter centre across the frame, as a fraction.
+        centre_y: The same down the frame.
+
+    Returns:
+        True when either summoned mark matches in the row of statuses below its HP bar.
+    """
+    row = patch_of(frame, (centre_x + STATUS_ROW[0], centre_y + STATUS_ROW[1], min(1.0, centre_x + STATUS_ROW[2]), centre_y + STATUS_ROW[3]))
+    return any(icon_match(row, path, frame.shape[0]) >= SUMMONED_MATCH for path in SUMMONED_IMAGES)
+
+
+def devours_summons(task):
+    """Say whether the screen is a boss's intro or Enemy Info saying it eats or kills the monsters beside it.
+
+    Args:
+        task: The running task, whose `all_texts` holds this frame's OCR pass.
+
+    Returns:
+        True when one line says so and another is the boss tag alone.
+    """
+    texts = [box.name.strip() for box in getattr(task, "all_texts", None) or []]
+    return BOSS_TAG in texts and any(DEVOUR_LINE.search(text) for text in texts)
+
+
 def boss_x(task):
     """Find where the boss stands, so attacks go to it rather than to the minions it summons again each turn.
 
@@ -557,7 +591,6 @@ def boss_x(task):
         The x of the HP number of the one enemy on screen not marked as summoned, or None unless at least one is and exactly one is not.
     """
     frame = frame_of(task)
-    height = frame.shape[0] if frame is not None else 0
     numbers = [box for box in getattr(task, "all_texts", None) or [] if HEALTH_DIGITS.match(box.name)]
     summoned, unsummoned = 0, []
     for centre_x, centre_y in enemy_counters(frame, TARGET_BAND):
@@ -565,8 +598,7 @@ def boss_x(task):
         number = next((box for box in numbers if in_region(box, region, task.width, task.height)), None)
         if number is None:
             continue
-        row = patch_of(frame, (centre_x + STATUS_ROW[0], centre_y + STATUS_ROW[1], min(1.0, centre_x + STATUS_ROW[2]), centre_y + STATUS_ROW[3]))
-        if any(icon_match(row, path, height) >= SUMMONED_MATCH for path in SUMMONED_IMAGES):
+        if summoned_mark(frame, centre_x, centre_y):
             summoned += 1
         else:
             unsummoned.append(centre_of(number, task.width, task.height)[0])
@@ -633,7 +665,7 @@ def counter_glyph_wide(frame, centre_x, centre_y):
 
 
 def enemies(task):
-    """Read every enemy on screen: where it stands, its HP, how soon it acts and what it is weak to.
+    """Read every enemy on screen: where it stands, its HP, how soon it acts, what it is weak to and whether it was summoned.
 
     Args:
         task: The running task, whose `all_texts` holds the full-frame OCR pass and whose OCR reads the zoomed crops.
@@ -671,7 +703,8 @@ def enemies(task):
         if health is None and counter is None and not acted or health == 0:
             continue
         badge = box_around(centre_x + WEAKNESS_OFFSET[0], centre_y + WEAKNESS_OFFSET[1], WEAKNESS_HALF)
-        found.append(Foe(round(centre_x, 3), health, counter, attribute_of(patch_of(frame, badge)), sure, sure and full is not None))
+        found.append(Foe(round(centre_x, 3), health, counter, attribute_of(patch_of(frame, badge)), sure, sure and full is not None,
+                         summoned_mark(frame, centre_x, centre_y)))
     return tuple(found)
 
 

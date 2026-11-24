@@ -183,11 +183,11 @@ def foe_line(foe):
     Returns:
         A dict. `hp_source` is "both" when the zoomed crop and the full-frame pass read the same HP, "crop" when the crop read one
         number and that pass read none, "one" when only one of them gave it otherwise, and null with no HP. A kill is planned on
-        "both" and "crop", a hit only learnt from "both".
+        "both" and "crop", a hit only learnt from "both". `summoned` says its statuses showed a summoned enemy's mark.
     """
     source = "both" if foe.agreed else "crop" if foe.sure else "one"
     return {"x": foe.x, "hp": foe.health, "hp_source": None if foe.health is None else source,
-            "counter": foe.counter, "weakness": foe.weakness}
+            "counter": foe.counter, "weakness": foe.weakness, "summoned": foe.summoned}
 
 
 def card_line(card):
@@ -341,6 +341,7 @@ def planned(task, turn, state, hand, made, card, unread):
         "ap": state.action_points, "ap_read": not unread, "hand": [card_line(held) for held in hand], "hand_size": state.hand_size,
         "played": list(state.played), "last_turn": list(state.last_turn), "battle": list(state.battle), "kept": list(state.kept),
         "refused": sorted(turn.refused), "weakness": state.weakness, "invulnerable": state.invulnerable, "enemies": state.enemies,
+        "devours": state.devours,
         "foes": [foe_line(foe) for foe in state.foes], "team_hp": hp, "team_max": most, "team_share": state.team,
         "after_hit": state.health, "shield": shield, "ep": None if frame is None else board.banked_points(frame),
         "plans": [{"ap": points, "offered": [index for index, held in enumerate(hand) if any(held is one for one in playable)],

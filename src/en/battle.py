@@ -44,6 +44,11 @@ PARTY = "_en_party"
 HITS_FILE = os.path.join("data", "hits.json")
 # Set by Sortie's team read when a turn had a card or end turn in flight, so the next turn opens with a frame spare for the tap.
 TEAM_WANTED = "_en_team_wanted"
+# Set while the boss of the fight on screen eats its own summons: the fight and node status its intro or Enemy Info was read under, and
+# when a battle frame was last seen. Story counts no nodes, so there a gap off the battle screen is what ends the fight.
+DEVOURS = "_en_devours"
+# Seconds off the battle screen after which the flag is dropped, as the fight record splits fights.
+DEVOUR_GAP = fight_log.FIGHT_GAP
 
 # Upstream's own timings for playing a card, kept so the two paths feel the same to the game.
 AFTER_KEY = 1
@@ -393,6 +398,45 @@ def fight_of(task):
     if status is None:
         return None
     return getattr(task, "start_time", None), status.get("pass_final_boss_count"), status.get("node_count")
+
+
+def fight_devours(task, seen=False):
+    """Say whether the boss of the fight on screen eats its own summons, dropping a flag a fight that has ended left behind.
+
+    Args:
+        task: The running task, which the flag is parked on.
+        seen: Whether this is a battle frame, which keeps the flag for another `DEVOUR_GAP`.
+
+    Returns:
+        True while the flag stands for the fight on screen.
+    """
+    held = getattr(task, DEVOURS, None)
+    if held is None:
+        return False
+    fight, status, at = held
+    now = time.monotonic()
+    if fight != fight_of(task) or status is not getattr(task, "node_status", None) or now - at > DEVOUR_GAP:
+        setattr(task, DEVOURS, None)
+        return False
+    if seen:
+        setattr(task, DEVOURS, (fight, status, now))
+    return True
+
+
+def handle_devour_text(task):
+    """Note a boss's intro or Enemy Info saying it eats its own summons, for the fight it opens, and leave the screen to its handler.
+
+    Args:
+        task: The running task, whose `all_texts` is the current screen.
+
+    Returns:
+        False, always.
+    """
+    if board.devours_summons(task):
+        if not fight_devours(task):
+            task.log_info("the boss eats its own summons, so damage to all enemies goes first while one stands this fight")
+        setattr(task, DEVOURS, (fight_of(task), getattr(task, "node_status", None), time.monotonic()))
+    return False
 
 
 def unsettled(turn, names, count, limit=SETTLE_WAIT):
@@ -1378,6 +1422,9 @@ def install():
     # Before the guard below, so a mode list loaded after the picker went in still gets it. Story loads last.
     insert_before("handle_center_confirm", handle_cards_left)
     insert_before("handle_card_function_select", attribute_handler(utils))
+    # Ahead of whatever closes a boss's intro: tap-to-close in Sortie and Chaos, and in Story also the Enter and Confirm listed before it.
+    insert_before("handle_close_page", handle_devour_text, only=("utils_sortie", "utils_chaos"))
+    insert_before("handle_center_confirm", handle_devour_text, only=("utils_story",))
     if getattr(utils_sortie._try_all_card_keys, "_en_picker", False):
         return
     blind_fallback = utils_sortie._try_all_card_keys
@@ -1537,7 +1584,8 @@ def install():
             task.log_info(f"turn opens with {budget}, {turn.enemies} enemy counter(s), {against}, hand {names}")
         state = cards.Board(action_points=points, weakness=turn.weakness, hand=tuple(names), played=tuple(turn.played),
                             last_turn=turn.last_turn, battle=(*turn.earlier, *turn.played), hand_size=count or 0, kept=turn.kept, invulnerable=turn.invulnerable, enemies=turn.enemies or 1,
-                            health=board.team_after_hit(frame_of(task)), foes=foes, team=team_share(task), shrugging=turn.shrugging)
+                            health=board.team_after_hit(frame_of(task)), foes=foes, team=team_share(task), shrugging=turn.shrugging,
+                            devours=fight_devours(task))
         task.log_info(f"board {board_line(state, unread)}")
         made = []
         card = choose(hand, state, turn.refused, made)
@@ -1606,6 +1654,8 @@ def install():
         if start_attack(task, utils_sortie):
             return True
         count = note_hand_read(task, utils_sortie)
+        if count is not None:
+            fight_devours(task, seen=True)
         if kit_waiting(task, utils_sortie, count) or press_unread(task, count):
             return True
         turn = getattr(task, TURN, None)
@@ -1614,7 +1664,12 @@ def install():
             # blanks the whole screen instead, and a hand prompt rising hides only the counter. Live, the cards each added then grew
             # the hand into a false new turn.
             turn.ended = True
+            record = getattr(task, fight_log.RECORD, None)
+            ending = record is not None and not record.closed
             fight_log.left(task)
+            if ending and record.closed:
+                # Story counts no nodes, so a fight starting inside `DEVOUR_GAP` would otherwise inherit the flag and keep it.
+                setattr(task, DEVOURS, None)
         elif count == 0 and turn is not None and turn.ended:
             # The hand is discarded at end turn, so the next deal is a new turn even when it is no bigger than what was left.
             turn.hand_count = 0

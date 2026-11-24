@@ -100,6 +100,8 @@ SHRUG_LOSS = 2
 SHRUG_PLANNED = 20
 # Where in a turn the cards that kill go: after a chance to escape or the glowing card, before everything a fight that ends never needs.
 PHASE_KILL = PHASE_UPGRADE - 0.5
+# While a summon stands beside a boss that eats its summons, damage to all enemies goes just before the kills, since it hits every summon.
+PHASE_SPREAD = PHASE_KILL - 0.25
 # How many states of the search for a sure kill's order to remember, and of its bounds. Ten attacks against four tough enemies, planned
 # at 3, 6 and 10 AP, left about 1,600 of each.
 SEARCHED_STATES = 1 << 16
@@ -197,7 +199,9 @@ Board = namedtuple("Board", [
     "team",
     # Where each enemy stands that shrugged off an aimed hit this fight, from `shrugging_after`. No kill is planned on one.
     "shrugging",
-], defaults=[BASE_ACTION_POINTS, None, None, (), (), (), (), 0, (), DECK, False, 1, None, (), None, ()])
+    # Whether the fight's boss eats the monsters it summons and grows stronger for each, as its intro or Enemy Info said.
+    "devours",
+], defaults=[BASE_ACTION_POINTS, None, None, (), (), (), (), 0, (), DECK, False, 1, None, (), None, (), False])
 
 # How many distinct readings to remember the folding of. OCR invents new misspellings all session, so this
 # is bounded rather than unlimited, and it is far larger than the ten names one frame ever asks about.
@@ -1033,6 +1037,49 @@ def on_target(name):
     return max(0, single - other) / single if single > 0 else 1
 
 
+def devouring(board):
+    """Say whether a summon stands beside a boss that eats its summons, so each one left standing is a stack the boss can gain.
+
+    Args:
+        board: The `Board`, whose `devours` says the boss eats them and whose `foes` carry the summoned mark.
+
+    Returns:
+        True while the boss devours and an enemy read shows the mark.
+    """
+    return board.devours and any(foe.summoned for foe in board.foes)
+
+
+def boss_of(board):
+    """Find the boss beside its summons: the one enemy read without the summoned mark.
+
+    Args:
+        board: The `Board`.
+
+    Returns:
+        Its `board.Foe`, or None unless `devouring` and exactly one enemy read lacks the mark.
+    """
+    bosses = [foe for foe in board.foes if not foe.summoned]
+    return bosses[0] if devouring(board) and len(bosses) == 1 else None
+
+
+def ends_fight(picked, boss, board):
+    """Say whether a set of attacks kills the boss for sure, which also kills every summon it brought.
+
+    Only damage to all enemies and aimed hits that land on one enemy alone count, all of those aimed at the boss.
+
+    Args:
+        picked: Per attack, its HP figures to one enemy and to all and whether it is aimed, as `kill_plan` takes them.
+        boss: The boss, from `boss_of`.
+        board: The `Board`, whose `shrugging` marks enemies no kill is planned on.
+
+    Returns:
+        True when that damage reaches the boss's sure HP.
+    """
+    if not boss.sure or boss.health is None or shrugs(boss, board):
+        return False
+    return sum(every + (one if aims and not every else 0) for one, every, aims in picked) >= boss.health
+
+
 def kill_plan(picked, board):
     """Work out the order and the enemies that let a set of attacks kill the most enemies for sure.
 
@@ -1044,7 +1091,7 @@ def kill_plan(picked, board):
     Args:
         picked: Per attack, its HP figures to one enemy and to all, as `expected_damage` gives them at `SURE_HIT`, and whether it is aimed.
         board: The `Board`, whose enemies with a sure HP read can be killed. An enemy without one, one that shrugs off hits, or one
-            not read at all, still stands and still draws a random hit.
+            not read at all, still stands and still draws a random hit. Beside a boss that eats them, summons die only to damage to all.
 
     Returns:
         The enemies killed, how many aimed hits need moving off the leftmost enemy, and per attack in `picked` that hits only one
@@ -1055,6 +1102,9 @@ def kill_plan(picked, board):
     standing = [foe for foe, left in zip(board.foes, lefts) if left is None or left > 0]
     killed = len(board.foes) - len(standing)
     lefts = [left for left in lefts if left is None or left > 0]
+    if devouring(board):
+        # Once one summon dies the game greys the others out for a card aimed at one enemy, so only damage to all is planned on them.
+        lefts = [None if foe.summoned else left for foe, left in zip(standing, lefts)]
     # Enemies counted but not read stand somewhere unknown, so they only ever take a random hit.
     unread = max(0, board.enemies - len(board.foes))
     for one, every, _ in picked:
@@ -1208,13 +1258,16 @@ def lethal(fixed, board):
     Returns:
         Pairs of a card and the x of the enemy it is aimed at, None for a card not aimed at one, in the order to play them: damage to
         all enemies first while several are left, then the hits on one enemy in the order `kill_plan` lands them, the turn's usual
-        order where that makes no difference. Empty when no set kills anything.
+        order where that makes no difference. Empty when no set kills anything. Beside its summons, a boss that eats them counts as
+        every enemy standing once a set kills it for sure, with every aimed hit on it.
     """
     if board.invulnerable or not any(foe.sure for foe in board.foes):
         return []
     attacks = [(card, expected_damage(card["name"], SURE_HIT)) for card in fixed if features(card["name"]).damage]
     attacks = [(card, (estimate[0] * on_target(card["name"]), estimate[1], aimed(card["name"]))) for card, estimate in attacks if estimate]
     best, best_key, best_order = (), (0,), []
+    boss = boss_of(board)
+    everyone = max(len(board.foes), board.enemies)
     healths = list(accumulate(sorted(foe.health for foe in board.foes if foe.sure and foe.health is not None and not shrugs(foe, board))))
     for size in range(1, len(attacks) + 1):
         for picked in combinations(attacks, size):
@@ -1223,10 +1276,17 @@ def lethal(fixed, board):
                 continue
             # A set that could not beat the best so far even killing every enemy its damage could reach is not searched.
             most = bisect_right(healths, sum(one + every * len(board.foes) for _, (one, every, _) in picked))
+            ending = boss is not None and ends_fight([estimate for _, estimate in picked], boss, board)
+            if ending:
+                most = everyone
             if not most or (most, -spent, -size, 0) <= best_key:
                 continue
             picked = sorted(picked, key=lambda pair: phase(pair[0]["name"], board))
-            killed, moved, order = kill_plan([estimate for _, estimate in picked], board)
+            if ending:
+                order = [(index, boss.x if aims else None) for index, (_, (one, every, aims)) in enumerate(picked) if one and not every]
+                killed, moved = everyone, (sum(target is not None for _, target in order) if boss is not board.foes[0] else 0)
+            else:
+                killed, moved, order = kill_plan([estimate for _, estimate in picked], board)
             # A kill that needs no TAB is preferred to one that does, since a Taunt or an unread reticle leaves a card where it was raised.
             key = (killed, -spent, -size, -moved)
             if key[0] and key > best_key:
@@ -1375,7 +1435,8 @@ def plan(hand, board):
     Two questions, answered in order, because answering them together gets both wrong. What the budget buys is
     settled on the most value the points can buy, so a cheap card cannot crowd out a dear one that wins the fight. Only then are the survivors put into phase order, and
     cards that tie keep the order the hand had. Attacks that kill an enemy for sure are bought before both, and played before
-    everything but a chance to escape and the glowing card.
+    everything but a chance to escape and the glowing card. While a summon stands beside a boss that eats its summons, damage to all
+    enemies goes just before those.
 
     Args:
         hand: Hand cards as `_hand_cards` reads them, each a dict with at least a `name`.
@@ -1415,4 +1476,11 @@ def plan(hand, board):
     if spenders and sum(price(card) for card in chosen) < budget:
         # It takes the rest of the turn's points, so it is worth playing only while some remain, and nothing can follow it.
         chosen.append(spenders[0])
-    return sorted(kill + chosen, key=lambda held: PHASE_KILL if held.get("kills") else phase(held["name"], board))
+    spread_first = devouring(board)
+
+    def when(held):
+        if held.get("kills"):
+            return PHASE_KILL
+        return PHASE_SPREAD if spread_first and features(held["name"]).spread else phase(held["name"], board)
+
+    return sorted(kill + chosen, key=when)

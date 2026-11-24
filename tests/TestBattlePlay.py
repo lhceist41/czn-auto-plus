@@ -545,7 +545,7 @@ class TestInstalling(unittest.TestCase):
                 for _ in range(2):
                     battle.fight_story_battles()
             gate, picker, prompt, *_ = utils_story.PAGE_HANDLERS
-            self.assertEqual([gate, picker, prompt, battle.handle_cards_left, confirm], utils_story.PAGE_HANDLERS)
+            self.assertEqual([gate, picker, prompt, battle.handle_cards_left, battle.handle_devour_text, confirm], utils_story.PAGE_HANDLERS)
             self.assertIsNot(picker, utils_sortie.handle_battle_page)
             self.assertIsNot(prompt, utils_sortie.handle_battle_hand_select)
             left, top, _, _ = battle.AUTO_SLOT

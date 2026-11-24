@@ -7,6 +7,7 @@ on that same crop, confidence included, and the reader's threshold is applied to
 
 import json
 import sys
+import types
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -19,7 +20,7 @@ sys.path.insert(0, str(REPO_ROOT))
 from src.en import battle, board, cards  # noqa: E402
 from tests.fakes import HEIGHT, WIDTH, FakeBox  # noqa: E402
 from tests.TestBattlePlay import ATTACK, BIG_ATTACK, SHIELD, hand, upstream  # noqa: E402
-from tests.TestBoard import fixture  # noqa: E402
+from tests.TestBoard import SUMMONED_AT, SUMMONED_HEALTH, fixture, pasted  # noqa: E402
 
 # Each cut-out's top left corner in the frame it came from, and what OCR read on its HP crop and on its counter crop, as
 # (text, confidence) pairs. The full-frame pass had read 804 for the 304, a number the enemy had shown a moment earlier.
@@ -48,6 +49,22 @@ FIXTURES = {
     # A card reward's Attack icon, the closest thing to an X diamond in 562 saved frames at 0.629.
     "card_reward_attack": ((837, 306), [], []),
 }
+# What the full-frame pass read on a boss's intro and on its Enemy Info, as (text, x, y): a boss that eats the monsters it summons.
+DEVOUR_INTRO = (("Bercula", 0.546, 0.39), ("Invader", 0.529, 0.443), ("Boss", 0.589, 0.445),
+                ("Summon Single-edged Reptatus and Dual-edged Reptatus.", 0.719, 0.509),
+                ("Devour the summoned monsters with Devour and grow", 0.706, 0.547), ("stronger by that amount.", 0.589, 0.586),
+                ("点击屏幕关闭窗口", 0.501, 0.94), ("进入", 0.499, 0.982))
+DEVOUR_INFO = (("Enemy Info", 0.116, 0.049), ("Monsters That Appear", 0.182, 0.163), ("Bercula", 0.669, 0.163), ("Boss", 0.655, 0.203),
+               ("Invader", 0.661, 0.266), ("弱点", 0.866, 0.264), ("Boss", 0.582, 0.344),
+               ("When this monster kills another monster, it gains", 0.731, 0.387),
+               ("Recklessness and becomes the only targetable monster", 0.753, 0.423), ("until Ravaged.", 0.611, 0.456))
+# The same fight's battle frame, with the boss's 1152 and its four summons, and a Chaos run's deck screen.
+SUMMONS_BATTLE = (("474 /543", 0.214, 0.036), ("1152", 0.692, 0.168), ("131", 0.794, 0.151), ("297", 0.597, 0.313), ("297", 0.854, 0.314),
+                  ("157", 0.48, 0.391), ("157", 0.93, 0.391), ("Drone Bombin士", 0.554, 0.751), ("Engagement Fi", 0.363, 0.761),
+                  ("Strike", 0.629, 0.758), ("Tactical Analy", 0.27, 0.778), ("Spirit of the Aromata", 0.746, 0.781), ("06/10", 0.501, 0.97))
+CHAOS_DECK = (("AllPiles", 0.155, 0.051), ("Card Count", 0.529, 0.05), ("Target Spotted", 0.397, 0.156), ("Drone Bombing", 0.564, 0.156),
+              ("Upgrade", 0.393, 0.183), ("XAttack", 0.544, 0.18), ("120% Damage to all", 0.557, 0.419), ("enemies,", 0.531, 0.443),
+              ("Water Arrow", 0.39, 0.575), ("Basic Attack", 0.393, 0.6), ("Source of Water", 0.57, 0.575), ("Heal 195%", 0.556, 0.741))
 FOUR = ["acted_four_1", "acted_four_2", "acted_four_3", "acted_four_4"]
 NEXT = ["acted_next_1", "acted_next_2", "acted_next_3", "acted_next_4"]
 # Where the counter's centre sits inside each cut-out, in pixels from its left edge. The HP crop starts well right of it.
@@ -316,6 +333,57 @@ class TestEnemiesReachThePlan(unittest.TestCase):
                     utils_sortie._try_all_card_keys(task, len(task.hand_cards))
                 self.assertEqual(2, plan.call_count)
                 self.assertEqual(enemies, plan.call_args.args[1].enemies)
+
+
+def screen(texts):
+    """Build a task whose full-frame pass read some text.
+
+    Args:
+        texts: `(text, x, y)` boxes in fractions of the screen.
+
+    Returns:
+        The task.
+    """
+    return types.SimpleNamespace(all_texts=[FakeBox(text, x, y) for text, x, y in texts])
+
+
+class SummonsTask:
+    """The frame of a boss between two summoned minions, whose OCR answers each crop with the full-frame numbers inside it."""
+
+    def __init__(self):
+        self.frame = pasted("summoned_minions", *SUMMONED_AT)
+        self.height, self.width = self.frame.shape[:2]
+        self.all_texts = [FakeBox(text, x, y) for text, x, y in SUMMONED_HEALTH]
+
+    def ocr(self, left, top, right, bottom, frame=None, threshold=0, frame_processor=None):
+        """Answer a crop with the full-frame boxes whose centres fall inside it.
+
+        Returns:
+            Those boxes.
+        """
+        return [box for box in self.all_texts
+                if left <= (box.x + box.width / 2) / WIDTH <= right and top <= (box.y + box.height / 2) / HEIGHT <= bottom]
+
+
+class TestSummonsAndDevouring(unittest.TestCase):
+    """Which enemies a boss summoned, and whether the boss eats them."""
+
+    def test_each_enemy_says_whether_it_was_summoned(self):
+        self.assertEqual({1179: False, 253: True, 206: True}, {foe.health: foe.summoned for foe in board.enemies(SummonsTask())})
+
+    def test_a_boss_that_eats_its_summons_says_so_on_its_intro_and_its_enemy_info(self):
+        for name, texts in (("intro", DEVOUR_INTRO), ("enemy info", DEVOUR_INFO)):
+            with self.subTest(name):
+                self.assertTrue(board.devours_summons(screen(texts)))
+
+    def test_only_a_devour_line_beside_the_boss_tag_counts(self):
+        for name, texts in (("battle", SUMMONS_BATTLE), ("chaos deck", CHAOS_DECK),
+                            ("no boss tag", [box for box in DEVOUR_INTRO if box[0] != "Boss"]),
+                            ("no devour line", [box for box in DEVOUR_INTRO if "Devour" not in box[0]]),
+                            ("the word inside card names", (("Boss", 0.6, 0.4), ("Flower of Devoured Fate", 0.5, 0.75),
+                                                            ("Discord Devouring", 0.6, 0.75), ("Void of the Devourer", 0.7, 0.75)))):
+            with self.subTest(name):
+                self.assertFalse(board.devours_summons(screen(texts)))
 
 
 if __name__ == "__main__":
