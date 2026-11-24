@@ -90,6 +90,38 @@ ANCHORS_IN_LISTS = {
 
 MODULES = {"utils": utils, "utils_chaos": utils_chaos, "utils_sortie": utils_sortie, "utils_story": utils_story}
 
+# Each mode class the start check in `guard_health` finds by name, the file defining it, and the list module its run
+# loop walks. Any other class name starts unchecked, so a renamed or added mode has to fail here.
+MODE_CLASSES = {
+    "ChaosMode": ("ok_tasks/ChaosMode.py", "utils_chaos"),
+    "SortieMode": ("ok_tasks/SortieMode.py", "utils_sortie"),
+    "StoryMode": ("ok_tasks/StoryMode.py", "utils_story"),
+    "DailyMode": ("src/en/daily.py", "src.en.daily"),
+}
+
+
+def walked_lists(path):
+    """Map each class a file defines to the modules whose `PAGE_HANDLERS` its body reads.
+
+    Args:
+        path: The Python file.
+
+    Returns:
+        A dict of class name to a set of module names, a bare `PAGE_HANDLERS` naming the file's own module.
+    """
+    parts = path.relative_to(REPO_ROOT).with_suffix("").parts
+    own = ".".join(parts[1:] if parts[0] == "ok_tasks" else parts)
+    walked = {}
+    for node in ast.parse(path.read_text(encoding="utf-8")).body:
+        if not isinstance(node, ast.ClassDef):
+            continue
+        for inner in ast.walk(node):
+            if isinstance(inner, ast.Attribute) and inner.attr == "PAGE_HANDLERS" and isinstance(inner.value, ast.Name):
+                walked.setdefault(node.name, set()).add(inner.value.id)
+            elif isinstance(inner, ast.Name) and inner.id == "PAGE_HANDLERS":
+                walked.setdefault(node.name, set()).add(own)
+    return walked
+
 
 class TestUpstreamManifest(unittest.TestCase):
     """Check the fork's anchors against the real `ok_tasks/` modules rather than a stand-in.
@@ -113,6 +145,16 @@ class TestUpstreamManifest(unittest.TestCase):
                 with self.subTest(anchor=anchor, mode=module_name):
                     registered = [handler.__name__ for handler in MODULES[module_name].PAGE_HANDLERS]
                     self.assertIn(anchor, registered, f"{module_name} no longer registers {anchor}")
+
+    def test_the_start_check_knows_each_mode_class_and_the_list_its_run_loop_walks(self):
+        from src.en import guard_health
+
+        self.assertEqual({name: module for name, (_, module) in MODE_CLASSES.items()}, guard_health.MODES)
+        found = {}
+        for path in sorted([*(REPO_ROOT / "ok_tasks").glob("*.py"), *(REPO_ROOT / "src" / "en").glob("*.py")]):
+            for name, modules in walked_lists(path).items():
+                found[name] = (path.relative_to(REPO_ROOT).as_posix(), modules)
+        self.assertEqual({name: (path, {module}) for name, (path, module) in MODE_CLASSES.items()}, found)
 
     def test_confirm_still_runs_ahead_of_the_event_handler(self):
         # summary.py holds the run summary ahead of `handle_event_task` until Confirm draws, and leaves the press to `handle_confirm`.

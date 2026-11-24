@@ -4,6 +4,7 @@ A failed install only logs, and an edit whose anchor is missing does not even do
 mode would run on upstream behaviour: press any centred Confirm, pay Aether for Reason, tap blind on a frozen screen.
 """
 
+import functools
 import json
 import os
 import subprocess
@@ -18,7 +19,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from ok.task.exceptions import TaskDisabledException  # noqa: E402
 
-from src.en import claims, guard_health, handlers, reason, shell, spend_guard  # noqa: E402
+from src.en import claims, equipment, farm_restart, guard_health, handlers, heal, reason, shell, spend_guard  # noqa: E402
 from src.en.handlers import WRAPS  # noqa: E402
 
 CHAOS, SORTIE, STORY, DAILY = guard_health.CHAOS, guard_health.SORTIE, guard_health.STORY, guard_health.DAILY
@@ -26,9 +27,93 @@ CLASS_OF = {mode: name for name, mode in guard_health.MODES.items()}
 # The spend guard's wrapped handlers, as its install reaches them on `utils`.
 SPEND_NAMES = ("handle_stuck_log", "handle_center_confirm", "handle_enter", *spend_guard.RUN_MENU_HANDLERS, "handle_escape")
 FULL_INSTALL_SECONDS = 240
+CONFIRM = "handle_center_confirm"
+CAPTIONS = ("handle_next_step", "handle_continue", "handle_close_page", "handle_skip", "handle_settlement")
+
+
+def carrying(handler, tag):
+    """Pin the need for a handler carrying one change, undone by a same-named handler without it.
+
+    Args:
+        handler: The handler's name.
+        tag: The change.
+
+    Returns:
+        `(label, undo)`.
+    """
+    return f"{tag} ({handler})", ("tag", handler, tag)
+
+
+def spend_pins(captions, taps_and_escape=True):
+    """Pin what the spend guard leaves in one of Chaos, Sortie and Story.
+
+    Args:
+        captions: The mode's caption handlers the guard keeps off a run menu.
+        taps_and_escape: Whether the mode's list holds `handle_stuck_log` and `handle_escape`.
+
+    Returns:
+        A list of `(label, undo)`.
+    """
+    return [
+        *([carrying("handle_stuck_log", spend_guard.TAPS_TAG)] if taps_and_escape else []),
+        carrying(CONFIRM, spend_guard.CONFIRM_TAG),
+        carrying("handle_enter", spend_guard.ENTER_TAG),
+        *(carrying(name, spend_guard.RUN_MENU_TAG) for name in captions),
+        *([carrying("handle_escape", spend_guard.ESCAPE_TAG)] if taps_and_escape else []),
+        (f"Rescue stop (handle_rescue_screen ahead of {CONFIRM})", ("before", "handle_rescue_screen", CONFIRM)),
+        ("run-menu hold (handle_run_menu)", ("name", "handle_run_menu", None)),
+    ]
+
+
+STUCK_STOP = ("stuck stop (stop_when_stuck)", ("name", "stop_when_stuck", None))
+LANGUAGE_CHECK = ("Game Language check (check_game_language)", ("name", "check_game_language", None))
+FAINT_MEMORY = [("Faint Memory limit (handle_memory_limit)", ("before", "handle_memory_limit", CONFIRM)),
+                ("Divine notice (handle_divine_epiphany)", ("before", "handle_divine_epiphany", CONFIRM))]
+EQUIPMENT = [*(carrying("handle_equipment", tag) for tag in (
+                 equipment.UPGRADE_TAG, equipment.PLACEMENT_TAG, equipment.RECOMMENDED_TAG, equipment.MYTHIC_TAG,
+                 equipment.SLOT_TAG, equipment.PICK_TAG, equipment.SELECTED_TAG, equipment.DRAWN_TAG)),
+             (f"{equipment.LISTS_TAG} (_equipment_priority)", ("utils", "_equipment_priority", equipment.LISTS_TAG))]
+ZERO_SYSTEM = [*((f"Zero System Codex ({name})", ("name", name, None))
+                 for name in ("handle_select_codex", "handle_merge_codices", "handle_codex_obtained")),
+               ("Zero System Codex (handle_discovery_select)", ("identity", "handle_discovery_select", None))]
+# Every need each mode's start checks with a farm setting on, written out rather than read from `guard_health.GUARDS`
+# so a need dropped from the table fails a test: its label, then how the real-install test undoes it.
+PINS = {
+    "ChaosMode": ("utils_chaos", dict([
+        *spend_pins(CAPTIONS), carrying("handle_trauma_center", heal.TAG), *FAINT_MEMORY, *EQUIPMENT, *ZERO_SYSTEM,
+        *(carrying(name, farm_restart.TAG)
+          for name in ("handle_event_task", "handle_card_reward", "handle_disable_adaptation_distortion")),
+        STUCK_STOP, LANGUAGE_CHECK])),
+    "SortieMode": ("utils_sortie", dict([
+        *spend_pins(CAPTIONS),
+        (f"Reason only (handle_charge_reason ahead of {CONFIRM})", ("before", "handle_charge_reason", CONFIRM)),
+        carrying("handle_sortie_reward_settlement", reason.SETTLEMENT_TAG),
+        carrying("handle_sortie_reward_claim", reason.CLAIM_TAG),
+        *FAINT_MEMORY, *EQUIPMENT, STUCK_STOP, LANGUAGE_CHECK])),
+    "StoryMode": ("utils_story", dict([
+        *spend_pins(("handle_next_step", "handle_close_page"), taps_and_escape=False), STUCK_STOP, LANGUAGE_CHECK])),
+    "DailyMode": ("src.en.daily", dict([("Rescue stop (handle_rescue_screen)", ("name", "handle_rescue_screen", None)),
+                                         STUCK_STOP])),
+}
+# Daily's Rescue stop is in its own list, so upstream's lists meet it with no install run.
+STATIC = {"DailyMode": ("Rescue stop (handle_rescue_screen)",)}
+# Each guard module whose install raising refuses a start with every need met: the guard's label and the modes it refuses.
+RAISED = {
+    "src.en.spend_guard": ("spend guard", ("ChaosMode", "SortieMode", "StoryMode")),
+    "src.en.reason": ("Reason only", ("SortieMode",)),
+    "src.en.heal": ("Credits-only healing", ("ChaosMode", "SortieMode")),
+    "src.en.memory_limit": ("Faint Memory limit", ("ChaosMode", "SortieMode")),
+    "src.en.equipment": ("equipment rules", ("ChaosMode", "SortieMode")),
+    "src.en.zero_system": ("Zero System Codex rules", ("ChaosMode",)),
+    "src.en.farm_restart": ("farm restart off", ("ChaosMode",)),
+    "src.en.stuck_stop": ("stuck stop", ("ChaosMode", "SortieMode", "StoryMode", "DailyMode")),
+    "src.en.language_check": ("Game Language check", ("ChaosMode", "SortieMode", "StoryMode")),
+}
 
 # Every handler-list `apply` from `src/globals.py` on the vendored modes, run twice as two task loads would, then the
-# check for each mode; then the same with each guard's module left out, on the pristine lists.
+# check for each mode; then the same with each guard's module left out, on the pristine lists. Before the installs the
+# check reads the pristine lists; between the two, on the healthy lists, each pinned need is undone alone and each
+# guard module's install made to raise.
 FULL_INSTALL = r"""
 import importlib, json, re, sys
 root = sys.argv[1]
@@ -44,6 +129,34 @@ names = [module for module, _ in calls]
 for module, function in calls[names.index("navigation"):names.index("shell")]:
     getattr(importlib.import_module("src.en." + module), function)()
 from src.en import guard_health, handlers
+from src.en.handlers import WRAPS, loaded
+pins, raising = json.loads(sys.argv[2]), json.loads(sys.argv[3])
+
+def farming(name):
+    return type(name, (), {"config": {"刷空档": True}, "default_config": {}})()
+
+def stand_in(name, tags):
+    def handle(task):
+        return False
+    handle.__name__ = name
+    setattr(handle, WRAPS, tuple(sorted(tags)))
+    return handle
+
+def undo(module, kind, name, arg):
+    if kind == "utils":
+        setattr(utils, name, stand_in(name, guard_health.carried(getattr(utils, name)) - {arg}))
+        return
+    entries = loaded(module).PAGE_HANDLERS
+    index = guard_health.find(entries, guard_health.Need(name, name))
+    if kind == "tag":
+        entries[index] = stand_in(name, guard_health.carried(entries[index]) - {arg})
+    elif kind == "identity":
+        entries[index] = stand_in(name, guard_health.carried(entries[index]))
+    elif kind == "name":
+        del entries[index]
+    else:
+        entry = entries.pop(index)
+        entries.insert(guard_health.find(entries, guard_health.Need(arg, arg)) + 1, entry)
 
 def restore():
     for module, attributes, entries in pristine:
@@ -63,11 +176,43 @@ def refusals(skipped=None):
             found[f"{name} {farming}"] = guard_health.missing(task)
     return found
 
-result = {"healthy": refusals(), "failed": sorted(map(str, handlers.failed)), "skipped": {}}
+restore()
+result = {"pristine": {name: guard_health.missing(farming(name)) for name in pins}}
+result.update(healthy=refusals(), failed=sorted(map(str, handlers.failed)), skipped={}, undone={}, raised={})
+result["table"] = {name: [need.label for guard in guard_health.GUARDS if module in guard.modes
+                          for need in guard.needs.get(module, ())] for name, (module, _) in pins.items()}
+for name, (module, needs) in pins.items():
+    for label, (kind, handler, arg) in needs.items():
+        entries, attributes = list(loaded(module).PAGE_HANDLERS), dict(vars(utils))
+        undo(module, kind, handler, arg)
+        result["undone"][f"{name} {label}"] = guard_health.missing(farming(name))
+        loaded(module).PAGE_HANDLERS[:] = entries
+        vars(utils).update(attributes)
+for module in raising:
+    def install():
+        raise RuntimeError("raised on purpose")
+    install.__module__ = module
+    handlers.run_installs([install])
+    result["raised"][module] = {name: guard_health.missing(farming(name)) for name in pins}
+    handlers.failed.discard(install)
 for module in sorted({guard.module for guard in guard_health.GUARDS if guard.module}) + ["src.en.dice"]:
     result["skipped"][module] = refusals(module)
 print("RESULT " + json.dumps(result))
 """
+
+
+@functools.lru_cache(maxsize=None)
+def real_install():
+    """Run `FULL_INSTALL` once for every test reading it.
+
+    Returns:
+        `(result, stderr)`: the parsed result, or None when the run printed none, and the end of its error output.
+    """
+    run = subprocess.run([sys.executable, "-c", FULL_INSTALL, str(REPO_ROOT), json.dumps(PINS), json.dumps(sorted(RAISED))],
+                         capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=FULL_INSTALL_SECONDS,
+                         cwd=REPO_ROOT, env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+    lines = [line for line in run.stdout.splitlines() if line.startswith("RESULT ")]
+    return (json.loads(lines[0][len("RESULT "):]) if len(lines) == 1 else None), run.stderr[-3000:]
 
 
 class FakeTask:
@@ -348,12 +493,8 @@ class TestGuardHealth(unittest.TestCase):
         warning.assert_not_called()
 
     def test_the_real_install_starts_every_mode_and_each_skipped_guard_refuses_its_modes(self):
-        run = subprocess.run([sys.executable, "-c", FULL_INSTALL, str(REPO_ROOT)], capture_output=True, text=True,
-                             encoding="utf-8", errors="replace", timeout=FULL_INSTALL_SECONDS, cwd=REPO_ROOT,
-                             env={**os.environ, "PYTHONIOENCODING": "utf-8"})
-        lines = [line for line in run.stdout.splitlines() if line.startswith("RESULT ")]
-        self.assertEqual(1, len(lines), run.stderr[-3000:])
-        result = json.loads(lines[0][len("RESULT "):])
+        result, stderr = real_install()
+        self.assertIsNotNone(result, stderr)
         self.assertEqual([], result["failed"])
         self.assertEqual({}, {key: names for key, names in result["healthy"].items() if names})
 
@@ -376,6 +517,25 @@ class TestGuardHealth(unittest.TestCase):
             with self.subTest(module=module):
                 self.assertEqual(sorted(form.format(mode) for mode in modes for form in every), refused(module))
         self.assertEqual(["ChaosMode True"], refused("src.en.farm_restart"))
+
+    def test_the_real_install_refuses_each_need_undone_alone_and_each_guard_install_raising(self):
+        result, stderr = real_install()
+        self.assertIsNotNone(result, stderr)
+        self.assertEqual({"ChaosMode": 32, "SortieMode": 27, "StoryMode": 8, "DailyMode": 2},
+                         {name: len(needs) for name, (_, needs) in PINS.items()})
+        for name, (_, needs) in PINS.items():
+            with self.subTest(mode=name):
+                self.assertEqual(sorted(needs), sorted(result["table"][name]))
+                # With no install run, only a need held in the mode's own list is met, so none is met by chance.
+                self.assertEqual(sorted(set(needs) - set(STATIC.get(name, ()))), sorted(result["pristine"][name]))
+            for label in needs:
+                with self.subTest(mode=name, need=label):
+                    self.assertEqual([label], result["undone"][f"{name} {label}"])
+        for module, (label, modes) in RAISED.items():
+            for name in PINS:
+                with self.subTest(raised=module, mode=name):
+                    expected = [f"{label} (its install raised)"] if name in modes else []
+                    self.assertEqual(expected, result["raised"][module][name])
 
     def test_a_claims_wrapper_over_a_guarded_handler_still_counts(self):
         for module in self.modules.values():
