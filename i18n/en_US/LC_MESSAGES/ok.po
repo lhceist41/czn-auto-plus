@@ -363,6 +363,13 @@ msgstr "Take Monster Card Rewards"
 msgid "Extract Spare Equipment"
 msgstr "Extract Spare Equipment"
 
+# Daily's own settings, English keys for the same reason.
+msgid "Goal Combatants"
+msgstr "Goal Combatants"
+
+msgid "Units to Keep"
+msgstr "Units to Keep"
+
 # Section headers this fork draws over the mode settings, English for the same reason.
 msgid "Map"
 msgstr "Map"

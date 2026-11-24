@@ -1,4 +1,4 @@
-"""Run the daily chores from the Lobby: close its popups, claim attendance, mail, Activity rewards, achievements and the Carnival's attendance, visit Dream Park, stop on the Lobby.
+"""Run the daily chores from the Lobby: close its popups, claim attendance, mail, Activity rewards, achievements and the Carnival's attendance, visit Dream Park, invest in the goal Combatants, stop on the Lobby.
 
 The Lobby, its menu and the Mail screen sit next to buttons that delete mail, open the Shop, refill Aether with Crystals,
 open Rescue or quit the game. So Daily presses only the fixed targets in `TARGETS`, each on the one screen it belongs to,
@@ -18,6 +18,12 @@ down, the list is dragged a short way, a few times a visit at most. Once a visit
 upgraded while one level pays for itself by the next visit, then Another Happy Day while Happiness lags, and no other
 skill is ever pressed.
 
+With a goal list set, the last chore invests in the listed Combatants, one at a time in the list's order, from materials
+the account already holds: a Promotion, Level Up to the cap, the assigned Partner's Promotion and Level Up, Potential node
+01 on each and node 02 on the first. `invest` reads every panel, and a spend is pressed only when its button reads the go
+word on the same pass as a met counter and a Units cost that leaves the Units to keep. What each one is still short of is
+written to `invest.GOALS_FILE`. Nothing is merged, replenished, bought or dismantled.
+
 Imported by ok-script before `ok_tasks/` is on `sys.path`, so upstream is reached only through `handlers.loaded`.
 """
 
@@ -25,6 +31,7 @@ import math
 import re
 import time
 from collections import Counter, namedtuple
+from datetime import datetime
 from pathlib import Path
 
 import cv2
@@ -32,11 +39,12 @@ import numpy as np
 from ok import Logger, TriggerTask
 from ok.device.interaction_methods.post_message import PostMessageInteraction
 
-from src.en import dream_park
+from src.en import dream_park, invest
 from src.en.handlers import loaded
 from src.en.runs import stop
 from src.en.screen import centre_of, colour_share, frame_of, hsv_of, in_region, patch_of, text_in_region
 from src.en.dialog_ticks import UNTICKED, box_state
+from src.en.game_data import COMBATANTS
 from src.en.spend_guard import (ACCOUNT, DELETION, MONEY, PURCHASE, RESCUE_HEADER, RESCUE_PHRASES, RETREAT, COMPACT_SKIP_DIALOG, cleaned,
                                 folded, handle_rescue_screen, marker_in, shown)
 from src.en.story import AFTER_TAP, SKIP_IMAGE, SKIP_MATCH, find_icon, grey, tap
@@ -111,6 +119,25 @@ CARNIVAL_DAY = "a pending Carnival attendance day"
 CARNIVAL_LEAVE = "the Carnival's back arrow"
 CAPTAIN_ENTRY = "the Event list's The Path of a Captain"
 CAPTAIN_CLAIM = "a Path of a Captain tier's Claim Reward"
+INVEST_ENTRY = "the Lobby's Combatants"
+UNIT_CARD = "a goal Combatant's card"
+LIST_LEAVE = "the Combatant List's back arrow"
+DETAILS_LEAVE = "the Details screen's back arrow"
+STATS_TAB = "the Details screen's Stats tab"
+PARTNERS_TAB = "the Details screen's Partners tab"
+POTENTIAL_TAB = "the Details screen's Potential tab"
+OPEN_PROMOTION = "the Stats tab's Promotions"
+OPEN_LEVEL_UP = "the Stats tab's Level Up"
+PARTNER_UPGRADE = "the Partners tab's 强化"
+PROMOTE = "a Promotions panel's Promotions"
+AUTO_REGISTER = "the Level Up panel's Auto Register"
+LEVEL_UP = "the Level Up panel's Level Up"
+PANEL_LEAVE = "an upgrade panel's back arrow"
+NODE_01_ENTRY = "Potential node 01"
+NODE_02_ENTRY = "Potential node 02"
+ACTIVATE = "a node panel's Activate"
+NODE_LEAVE = "the node panel's back arrow"
+RESULT_CLOSE = "an upgrade result's caption"
 # Every Dream Park screen draws its back arrow at the same place, and each press of it takes one screen back. The
 # Achievement screen draws its own there too.
 BACK = (0.041, 0.046)
@@ -181,6 +208,27 @@ TARGETS = {
     CARNIVAL_LEAVE: BACK,
     CAPTAIN_ENTRY: None,
     CAPTAIN_CLAIM: None,
+    INVEST_ENTRY: None,
+    UNIT_CARD: None,
+    LIST_LEAVE: BACK,
+    DETAILS_LEAVE: BACK,
+    STATS_TAB: None,
+    PARTNERS_TAB: None,
+    POTENTIAL_TAB: None,
+    OPEN_PROMOTION: None,
+    OPEN_LEVEL_UP: None,
+    PARTNER_UPGRADE: None,
+    PROMOTE: None,
+    AUTO_REGISTER: None,
+    LEVEL_UP: None,
+    PANEL_LEAVE: BACK,
+    # The Potential map writes no caption on either node, so each is pressed at the point that opened it on the live
+    # client: node 01 always, node 02 only while its counter reads just below, at (0.442, 0.887).
+    NODE_01_ENTRY: (0.309, 0.814),
+    NODE_02_ENTRY: (0.442, 0.835),
+    ACTIVATE: None,
+    NODE_LEAVE: BACK,
+    RESULT_CLOSE: None,
 }
 # How many upgrades one park visit may press, one level each, so the cap only bounds a loop that has gone wrong, and how
 # many achievement claims: the event has 23 achievements.
@@ -204,7 +252,8 @@ DRAG_DURATION = 2
 # next round of the park, may press it again. The Activity claims only bound a loop gone wrong: a Growth Guide stage has
 # up to 10 cards and the next stage may have ready ones, and one milestone press took every reached tier. An achievement
 # category's Claim All counts afresh for each category. One press on a Carnival day took every pending day, and The Path
-# of a Captain has five tiers.
+# of a Captain has five tiers. The invest step's way between its screens counts afresh as each screen shows
+# (`INVEST_ARRIVALS`), and its spends afresh for each goal unit, so each spend limit is that unit's own.
 TAP_LIMITS = {BANNER_CLOSE: 3, NOTICE_CLOSE: 3, MENU: 3, ENVELOPE: 3, MENU_CLOSE: 3, MAIL_CLOSE: 3, WAKE: 2, CLAIM_ALL: 2, ITEMS_CLOSE: 3,
               EVENT: 3, DREAM_PARK: 3, EVENT_LEAVE: 3, ENTER_PARK: 3, PARK_ACHIEVEMENTS: 3, PAGE_LEAVE: 3, PARK_MANAGE: 3, PARK_OPERATE: 3,
               PANEL_CLOSE: 3, PARK_LEAVE: 3, PARK_RANK: 3, RANK_UP: 2, RANK_CLOSE: 3, RANK_RESULT_CLOSE: 3, UPGRADE: UPGRADE_CAP, BUILD: 3,
@@ -213,7 +262,14 @@ TAP_LIMITS = {BANNER_CLOSE: 3, NOTICE_CLOSE: 3, MENU: 3, ENVELOPE: 3, MENU_CLOSE
               HAPPY_DAY_UPGRADE: SKILL_CAP, ACTIVITY: 3, GUIDE_TAB: 3, SCHEDULE_TAB: 3, WEEKLY_TAB: 3, LOG_TAB: 3, ACTIVITY_CLOSE: 3,
               GUIDE_CLAIM: 15, STAGE_CLAIM: 3, SCHEDULE_CLAIM: 2, GOAL_CLAIM: 6, MILESTONE_CLAIM: 2, LOG_CLAIM: 2, ACHIEVEMENT_ENTRY: 3,
               JOURNEY_CARD: 3, **{tab: 3 for tab in CATEGORY_TABS}, CATEGORY_CLAIM: 2, CARDS_LEAVE: 3, CATEGORY_LEAVE: 3,
-              CARNIVAL_BANNER: 3, CARNIVAL_TAB: 2, CARNIVAL_DAY: 2, CARNIVAL_LEAVE: 3, CAPTAIN_ENTRY: 3, CAPTAIN_CLAIM: 6}
+              CARNIVAL_BANNER: 3, CARNIVAL_TAB: 2, CARNIVAL_DAY: 2, CARNIVAL_LEAVE: 3, CAPTAIN_ENTRY: 3, CAPTAIN_CLAIM: 6,
+              INVEST_ENTRY: 3, UNIT_CARD: 3, LIST_LEAVE: 3, DETAILS_LEAVE: 3, STATS_TAB: 3, PARTNERS_TAB: 3, POTENTIAL_TAB: 3,
+              OPEN_PROMOTION: 3, OPEN_LEVEL_UP: 3, PARTNER_UPGRADE: 3, PANEL_LEAVE: 3, NODE_01_ENTRY: 3, NODE_02_ENTRY: 3, NODE_LEAVE: 3,
+              RESULT_CLOSE: 3, PROMOTE: 2, LEVEL_UP: 6, AUTO_REGISTER: 8, ACTIVATE: 10}
+# What one goal unit may spend in a run: one Promotion for the Combatant and one for its Partner, three Level Up presses
+# on each of their panels, and ten node levels in all.
+LEVEL_CYCLES = 3
+ACTIVATE_CAP = 10
 TOWARD_MAIL = (MENU, ENVELOPE)
 
 # What `press` refuses whatever it was asked to press: mail deletion, the Shop, a purchase, Crystals or any account
@@ -421,9 +477,23 @@ FADED_SCENE_MATCH = 0.8
 WAKE_WAIT = 3
 # How long Claim All gets to open Items Obtained before it is pressed again, or taken as having had nothing to claim.
 CLAIM_WAIT = 5
-# The run's chores before the park, then the park visit, each get their own time.
+# The run's chores before the park, then the park visit, then the invest step, each get their own time.
 RUN_SECONDS = 600
 PARK_SECONDS = 600
+INVEST_SECONDS = 600
+# The invest step: how long a spend panel must read unchanged before its button is pressed, since a tap in its first
+# moments has been ignored; how long a press that opens a panel or a node gets to show it before the unit is skipped; how
+# long a spend gets to show its result card or change its panel; and how long Auto Register gets to fill the slots.
+PANEL_SETTLE = 3
+PANEL_WAIT = 10
+SPEND_WAIT = 5
+REGISTER_WAIT = 5
+# Spends in a row that changed nothing before Daily stops.
+NO_EFFECT_STOP = 2
+# The goal list and the Units to keep, Daily's two settings.
+GOALS_SETTING = "Goal Combatants"
+FLOOR_SETTING = "Units to Keep"
+UNITS_FLOOR = 300_000
 # How long a park screen gets to change after a press before the same target is pressed again: a second Operate or
 # Manage on the open panel would close it. How long a screen gets to draw before what it lacks counts, how long a ride's
 # level gets to rise after its press, and how long Rank Up gets to show its result.
@@ -446,11 +516,13 @@ PENDING, DONE = "pending", "done"
 Step = namedtuple("Step", "name lobby_entry menu_entry")
 # One entry per chore, in the order they run. Each starts from the Lobby with its entry tap and ends back on the Lobby.
 # The Carnival opens from the Lobby's banner, not the menu, so it comes after the menu's chores.
+# The invest step comes last, so a stop on one of its screens costs none of the chores before it.
 STEPS = (Step("mail", MENU, ENVELOPE), Step("activity", MENU, ACTIVITY), Step("achievement", MENU, ACHIEVEMENT_ENTRY),
-         Step("carnival", CARNIVAL_BANNER, None), Step("dream_park", MENU, EVENT))
+         Step("carnival", CARNIVAL_BANNER, None), Step("dream_park", MENU, EVENT), Step("invest", INVEST_ENTRY, None))
 # The claims whose count is read off the screen after Items Obtained closes, as what left it, rather than one per press.
 RECOUNTED = ("milestone", "log", "carnival", "captain")
 PARK = "dream_park"
+INVEST = "invest"
 # The menu captions pressed by the box OCR read, for the chores whose menu entry is a text button.
 MENU_ENTRIES = {ACTIVITY: MENU_ACTIVITY, ACHIEVEMENT_ENTRY: MENU_ACHIEVEMENT}
 # Where the park visit stands: reading the Manage panel, upgrading in Facilities, or on its way out to the achievements.
@@ -468,6 +540,21 @@ ARRIVALS = {
     "rank result": (RANK_UP, STORY_SKIP, SKIP_CONFIRM),
     "achievements": (PARK_ACHIEVEMENTS, ITEMS_CLOSE),
 }
+# The targets that lead into each invest screen, which count afresh once it shows.
+INVEST_ARRIVALS = {
+    "list": (INVEST_ENTRY, DETAILS_LEAVE),
+    "stats": (UNIT_CARD, STATS_TAB, PANEL_LEAVE),
+    "partners": (PARTNERS_TAB, PANEL_LEAVE),
+    "map": (POTENTIAL_TAB, NODE_LEAVE),
+    "panel": (OPEN_PROMOTION, OPEN_LEVEL_UP, PARTNER_UPGRADE, RESULT_CLOSE),
+    "node": (NODE_01_ENTRY, NODE_02_ENTRY, RESULT_CLOSE),
+}
+# The spends, which count afresh for each goal unit.
+INVEST_SPENDS = (PROMOTE, LEVEL_UP, AUTO_REGISTER, ACTIVATE)
+# The screens whose reading OCR may vary on without the screen changing: a press made on one is not repeated while it shows.
+STEADY_SCREENS = ("stats", "partners", "map", "list")
+# Where a goal unit's visit stands: its Promotion, its Level Up, its Partner's, its Potential nodes, then done.
+TO_PROMOTE, TO_LEVEL, TO_PARTNER, TO_POTENTIAL, VISITED = "promote", "level", "partner", "potential", "visited"
 # The screens inside the park, where a Rank Up can start one of the park's stories.
 IN_PARK = ("profit report", "park", "manage", "facilities", "rank", "rank result")
 # A press on a point the OCR read nothing at, shaped as a box for `press`.
@@ -486,13 +573,14 @@ def run_state(task):
         A dict: each step's state, the presses per target, when the run started, when the Lobby was last read, when an
         unknown screen, the Mail screen and the attendance popup were first seen, when Claim All, the wake, Claim Reward
         and the attendance popup's X were last pressed, what the mail step found, the park visit's own state and the Activity
-        and Achievement claims' own state.
+        and Achievement claims' own state, and the invest step's.
     """
     state = vars(task).get(RUN)
     if state is None:
         state = {"steps": {step.name: PENDING for step in STEPS}, "taps": Counter(), "started": time.monotonic(),
                  "lobby_seen": None, "unknown_since": None, "mail_seen": None, "claim_pressed": None, "woken": None, "mail": None,
-                 "attendance_seen": None, "attendance_claimed": None, "attendance_closed": None, "park": new_park(), "claims": new_claims()}
+                 "attendance_seen": None, "attendance_claimed": None, "attendance_closed": None, "park": new_park(), "claims": new_claims(),
+                 "invest": new_invest()}
         setattr(task, RUN, state)
     return state
 
@@ -536,6 +624,21 @@ def new_claims():
     """
     return {"screen": None, "since": None, "pressed": {}, "phase": 0, "category": 0, "pending": None, "recount": None, "misses": 0,
             "claimed": Counter(), "carnival": None, "captain": None}
+
+
+def new_invest():
+    """Start the invest step's state.
+
+    Returns:
+        A dict: when the step started, the goal units and the Units to keep once read, which goal unit is next and the
+        visit under way, the units holding the shared materials back, the goal file's lines by unit and action, the spends
+        made, the notes for the finish line, spends in a row that changed nothing, the screen showing and since when, the
+        screen the last corner or node press was made on, the spend awaiting its effect, when and on what screen each
+        target was last pressed, whether every goal unit has been visited, and why the goal file could not be written.
+    """
+    return {"started": None, "goals": None, "floor": None, "index": 0, "visit": None, "held": set(), "lines": {}, "spends": [],
+            "notes": [], "misses": 0, "screen": None, "since": None, "guard": None, "spend": None, "pressed": {}, "ended": False,
+            "unwritten": None}
 
 
 def pending_step(task):
@@ -755,19 +858,22 @@ def handle_daily_tutorial(task):
 
 
 def handle_daily_overtime(task):
-    """Stop a run that has gone on far longer than its chores take, the park visit timed on its own from when it starts."""
+    """Stop a run that has gone on far longer than its chores take, the park visit and the invest step each timed on their own while under way."""
     state = run_state(task)
-    park = state["park"]
     now = time.monotonic()
-    if park["started"] is None and park_active(task):
-        park["started"] = now
-    if park["started"] is None:
-        if now - state["started"] < RUN_SECONDS:
-            return False
-        return stop(task, f"Stopped: Daily ran for {RUN_SECONDS // 60} minutes without finishing. Check the game, then press Start again.")
-    if now - park["started"] < PARK_SECONDS:
+    step = pending_step(task)
+    if step is None:
         return False
-    return stop(task, f"Stopped: the Dream Park visit ran for {PARK_SECONDS // 60} minutes without finishing. Check the game, then press Start again.")
+    if step.name in (PARK, INVEST):
+        clock, seconds, what = (state["park"], PARK_SECONDS, "the Dream Park visit") if step.name == PARK else (state["invest"], INVEST_SECONDS, "the invest step")
+        if clock["started"] is None:
+            clock["started"] = now
+        if now - clock["started"] < seconds:
+            return False
+        return stop(task, f"Stopped: {what} ran for {seconds // 60} minutes without finishing. Check the game, then press Start again.")
+    if now - state["started"] < RUN_SECONDS:
+        return False
+    return stop(task, f"Stopped: Daily ran for {RUN_SECONDS // 60} minutes without finishing. Check the game, then press Start again.")
 
 
 def handle_daily_items_obtained(task):
@@ -1993,6 +2099,696 @@ def handle_daily_event_list(task):
     return press_once(task, EVENT_LEAVE)
 
 
+def invest_state(task):
+    """Give the invest step's state."""
+    return run_state(task)["invest"]
+
+
+def setting(task, key, default):
+    """Read one of Daily's settings, or its default where the task has no config."""
+    config = getattr(task, "config", None)
+    return config.get(key, default) if config is not None else default
+
+
+def invest_goals(task):
+    """Give the goal units, read from the setting once a run and checked against the game's combatants."""
+    inv = invest_state(task)
+    if inv["goals"] is None:
+        goals = invest.goal_units(setting(task, GOALS_SETTING, []))
+        if goals.unknown:
+            task.log_info(f"the goal list names {', '.join(goals.unknown)}, which the game data does not know, so they are left out")
+            inv["notes"].append(f"left out {', '.join(goals.unknown)} (not a known Combatant)")
+        floor = setting(task, FLOOR_SETTING, UNITS_FLOOR)
+        inv["goals"] = goals.units
+        inv["floor"] = floor if isinstance(floor, int) and not isinstance(floor, bool) and floor >= 0 else UNITS_FLOOR
+    return inv["goals"]
+
+
+def invest_active(task):
+    """Say whether the invest step is the chore under way with a goal list to work through."""
+    step = pending_step(task)
+    return step is not None and step.name == INVEST and bool(invest_goals(task))
+
+
+def invest_arrive(task, kind, signature):
+    """Note that an invest screen reads in full: restart the unknown-screen clock and count afresh the targets that lead to it.
+
+    A different screen or panel state from the one the last corner or node press was made on frees that place again.
+
+    Args:
+        task: The Daily task.
+        kind: A key of `INVEST_ARRIVALS`, or "card".
+        signature: What the screen reads, compared from pass to pass.
+
+    Returns:
+        How long, in seconds, this exact reading has shown.
+    """
+    recognised(task)
+    taps = run_state(task)["taps"]
+    for target in INVEST_ARRIVALS.get(kind, ()):
+        taps[target] = 0
+    inv = invest_state(task)
+    now = time.monotonic()
+    if inv["screen"] != signature:
+        inv["screen"], inv["since"] = signature, now
+    if not guard_holds(task, signature):
+        inv["guard"] = None
+    return now - inv["since"]
+
+
+def guard_holds(task, signature):
+    """Say whether the last corner or node press still bars that place on this reading.
+
+    Only another screen frees it, or on a spend panel another state of it: a Stats tab, Partners tab, list or map read
+    again, however its OCR wavers, is the screen the press was made on.
+
+    Args:
+        task: The Daily task.
+        signature: The screen's reading now, its kind first.
+
+    Returns:
+        True while the press must not be repeated.
+    """
+    guard = invest_state(task)["guard"]
+    if guard is None or guard[0] != signature[0]:
+        return False
+    return guard == signature or signature[0] in STEADY_SCREENS
+
+
+def press_invest(task, target, box=None):
+    """Press an invest target through `press`, refusing first any box under it that reads as a control no invest press may touch.
+
+    Args:
+        task: The Daily task.
+        target: A key of `TARGETS`.
+        box: The OCR box for a text button, None for a fixed point.
+
+    Returns:
+        True, which claims the frame.
+    """
+    point = centre_of(box, task.width, task.height) if box is not None else TARGETS[target]
+    for hit in ([box] if box is not None else []) + boxes_at(task, point):
+        marker = invest.refused(hit.name)
+        if marker:
+            task.log_info(f"not pressing {target}: the box there reads {hit.name!r} ({marker!r})")
+            return stop(task, f"Stopped: {target} would have pressed {hit.name!r}. Check the game, then press Start again.")
+    return press(task, target, box)
+
+
+def press_invest_once(task, target, box=None):
+    """Press an invest target, unless it was pressed moments ago on a screen that still reads the same, and may still be changing."""
+    inv = invest_state(task)
+    now = time.monotonic()
+    last = inv["pressed"].get(target)
+    if last is not None and now - last[0] < NAV_WAIT and last[1] == inv["screen"]:
+        return True
+    inv["pressed"][target] = (now, inv["screen"])
+    return press_invest(task, target, box)
+
+
+def guarded_press(task, target, box, signature, opening=True):
+    """Make a press that must not be repeated on the screen it was made on: a corner press, or a node's opening press.
+
+    The Stats tab's Promotions and Level Up open a panel whose own button sits on the same spot, so a second tap while the
+    panel draws would spend unread.
+
+    Args:
+        task: The Daily task.
+        target: A key of `TARGETS`.
+        box: The OCR box, None for a fixed point.
+        signature: The screen's reading, which must change before that place is pressed again.
+        opening: Whether the press opens a panel or node, whose wait `opening_waits` then times.
+
+    Returns:
+        True, which claims the frame.
+    """
+    inv = invest_state(task)
+    if guard_holds(task, signature):
+        return True
+    inv["guard"] = signature
+    if opening:
+        inv["visit"]["opened"] = time.monotonic()
+    return press_invest(task, target, box)
+
+
+def new_visit(unit, index):
+    """Start one goal unit's visit.
+
+    Returns:
+        A dict: the unit and its place in the goal list, whether the Stats tab has read its name since the last screen
+        Daily did not know, whether that ever happened, where the visit stands, when the last guarded press was made, the
+        spends per action, the actions whose panel was read and left, those whose spend changed nothing, when Auto Register
+        was pressed, whether its Promotion ended ready but for the Units and whether below its cap, its Partner's name and what its
+        `强化` was pressed for, the node opened and the nodes done.
+    """
+    return {"unit": unit, "index": index, "checked": False, "arrived": False, "phase": TO_PROMOTE, "opened": None, "spent": Counter(),
+            "read": set(), "no_effect": set(), "registered": None, "units_short": False, "below_cap": None, "partner": None,
+            "partner_action": None, "node": None, "nodes_done": set()}
+
+
+def note(task, text):
+    """Log a line and keep it for the finish line's invest part."""
+    task.log_info(text)
+    invest_state(task)["notes"].append(text)
+
+
+def end_visit(task, why=None):
+    """End the goal unit's visit and move on to the next, holding later units' Level Up back when it ended unread, below its cap,
+    or with its Promotion ready but for the Units, the one thing a Promotion and a Level Up both spend.
+
+    Args:
+        task: The Daily task.
+        why: Why it ended early, for the finish line, or None.
+    """
+    inv = invest_state(task)
+    visit = inv["visit"]
+    if why is not None:
+        note(task, why)
+    if not visit["arrived"] or visit["units_short"] or visit["below_cap"] is not False:
+        inv["held"].add(visit["unit"])
+    visit["phase"], visit["checked"] = VISITED, False
+    inv["index"] = visit["index"] + 1
+
+
+def level_held(task):
+    """Say whether this goal unit must leave its Level Up for a unit listed before it."""
+    inv = invest_state(task)
+    return not invest.level_allowed(inv["goals"], inv["visit"]["index"], inv["held"])
+
+
+def record_short(task, action, have, need, units, caption_box, reason):
+    """Keep a short action for the goal file and the finish line.
+
+    The goal file gets a line only when the button reads something other than its go word: a met counter under the Units
+    floor, or a go word Daily did not press, writes none.
+
+    Args:
+        task: The Daily task.
+        action: One of the `invest` action names.
+        have: The counter's first number.
+        need: Its second.
+        units: The Units cost.
+        caption_box: The button's box.
+        reason: Why it was not pressed.
+    """
+    inv = invest_state(task)
+    visit = inv["visit"]
+    caption = folded(caption_box.name)
+    task.log_info(f"not investing in {visit['unit']}: {action}, {reason}")
+    if caption in (invest.PROMOTE_WORD, invest.ACTIVATE_WORD):
+        inv["notes"].append(f"{visit['unit']} {action}: {reason}")
+        return
+    stage = invest.stage_for(visit["unit"], action, visit["partner"], caption)
+    inv["lines"][(visit["unit"], action)] = invest.goal_line(visit["unit"], action, have, need, units, caption_box.name.strip(), stage,
+                                                             datetime.now().isoformat(timespec="seconds"))
+
+
+def spend(task, target, box, action, signature, detail):
+    """Press a spend, log it, and wait for its effect.
+
+    Args:
+        task: The Daily task.
+        target: `PROMOTE`, `LEVEL_UP` or `ACTIVATE`.
+        box: The button's box.
+        action: One of the `invest` action names.
+        signature: The panel's reading, which its effect must change.
+        detail: The counter, cost and Units, for the log.
+
+    Returns:
+        True, which claims the frame.
+    """
+    inv = invest_state(task)
+    visit = inv["visit"]
+    visit["spent"][action] += 1
+    inv["spend"] = {"action": action, "signature": signature, "at": time.monotonic()}
+    task.log_info(f"investing in {visit['unit']}: {action}, {detail}")
+    return guarded_press(task, target, box, signature, opening=False)
+
+
+def amount(value):
+    """Write a Units figure for the log, `70,000`, or say it did not read."""
+    return f"{value:,}" if isinstance(value, int) else "unread"
+
+
+def took_effect(task):
+    """Count the awaited spend as done."""
+    inv = invest_state(task)
+    inv["spends"].append((inv["visit"]["unit"], inv["spend"]["action"]))
+    inv["spend"], inv["misses"] = None, 0
+
+
+def awaiting_spend(task, signature):
+    """Settle the awaited spend against the screen: its effect shows once the panel reads differently.
+
+    Args:
+        task: The Daily task.
+        signature: The panel's reading now.
+
+    Returns:
+        True while the spend's wait runs on an unchanged panel, or once Daily has stopped: press nothing. False otherwise;
+        a spend that changed nothing is then left in the visit's `no_effect`.
+    """
+    inv = invest_state(task)
+    pending = inv["spend"]
+    if pending is None:
+        return False
+    if signature != pending["signature"]:
+        took_effect(task)
+        return False
+    if time.monotonic() - pending["at"] < SPEND_WAIT:
+        return True
+    inv["spend"] = None
+    inv["misses"] += 1
+    inv["visit"]["no_effect"].add(pending["action"])
+    note(task, f"{inv['visit']['unit']}: {pending['action']} changed nothing")
+    if inv["misses"] >= NO_EFFECT_STOP:
+        return stop(task, f"Stopped: {NO_EFFECT_STOP} upgrade presses in a row changed nothing. Check the game, then press Start again.")
+    return False
+
+
+def end_invest(task):
+    """Write the goal file with every short action, in goal order, once every goal unit is visited. The step is done back on the Lobby."""
+    inv = invest_state(task)
+    inv["ended"] = True
+    order = {unit: place for place, unit in enumerate(inv["goals"])}
+    lines = [inv["lines"][key] for key in sorted(inv["lines"], key=lambda key: order.get(key[0], len(order)))]
+    try:
+        invest.write_goals(lines)
+    except Exception as error:
+        logger.warning(f"could not write {invest.GOALS_FILE}: {error}")
+        inv["unwritten"] = str(error)
+
+
+def invest_summary(inv):
+    """Say in a few words what the invest step did, for the finish line: each unit's spends and first shortfall, then the rest.
+
+    Args:
+        inv: The invest step's state.
+
+    Returns:
+        The words, or None when there was no goal list.
+    """
+    if not inv["goals"]:
+        return None
+    parts = []
+    for unit in inv["goals"]:
+        spent = Counter(action for who, action in inv["spends"] if who == unit)
+        short = next((line for (who, _), line in inv["lines"].items() if who == unit), None)
+        words = ", ".join(f"{action} x{count}" if count > 1 else action for action, count in spent.items()) or "nothing spent"
+        if short is not None:
+            words += f", short: {short['action']} {short['have']}/{short['need']} ({short['caption']})"
+        parts.append(f"{unit}: {words}")
+    summary = "Invest: " + "; ".join(parts)
+    stageless = [f"{line['unit']} {line['action']} ({line['caption']})" for line in inv["lines"].values() if not line["stage"]]
+    if stageless:
+        summary += f"; no farming stage for {', '.join(stageless)}"
+    if inv["notes"]:
+        summary += f" ({'; '.join(inv['notes'])})"
+    if inv["unwritten"]:
+        summary += f" (the goal file was not written: {inv['unwritten']})"
+    return summary
+
+
+def tab_press(task, word, region, target):
+    """Press one of the Details screen's left tabs by its caption, or leave Details when it does not read."""
+    box = invest.equal_in(task, word, region)
+    if box is None:
+        end_visit(task, f"{invest_state(task)['visit']['unit']}: the {word.title()} tab did not read")
+        return press_invest_once(task, DETAILS_LEAVE)
+    return press_invest_once(task, target, box)
+
+
+def to_phase(task):
+    """Head for the Details tab where the visit stands: Stats for its own rows, Partners, Potential, or out once visited."""
+    phase = invest_state(task)["visit"]["phase"]
+    if phase in (TO_PROMOTE, TO_LEVEL):
+        return tab_press(task, "stats", invest.STATS_TAB_REGION, STATS_TAB)
+    if phase == TO_PARTNER:
+        return tab_press(task, "partners", invest.PARTNERS_TAB_REGION, PARTNERS_TAB)
+    if phase == TO_POTENTIAL:
+        return tab_press(task, "potential", invest.POTENTIAL_TAB_REGION, POTENTIAL_TAB)
+    return press_invest_once(task, DETAILS_LEAVE)
+
+
+def opening_waits(task, signature, what):
+    """Wait for a panel or node an opening press asked for, skipping the unit once it has not shown in time.
+
+    Args:
+        task: The Daily task.
+        signature: The screen's reading now.
+        what: The press's words, for the note.
+
+    Returns:
+        True while it waits, False once the screen has changed since the press, None once the unit was skipped.
+    """
+    inv = invest_state(task)
+    visit = inv["visit"]
+    if visit["opened"] is None:
+        return False
+    if not guard_holds(task, signature):
+        visit["opened"] = None
+        return False
+    if time.monotonic() - visit["opened"] < PANEL_WAIT:
+        return True
+    visit["opened"] = None
+    end_visit(task, f"{visit['unit']}: {what} did not open")
+    return None
+
+
+def handle_daily_invest_card(task):
+    """Close a card an upgrade put up, by its caption, never the `进入` the Return item card reads under it."""
+    if not invest_active(task):
+        return False
+    card = invest.result_card(task)
+    if card is None:
+        return False
+    invest_arrive(task, "card", ("card", card.kind))
+    if invest_state(task)["spend"] is not None:
+        took_effect(task)
+    return press_invest_once(task, RESULT_CLOSE, card.caption_box)
+
+
+def handle_daily_invest_list(task):
+    """Open the next goal unit's card on the Combatant List's visible row, or leave once every goal unit is visited.
+
+    A goal unit whose name is not on the row is skipped with a note: the list is never dragged or re-sorted.
+    """
+    if not invest_active(task) or not invest.combatant_list(task):
+        return False
+    shown_for = invest_arrive(task, "list", ("list",))
+    inv = invest_state(task)
+    visit = inv["visit"]
+    if visit is not None and visit["phase"] != VISITED and visit["arrived"]:
+        end_visit(task, f"{visit['unit']}: back on the Combatant List before its visit ended")
+    elif visit is not None:
+        visit["checked"] = False
+    goals = inv["goals"]
+    while inv["index"] < len(goals) and not inv["ended"]:
+        unit = goals[inv["index"]]
+        point = invest.card_point(task, unit)
+        if point is None:
+            if shown_for < SETTLE:
+                return True
+            if inv["visit"] is None or inv["visit"]["unit"] != unit:
+                inv["visit"] = new_visit(unit, inv["index"])
+            end_visit(task, f"{unit}: not on the Combatant List's visible row")
+            continue
+        if inv["visit"] is None or inv["visit"]["unit"] != unit:
+            inv["visit"] = new_visit(unit, inv["index"])
+            taps = run_state(task)["taps"]
+            for target in INVEST_SPENDS:
+                taps[target] = 0
+        x, y = point[0] * task.width, point[1] * task.height
+        return press_invest_once(task, UNIT_CARD, Spot(unit, x - 1, y - 1, 2, 2))
+    if not inv["ended"]:
+        end_invest(task)
+    return press_invest_once(task, LIST_LEAVE)
+
+
+def handle_daily_invest_stats(task):
+    """Check the goal unit's name on its Stats tab, then open its Promotion or Level Up, or go on to its Partner and Potential.
+
+    The name is the one place these screens say whose they are, so every later press of the visit rests on this check.
+    """
+    if not invest_active(task):
+        return False
+    stats = invest.stats_screen(task)
+    if stats is None:
+        return False
+    signature = ("stats", folded(stats.name), stats.level, stats.cap, stats.caption)
+    invest_arrive(task, "stats", signature)
+    visit = invest_state(task)["visit"]
+    if visit is None or visit["phase"] == VISITED:
+        return press_invest_once(task, DETAILS_LEAVE)
+    if not invest.same_name(stats.name, visit["unit"]):
+        end_visit(task, f"{visit['unit']}: skipped, its card opened {stats.name}")
+        return press_invest_once(task, DETAILS_LEAVE)
+    visit["checked"] = visit["arrived"] = True
+    visit["below_cap"], visit["registered"] = stats.level < stats.cap, None
+    waiting = opening_waits(task, signature, "its upgrade panel")
+    if waiting is None:
+        return press_invest_once(task, DETAILS_LEAVE)
+    if waiting:
+        return True
+    if visit["phase"] == TO_PROMOTE:
+        if stats.level == stats.cap and stats.caption == invest.PROMOTE_WORD and invest.PROMOTION not in visit["read"]:
+            return guarded_press(task, OPEN_PROMOTION, stats.caption_box, signature)
+        visit["phase"] = TO_LEVEL
+    if visit["phase"] == TO_LEVEL:
+        if stats.level < stats.cap and stats.caption == invest.LEVEL_UP_WORD and invest.LEVEL not in visit["read"]:
+            if not level_held(task):
+                return guarded_press(task, OPEN_LEVEL_UP, stats.caption_box, signature)
+            note(task, f"{visit['unit']}: Level Up left for a goal unit listed before it")
+            visit["read"].add(invest.LEVEL)
+        visit["phase"] = TO_PARTNER
+    return to_phase(task)
+
+
+def handle_daily_invest_partners(task):
+    """Open the goal unit's Partner's Promotion or Level Up with `强化`, never `Change`, then go on to Potential, at once when it has no Partner."""
+    if not invest_active(task):
+        return False
+    partner = invest.partners_tab(task)
+    if partner is None:
+        return invest.no_partner_tab(task) and no_partner(task)
+    signature = ("partners", folded(partner.name), partner.level, partner.cap, partner.upgrade_box is not None)
+    invest_arrive(task, "partners", signature)
+    visit = invest_state(task)["visit"]
+    if visit is None or visit["phase"] == VISITED:
+        return press_invest_once(task, DETAILS_LEAVE)
+    if not visit["checked"]:
+        return tab_press(task, "stats", invest.STATS_TAB_REGION, STATS_TAB)
+    visit["partner"], visit["registered"] = partner.name, None
+    waiting = opening_waits(task, signature, "its Partner's upgrade panel")
+    if waiting is None:
+        return press_invest_once(task, DETAILS_LEAVE)
+    if waiting:
+        return True
+    if visit["phase"] == TO_PARTNER:
+        action = invest.PARTNER_PROMOTION if partner.level == partner.cap else invest.PARTNER_LEVEL
+        if action not in visit["read"] and action not in visit["no_effect"]:
+            if action == invest.PARTNER_LEVEL and level_held(task):
+                note(task, f"{visit['unit']}: its Partner's Level Up left for a goal unit listed before it")
+            elif partner.upgrade_box is None:
+                note(task, f"{visit['unit']}: the Partner's 强化 did not read on its own")
+            else:
+                visit["partner_action"] = action
+                return guarded_press(task, PARTNER_UPGRADE, partner.upgrade_box, signature)
+        visit["phase"] = TO_POTENTIAL
+    return to_phase(task)
+
+
+def no_partner(task):
+    """Go on to Potential from a Partners tab that offers only `Assign Partner`, which is never pressed."""
+    invest_arrive(task, "partners", ("partners", None))
+    visit = invest_state(task)["visit"]
+    if visit is None or visit["phase"] == VISITED:
+        return press_invest_once(task, DETAILS_LEAVE)
+    if not visit["checked"]:
+        return tab_press(task, "stats", invest.STATS_TAB_REGION, STATS_TAB)
+    if visit["phase"] == TO_PARTNER:
+        note(task, f"{visit['unit']}: no Partner assigned")
+        visit["phase"] = TO_POTENTIAL
+    return to_phase(task)
+
+
+def leave_panel(task, owner, action):
+    """Count a panel's action as read and leave the panel, the visit moving on past it.
+
+    Args:
+        task: The Daily task.
+        owner: "combatant" or "partner".
+        action: The action just read.
+
+    Returns:
+        True, which claims the frame.
+    """
+    visit = invest_state(task)["visit"]
+    visit["read"].add(action)
+    if owner == "partner":
+        visit["phase"] = TO_POTENTIAL
+    elif action == invest.LEVEL or visit["phase"] == TO_LEVEL:
+        visit["phase"] = TO_PARTNER
+    else:
+        visit["phase"] = TO_LEVEL
+    return press_invest_once(task, PANEL_LEAVE)
+
+
+def panel_belongs(visit, owner):
+    """Say whether an upgrade panel is the one the visit stands at: the Combatant's before its Partner's."""
+    return visit["phase"] in (TO_PROMOTE, TO_LEVEL) if owner == "combatant" else visit["phase"] == TO_PARTNER
+
+
+def handle_daily_invest_promotion(task):
+    """Promote the goal unit or its Partner once, only when the button equals `Promotions` over a met counter and the Units allow it.
+
+    Any other caption, read whole or garbled, counts as short: it goes to the goal file and the panel is left.
+    """
+    if not invest_active(task):
+        return False
+    panel = invest.promotion_panel(task)
+    if panel is None:
+        return False
+    signature = ("promotion", panel.owner, panel.level, panel.cap, panel.next, panel.have, panel.need, panel.cost, panel.caption)
+    shown_for = invest_arrive(task, "panel", signature)
+    inv = invest_state(task)
+    visit = inv["visit"]
+    if visit is None or visit["phase"] == VISITED or not visit["checked"] or not panel_belongs(visit, panel.owner):
+        return press_invest_once(task, PANEL_LEAVE)
+    if awaiting_spend(task, signature):
+        return True
+    action = invest.PROMOTION if panel.owner == "combatant" else invest.PARTNER_PROMOTION
+    reason = invest.promotion_go(panel, inv["floor"])
+    if panel.owner == "combatant":
+        visit["below_cap"] = panel.level < panel.cap
+        visit["units_short"] = invest.held_by_units(panel, reason)
+    # A Promotion is made only where the visit opened the panel for it, so never right after levelling to a new cap.
+    opened_for = visit["phase"] == TO_PROMOTE if panel.owner == "combatant" else visit["partner_action"] == invest.PARTNER_PROMOTION
+    first = opened_for and action not in visit["read"] and not visit["spent"][action]
+    if reason is None and first and action not in visit["no_effect"]:
+        if shown_for < PANEL_SETTLE or guard_holds(task, signature):
+            return True
+        return spend(task, PROMOTE, panel.caption_box, action, signature, f"{panel.have}/{panel.need}, {amount(panel.cost)} of {amount(panel.units)} Units")
+    if reason is not None:
+        record_short(task, action, panel.have, panel.need, panel.cost, panel.caption_box, reason)
+    return leave_panel(task, panel.owner, action)
+
+
+def handle_daily_invest_level(task):
+    """Level the goal unit or its Partner: Auto Register first, then `Level Up` while it gives levels, three presses a panel at most."""
+    if not invest_active(task):
+        return False
+    panel = invest.level_panel(task)
+    if panel is None:
+        return False
+    signature = ("level", panel.owner, panel.level, panel.gain, panel.cost, panel.caption)
+    shown_for = invest_arrive(task, "panel", signature)
+    inv = invest_state(task)
+    visit = inv["visit"]
+    if visit is None or visit["phase"] == VISITED or not visit["checked"] or not panel_belongs(visit, panel.owner):
+        return press_invest_once(task, PANEL_LEAVE)
+    if awaiting_spend(task, signature):
+        return True
+    action = invest.LEVEL if panel.owner == "combatant" else invest.PARTNER_LEVEL
+    if panel.owner == "combatant":
+        visit["phase"] = TO_LEVEL
+    if action in visit["read"] or action in visit["no_effect"] or visit["spent"][action] >= LEVEL_CYCLES:
+        return leave_panel(task, panel.owner, action)
+    if level_held(task):
+        note(task, f"{visit['unit']}: {action} left for a goal unit listed before it")
+        return leave_panel(task, panel.owner, action)
+    # Any other caption, as a tutorial line's `Space` over the panel, means the panel is not all there is.
+    if panel.caption != invest.LEVEL_UP_WORD:
+        note(task, f"{visit['unit']} {action}: the button reads {panel.caption_box.name.strip()!r}")
+        return leave_panel(task, panel.owner, action)
+    if panel.gain == 0:
+        if visit["registered"] is None:
+            visit["registered"] = time.monotonic()
+            return press_invest(task, AUTO_REGISTER, panel.register_box)
+        if time.monotonic() - visit["registered"] < REGISTER_WAIT:
+            return True
+    reason = invest.level_go(panel, inv["floor"])
+    if reason is not None:
+        note(task, f"{visit['unit']} {action}: {reason}")
+        return leave_panel(task, panel.owner, action)
+    if shown_for < PANEL_SETTLE or guard_holds(task, signature):
+        return True
+    visit["registered"] = None
+    return spend(task, LEVEL_UP, panel.caption_box, action, signature, f"Lv.{panel.level}+{panel.gain}, {amount(panel.cost)} of {amount(panel.units)} Units")
+
+
+def handle_daily_invest_map(task):
+    """Open node 01 on every goal unit's Potential map and node 02 on the first goal unit's, then leave Details."""
+    if not invest_active(task) or not invest.potential_map(task):
+        return False
+    signature = ("map", invest.only_match(task, invest.COUNTER, invest.NODE_02_COUNTER_REGION).group(0))
+    invest_arrive(task, "map", signature)
+    visit = invest_state(task)["visit"]
+    if visit is None or visit["phase"] == VISITED:
+        return press_invest_once(task, DETAILS_LEAVE)
+    if not visit["checked"]:
+        return tab_press(task, "stats", invest.STATS_TAB_REGION, STATS_TAB)
+    if visit["phase"] != TO_POTENTIAL:
+        return to_phase(task)
+    waiting = opening_waits(task, signature, f"Potential node {visit['node']}")
+    if waiting is None:
+        return press_invest_once(task, DETAILS_LEAVE)
+    if waiting:
+        return True
+    nodes = ("01", "02") if visit["index"] == 0 else ("01",)
+    # Node 02 at its last level has nothing to buy and no button to read, so it is not opened.
+    if "02" in nodes and "02" not in visit["nodes_done"] and invest.node_02_full(task):
+        visit["nodes_done"].add("02")
+        task.log_info(f"{visit['unit']}: Potential node 02 is at its last level")
+    node = next((node for node in nodes if node not in visit["nodes_done"]), None)
+    if node is None:
+        end_visit(task)
+        return press_invest_once(task, DETAILS_LEAVE)
+    visit["node"] = node
+    return guarded_press(task, NODE_01_ENTRY if node == "01" else NODE_02_ENTRY, None, signature)
+
+
+def handle_daily_invest_node(task):
+    """Activate the opened node while its button equals `Activate` over a met counter and the Units allow it: node 01 once, node 02 to the limit.
+
+    A node panel with nothing left to buy, as an active node 01, counts the node as done.
+    """
+    if not invest_active(task):
+        return False
+    node = invest.node_panel(task)
+    if node is None:
+        done = invest.done_node(task)
+        return done is not None and node_done(task, done)
+    signature = ("node", node.name, node.level, node.have, node.need, node.cost, node.caption)
+    shown_for = invest_arrive(task, "node", signature)
+    inv = invest_state(task)
+    visit = inv["visit"]
+    if visit is None or visit["phase"] != TO_POTENTIAL or not visit["checked"] or visit["node"] is None:
+        return press_invest_once(task, NODE_LEAVE)
+    if awaiting_spend(task, signature):
+        return True
+    which = visit["node"]
+    action = invest.NODE_01 if which == "01" else invest.NODE_02
+    if node.name != invest.NODE_NAMES[which] or (which == "02" and node.level is None):
+        visit["nodes_done"].add(which)
+        note(task, f"{visit['unit']}: Potential node {which} opened a panel that reads {node.name!r}")
+        return press_invest_once(task, NODE_LEAVE)
+    activated = visit["spent"][invest.NODE_01] + visit["spent"][invest.NODE_02]
+    done = action in visit["no_effect"] or (which == "01" and visit["spent"][action]) or activated >= ACTIVATE_CAP
+    if not done:
+        reason = invest.node_go(node, inv["floor"])
+        if reason is None:
+            if shown_for < PANEL_SETTLE or guard_holds(task, signature):
+                return True
+            return spend(task, ACTIVATE, node.caption_box, action, signature, f"{node.have}/{node.need}, {amount(node.cost)} of {amount(node.units)} Units")
+        record_short(task, action, node.have, node.need, node.cost, node.caption_box, reason)
+    visit["nodes_done"].add(which)
+    return press_invest_once(task, NODE_LEAVE)
+
+
+def node_done(task, done):
+    """Leave a node panel with nothing left to buy once it has read unchanged for `PANEL_SETTLE`, the node counting as done.
+
+    The wait keeps a panel whose counter and button have not drawn yet from passing for one.
+    """
+    shown_for = invest_arrive(task, "node", ("node", done.name, "done"))
+    inv = invest_state(task)
+    visit = inv["visit"]
+    if visit is None or visit["phase"] != TO_POTENTIAL or not visit["checked"] or visit["node"] is None:
+        return press_invest_once(task, NODE_LEAVE)
+    if inv["spend"] is not None:
+        took_effect(task)
+    if shown_for < PANEL_SETTLE:
+        return True
+    which = visit["node"]
+    if done.name != invest.NODE_NAMES[which]:
+        note(task, f"{visit['unit']}: Potential node {which} opened a panel that reads {done.name!r}")
+    else:
+        task.log_info(f"{visit['unit']}: Potential node {which} has nothing left to buy")
+    visit["nodes_done"].add(which)
+    return press_invest_once(task, NODE_LEAVE)
+
+
 def handle_daily_notice(task):
     """Close the Notice board."""
     if not on_notice(task):
@@ -2019,6 +2815,9 @@ def handle_daily_lobby_menu(task):
     """
     if not on_menu(task):
         return False
+    # The menu fading in over Details reads both, and a press made for either could land on the other.
+    if invest.header(task) is not None:
+        return handle_daily_unknown_screen(task)
     step = pending_step(task)
     entry = step.menu_entry if step is not None and step.menu_entry is not None else MENU_CLOSE
     caption = MENU_ENTRIES.get(entry)
@@ -2048,11 +2847,19 @@ def handle_daily_lobby(task):
         task.log_info("the Lobby shows no Nightmare Carnival banner, so its attendance is skipped")
         end_carnival(task, "Nightmare Carnival is not running")
         step = pending_step(task)
+    if step is not None and step.name == INVEST:
+        if invest_active(task) and not state["invest"]["ended"]:
+            return press_invest(task, INVEST_ENTRY, showing(task, LOBBY_COMBATANTS))
+        # Without a goal list the step leaves no trace, not even the goal file.
+        state["steps"][INVEST] = DONE
+        step = pending_step(task)
     if step is not None:
         return press(task, step.lobby_entry)
     settle_recount(task)
     mail = "mail claimed" if state["mail"] == "claimed" else "no mail to claim"
-    return stop(task, f"Daily finished: {mail}; {park_summary(state['park'])}; {claims_summary(state['claims'])}.")
+    invested = invest_summary(state["invest"])
+    return stop(task, f"Daily finished: {mail}; {park_summary(state['park'])}; {claims_summary(state['claims'])}"
+                      f"{'; ' + invested if invested else ''}.")
 
 
 def handle_daily_faded_lobby(task):
@@ -2083,8 +2890,15 @@ def handle_daily_faded_lobby(task):
 
 
 def handle_daily_unknown_screen(task):
-    """Take every frame no handler above knows, press nothing, and stop once that has lasted `UNKNOWN_SECONDS`."""
+    """Take every frame no handler above knows, press nothing, and stop once that has lasted `UNKNOWN_SECONDS`.
+
+    During the invest step it also drops the goal unit's name check: until the Stats tab reads the name again, nothing
+    the visit owns is pressed.
+    """
     state = run_state(task)
+    visit = state["invest"]["visit"]
+    if visit is not None:
+        visit["checked"] = False
     now = time.monotonic()
     if state["unknown_since"] is None:
         state["unknown_since"] = now
@@ -2097,7 +2911,8 @@ def handle_daily_unknown_screen(task):
 # of the Rescue stop. Overlays come before what they cover, the banner's weak check after every text check, and the Lobby
 # last of the known screens, so a popup is never taken for a clean Lobby. The park's dialogs and stories come before the
 # panels under them, its panels before the park view drawn beside them, and Dream Park's and The Path of a Captain's
-# pages before the Event list they sit in. None of upstream's generic handlers is here: its Lobby stop would end Daily on its first frame, and its blind
+# pages before the Event list they sit in. The invest step's result cards come before the panels they cover, its panels
+# before the Details tabs under them. None of upstream's generic handlers is here: its Lobby stop would end Daily on its first frame, and its blind
 # taps and centred Confirm press what Daily never reads.
 PAGE_HANDLERS = [
     handle_rescue_screen,
@@ -2124,6 +2939,14 @@ PAGE_HANDLERS = [
     handle_daily_event_page,
     handle_daily_captain_page,
     handle_daily_event_list,
+    handle_daily_invest_card,
+    handle_daily_invest_promotion,
+    handle_daily_invest_level,
+    handle_daily_invest_node,
+    handle_daily_invest_stats,
+    handle_daily_invest_partners,
+    handle_daily_invest_map,
+    handle_daily_invest_list,
     handle_daily_notice,
     handle_daily_banner,
     handle_daily_lobby_menu,
@@ -2134,7 +2957,7 @@ PAGE_HANDLERS = [
 
 
 class DailyMode(TriggerTask):
-    """Claims the day's free rewards from the Lobby, visits Dream Park, and stops on the Lobby."""
+    """Claims the day's free rewards from the Lobby, visits Dream Park, invests in the goal Combatants, and stops on the Lobby."""
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -2144,10 +2967,20 @@ class DailyMode(TriggerTask):
                             "Carnival runs, its pending attendance days. Then opens the Event list, claims each reached tier of The Path of "
                             "a Captain and visits Nightmare Dream Park while it runs: ranks it up, builds and upgrades rides, buys its AI "
                             "Automation and Another Happy Day skills with the park's own profit and claims its achievements. "
-                            "Stops on the Lobby. Presses nothing else.")
+                            "Last, with Goal Combatants set, promotes and levels them and their Partners and unlocks Potential "
+                            "nodes from materials already owned. Stops on the Lobby. Presses nothing else.")
         self.trigger_interval = 1
         self.all_texts = []
         self.default_config['_enabled'] = False
+        self.default_config[GOALS_SETTING] = []
+        self.config_type[GOALS_SETTING] = {"type": "drop_down", "options_available": COMBATANTS}
+        self.config_description[GOALS_SETTING] = (
+            "Combatants to invest in, the first listed first. After the chores, each gets its Promotion, Level Up to the cap, its Partner's "
+            "Promotion and Level Up and Potential node 01, and the first also node 02, spending only materials and Units "
+            "already owned. Empty skips the step.")
+        self.default_config[FLOOR_SETTING] = UNITS_FLOOR
+        self.config_type[FLOOR_SETTING] = {"min": 0}
+        self.config_description[FLOOR_SETTING] = "Never spend Units below this many."
 
     def enable(self):
         """Stop any other mode, and start the run afresh."""

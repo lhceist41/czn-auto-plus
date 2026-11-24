@@ -591,6 +591,12 @@ msgstr "自动"
 msgid "Desire Faction"
 msgstr "Desire Faction"
 
+msgid "Goal Combatants"
+msgstr "Goal Combatants"
+
+msgid "Units to Keep"
+msgstr "Units to Keep"
+
 msgid "Map"
 msgstr "地图"
 

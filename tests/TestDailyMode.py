@@ -556,6 +556,25 @@ POINTS = {
     daily.CARNIVAL_LEAVE: (0.041, 0.046),
     daily.CAPTAIN_ENTRY: (0.102, 0.519),
     daily.CAPTAIN_CLAIM: (0.453, 0.914),
+    daily.INVEST_ENTRY: (0.867, 0.617),
+    daily.UNIT_CARD: (0.324, 0.330),
+    daily.LIST_LEAVE: (0.041, 0.046),
+    daily.DETAILS_LEAVE: (0.041, 0.046),
+    daily.STATS_TAB: (0.121, 0.258),
+    daily.PARTNERS_TAB: (0.133, 0.444),
+    daily.POTENTIAL_TAB: (0.134, 0.631),
+    daily.OPEN_PROMOTION: (0.861, 0.921),
+    daily.OPEN_LEVEL_UP: (0.861, 0.921),
+    daily.PARTNER_UPGRADE: (0.804, 0.924),
+    daily.PROMOTE: (0.859, 0.919),
+    daily.AUTO_REGISTER: (0.852, 0.835),
+    daily.LEVEL_UP: (0.859, 0.920),
+    daily.PANEL_LEAVE: (0.041, 0.046),
+    daily.NODE_01_ENTRY: (0.309, 0.814),
+    daily.NODE_02_ENTRY: (0.442, 0.835),
+    daily.ACTIVATE: (0.860, 0.920),
+    daily.NODE_LEAVE: (0.041, 0.046),
+    daily.RESULT_CLOSE: (0.500, 0.938),
 }
 # What Daily must never press, by where it sits. Power is the icon's centre in 265 (rows 972-1022 of 1080) and the
 # `End` key label under it in 273. Skip Tutorial is a box over three targets, not a point: `TestTutorial` covers it.
@@ -626,6 +645,14 @@ OWN = (
     daily.handle_daily_event_page,
     daily.handle_daily_captain_page,
     daily.handle_daily_event_list,
+    daily.handle_daily_invest_card,
+    daily.handle_daily_invest_promotion,
+    daily.handle_daily_invest_level,
+    daily.handle_daily_invest_node,
+    daily.handle_daily_invest_stats,
+    daily.handle_daily_invest_partners,
+    daily.handle_daily_invest_map,
+    daily.handle_daily_invest_list,
     daily.handle_daily_notice,
     daily.handle_daily_banner,
     daily.handle_daily_lobby_menu,
@@ -1485,7 +1512,7 @@ class TestStops(Daily):
         special = {daily.CLAIM_ALL: 2, daily.ATTENDANCE_CLAIM: 2, daily.WAKE: 2, daily.RANK_UP: 2, daily.UPGRADE: 200, daily.CLAIM: 30, daily.SKIP_TICK: 1,
                    daily.SKILL_UPGRADE: 30, daily.HAPPY_DAY_UPGRADE: 30, daily.GUIDE_CLAIM: 15, daily.SCHEDULE_CLAIM: 2, daily.GOAL_CLAIM: 6,
                    daily.MILESTONE_CLAIM: 2, daily.LOG_CLAIM: 2, daily.CATEGORY_CLAIM: 2, daily.CARNIVAL_TAB: 2, daily.CARNIVAL_DAY: 2,
-                   daily.CAPTAIN_CLAIM: 6}
+                   daily.CAPTAIN_CLAIM: 6, daily.PROMOTE: 2, daily.LEVEL_UP: 6, daily.AUTO_REGISTER: 8, daily.ACTIVATE: 10}
         self.assertEqual({target: special.get(target, 3) for target in POINTS}, daily.TAP_LIMITS)
         self.assertEqual(set(POINTS), set(daily.TARGETS))
 

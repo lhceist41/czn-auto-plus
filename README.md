@@ -22,7 +22,8 @@
 </div>
 
 - **Daily:** claims attendance, all mail, the ready Activity rewards and achievements, the Nightmare Carnival's attendance and The
-  Path of a Captain's tiers, and runs Nightmare Dream Park with the park's own profit while the event is on.
+  Path of a Captain's tiers, runs Nightmare Dream Park with the park's own profit while the event is on, and promotes and
+  levels the Combatants you name from materials you already own.
 - **Chaos Manifestation:** walks from the Lobby to The Blue Pot and plays whole runs: routes, events, cards, shops,
   equipment and fights.
 - **Sortie:** plays whole Sortie runs and picks every card in its fights itself.
@@ -126,6 +127,17 @@ Dream Park while the event runs. In the park it ranks up, builds and upgrades ri
 and Another Happy Day and claims the park's achievements, all with the park's own profit: it presses a price only when it
 reads as park profit, and stops on a Crystal or money price. Daily stops on the Lobby and presses nothing else.
 
+With **Goal Combatants** set, Daily ends by investing in them, one at a time in the list's order, from materials and Units
+you already hold: each one's Promotion, Level Up to the cap, its Partner's Promotion and Level Up, and Potential node 01,
+plus node 02 for the first in the list. It presses a spend only when the game's own button reads Promotions, Level Up or
+Activate, the counter shows enough and the Units left stay at or above **Units to Keep** (300,000 by default). It never
+merges, replenishes, dismantles or buys, so a button offering one of those counts as short. Each Combatant and Partner is
+promoted at most once a run, and a Combatant later in the list is not levelled while one before it is below its level cap
+or has a Promotion ready that only Units to Keep holds back, so the Combat Memories, Support Data and Units the first can
+use stay for it. What each one is
+still short of is written to `data/farm_goals.json` and named in the finish message. A Combatant whose card is not on the
+Combatant List's visible row is skipped. Empty, the default, skips this step.
+
 ### Chaos Manifestation
 
 - Started on the Lobby, the Chaos hub or the Chaos Manifestation map, it walks to **The Blue Pot** and starts there.
@@ -177,7 +189,9 @@ reads as park profit, and stops on a Crystal or money price. Daily stops on the 
 - **Spends inside a run:** in-run Credits on shops, card removals, Meditation and Extract. A shop is never rerolled for
   Credits after its free refreshes unless you set a threshold.
 - **May spend outside a run:** event currency for Re-observe (on by default), and Credits or Chaos Orbs for Zero System
-  merges, up to 3 per Codex by default. Daily spends Dream Park's own profit.
+  merges, up to 3 per Codex by default. Daily spends Dream Park's own profit and, for the Goal Combatants you set, the
+  Units, Manuals, certificates, Combat Memories, Support Data and Growth Stones a Promotion, Level Up or Potential node
+  costs, never below Units to Keep.
 - **Weekly and daily items:** Loot Certification Cards for Chaos loot and Reason for Sortie loot. When they run out, the
   rest of that run's loot is left; Aether is never used.
 - **Deletes only what you set:** after a run it can delete stored saves worth a size you set or less. The default, 0,
