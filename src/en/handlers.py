@@ -22,6 +22,9 @@ WRAPS = "_en_wraps"
 
 _pending = []
 _hooked = False
+# The installs whose last run raised. A skip leaves no trace here, since a mode not loaded yet is normal; the start
+# check in `src/en/guard_health.py` reads the lists themselves for that.
+failed = set()
 
 
 # Upstream reaches for `random.choice` in several places in one module and a fork change usually wants exactly
@@ -269,20 +272,36 @@ def register(install):
     try:
         from ok.task.task import BaseTask
     except ImportError:
-        logger.warning("could not import BaseTask, handler list edits will not be applied")
+        # Every fork edit is lost. The start check needs this same import, so it cannot refuse the modes either:
+        # `TestUpstreamManifest` and the pinned ok-script are what keep it from happening.
+        logger.error("could not import BaseTask, handler list edits will not be applied")
         return
 
     original_after_init = BaseTask.after_init
 
     def patched_after_init(self, *args, **kwargs):
         result = original_after_init(self, *args, **kwargs)
-        for pending in _pending:
-            try:
-                pending()
-            except Exception as error:
-                # A failed edit must never stop a task from loading; the mode simply keeps upstream behaviour.
-                logger.error(f"could not apply {pending}: {error}", exception=error)
+        run_installs(_pending)
         return result
 
     BaseTask.after_init = patched_after_init
     _hooked = True
+
+
+def run_installs(installs):
+    """Run each install, recording the ones that raise and forgetting the ones that now complete.
+
+    A failed edit must never stop a task from loading. Whether the mode may still start is decided at its start, by
+    `src/en/guard_health.py`. An install that completes on a later load has applied every edit, since all are idempotent.
+
+    Args:
+        installs: The callables `register` collected.
+    """
+    for install in installs:
+        try:
+            install()
+        except Exception as error:
+            failed.add(install)
+            logger.error(f"could not apply {install}: {error}", exception=error)
+        else:
+            failed.discard(install)
