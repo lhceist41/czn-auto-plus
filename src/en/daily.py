@@ -2748,6 +2748,9 @@ def handle_daily_invest_node(task):
     if awaiting_spend(task, signature):
         return True
     which = visit["node"]
+    # The map opens only a node not done yet, so its panel showing again means the back arrow was not taken.
+    if which in visit["nodes_done"]:
+        return press_invest_once(task, NODE_LEAVE)
     action = invest.NODE_01 if which == "01" else invest.NODE_02
     if node.name != invest.NODE_NAMES[which] or (which == "02" and node.level is None):
         visit["nodes_done"].add(which)
@@ -2769,22 +2772,24 @@ def handle_daily_invest_node(task):
 def node_done(task, done):
     """Leave a node panel with nothing left to buy once it has read unchanged for `PANEL_SETTLE`, the node counting as done.
 
-    The wait keeps a panel whose counter and button have not drawn yet from passing for one.
+    The wait keeps a panel whose counter and button have not drawn yet from passing for one, and an awaited spend counts
+    as done only after it: a single such reading frees the corner guard, and must not also end the spend's wait.
     """
     shown_for = invest_arrive(task, "node", ("node", done.name, "done"))
     inv = invest_state(task)
     visit = inv["visit"]
     if visit is None or visit["phase"] != TO_POTENTIAL or not visit["checked"] or visit["node"] is None:
         return press_invest_once(task, NODE_LEAVE)
-    if inv["spend"] is not None:
-        took_effect(task)
     if shown_for < PANEL_SETTLE:
         return True
+    if inv["spend"] is not None:
+        took_effect(task)
     which = visit["node"]
-    if done.name != invest.NODE_NAMES[which]:
-        note(task, f"{visit['unit']}: Potential node {which} opened a panel that reads {done.name!r}")
-    else:
-        task.log_info(f"{visit['unit']}: Potential node {which} has nothing left to buy")
+    if which not in visit["nodes_done"]:
+        if done.name != invest.NODE_NAMES[which]:
+            note(task, f"{visit['unit']}: Potential node {which} opened a panel that reads {done.name!r}")
+        else:
+            task.log_info(f"{visit['unit']}: Potential node {which} has nothing left to buy")
     visit["nodes_done"].add(which)
     return press_invest_once(task, NODE_LEAVE)
 

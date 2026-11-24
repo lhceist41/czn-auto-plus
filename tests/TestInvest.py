@@ -12,6 +12,7 @@ spend under the Units to keep. Each guard's test has a negative control: the gua
 """
 
 import ast
+import contextlib
 import json
 import os
 import sys
@@ -222,6 +223,14 @@ NODE_01_GATED = (
     ("Promotion required", 0.853, 0.921),
 )
 NODE_01_READY = without(NODE_01_GATED, "Promotion required") + (("Activate", 0.860, 0.920),)
+# Mei Lin's node 01 ready with 12/8, the frame before NODE_01_DONE.
+NODE_01_BEFORE = (
+    ("√", 0.042, 0.044), ("Potential", 0.134, 0.044), ("401", 0.711, 0.048), ("□", 0.756, 0.046), ("1963K", 0.839, 0.049), ("N", 0.972, 0.030),
+    ("Combatant Epiphany", 0.852, 0.120), ("05-1", 0.216, 0.194), ("日", 0.735, 0.352), ("Epiphany Bonus", 0.853, 0.354),
+    ("When entering Chaos, obtain 1", 0.837, 0.414), ("0/10", 0.190, 0.479), ("0/5", 0.461, 0.453), ("random Rare Card with an", 0.820, 0.449),
+    ("0/5", 0.324, 0.482), ("activated Epiphany.", 0.799, 0.481), ("Inactive potential.", 0.853, 0.627), ("0/10", 0.206, 0.679),
+    ("12/8", 0.758, 0.791), ("10,000", 0.947, 0.843), ("0/10", 0.221, 0.887), ("Activate", 0.861, 0.921),
+)
 # Node 01's panel once active, Mei Lin's and Selena's: no counter, cost or button.
 NODE_01_DONE = (
     ("√", 0.042, 0.044), ("Potential", 0.134, 0.044), ("401", 0.711, 0.048), ("□", 0.756, 0.046), ("1953K", 0.839, 0.049), ("N", 0.973, 0.031),
@@ -413,6 +422,30 @@ class TestReaders(unittest.TestCase):
                 self.assertIsNone(self.read(invest.done_node, NODE_01_DONE + (extra,)))
         self.assertIsNone(self.read(invest.done_node, without(NODE_01_DONE, "When entering Chaos, obtain 1", "random Rare Card with an",
                                                               "activated Epiphany.")))
+
+    def test_two_numbers_in_the_units_header_are_no_read(self):
+        """The plain-Units Level Up panel with a second number, `401`, added in the header's region: no read, so no panel.
+        Control: the panel as captured reads 888,680."""
+        crowded = LEVEL_PLAIN_UNITS + (("401", 0.81, 0.048),)
+        self.assertIsNone(self.read(invest.units_held, crowded))
+        self.assertIsNone(self.read(invest.level_panel, crowded))
+        self.assertEqual(888_680, self.read(invest.units_held, LEVEL_PLAIN_UNITS))
+
+    def test_two_counters_in_the_counter_s_place_are_no_counter(self):
+        """Node 02's panel with a second counter, `10/4`, added beside its own: no counter, so no panel.
+        Control: the panel as captured reads 14/4."""
+        crowded = NODE_02 + (("10/4", 0.775, 0.795),)
+        self.assertIsNone(self.read(invest.counter, crowded))
+        self.assertIsNone(self.read(invest.node_panel, crowded))
+        self.assertEqual((14, 4), self.read(invest.counter, NODE_02))
+
+    def test_two_boxes_in_the_corner_are_no_button(self):
+        """Node 02's panel with a second box, `Space`, added in the bottom-right button's place: no button, so no panel.
+        Control: the panel as captured reads `Activate` there."""
+        crowded = NODE_02 + (("Space", 0.80, 0.93),)
+        self.assertIsNone(self.read(invest.corner_box, crowded))
+        self.assertIsNone(self.read(invest.node_panel, crowded))
+        self.assertEqual("Activate", self.read(invest.corner_box, NODE_02).name)
 
     def test_a_partners_tab_with_no_partner_reads_as_such(self):
         """Rei's and Owen's tabs. Negative control: a Partner's tab, the Stats tab and the map are not it."""
@@ -1247,6 +1280,99 @@ class TestPotential(Invest):
             self.run_screens([NODE_01_DONE])
         self.assertPressed(daily.NODE_LEAVE)
 
+    def test_one_passing_done_reading_does_not_let_activate_be_pressed_again_on_the_unchanged_panel(self):
+        """Node 02's panel, one pass of it without its counter, cost and button (edited here, it reads as a done node), then the
+        panel unchanged: one Activate, which changed nothing, and the back arrow. Negative control: the spend counted as done on
+        that one reading, Activate is pressed a second time."""
+        passing = without(NODE_02, "14/4", "3,000", "Activate")
+        self.assertIsNotNone(invest.done_node(self.task.show(passing)))
+        for counted_early in (False, True):
+            with self.subTest(counted_early=counted_early):
+                self.task = InvestTask()
+                self.to_invest()
+                visit = self.visiting(phase=daily.TO_POTENTIAL)
+                visit["node"], visit["nodes_done"] = "02", {"01"}
+                self.run_screens([NODE_02] * 5 + [passing])
+                if counted_early:
+                    self.assertIsNotNone(daily.invest_state(self.task)["spend"])
+                    daily.took_effect(self.task)
+                self.run_screens([NODE_02] * 8)
+                activates = sum("Activate" in under for under in self.task.under)
+                if counted_early:
+                    self.assertEqual(2, activates, self.task.under)
+                    continue
+                self.assertEqual(1, activates, self.task.under)
+                self.assertPressed(daily.ACTIVATE, daily.NODE_LEAVE, daily.NODE_LEAVE)
+                inv = daily.invest_state(self.task)
+                self.assertEqual([], inv["spends"])
+                self.assertIn("Mei Lin: potential node 02 changed nothing", inv["notes"])
+
+    def test_node_01_s_activate_counts_once_its_active_panel_has_settled(self):
+        """The map, node 01 ready, then active, then the map: node 01's tap, Activate, the back arrow and node 02's tap, the spend counted once."""
+        self.visiting(phase=daily.TO_POTENTIAL)
+        self.run_screens([MAP] + [NODE_01_BEFORE] * 5 + [NODE_01_DONE] * 5 + [MAP])
+        self.assertPressed(daily.NODE_01_ENTRY, daily.ACTIVATE, daily.NODE_LEAVE, daily.NODE_02_ENTRY)
+        self.assertEqual([("Mei Lin", invest.NODE_01)], daily.invest_state(self.task)["spends"])
+
+    def test_nothing_left_to_buy_is_logged_once_however_long_the_panel_shows(self):
+        """The active panel still shows after the back arrow. Negative control: counted afresh, it is logged on every settled pass."""
+        line = "Mei Lin: Potential node 01 has nothing left to buy"
+        self.visiting(phase=daily.TO_POTENTIAL)["node"] = "01"
+        self.run_screens([NODE_01_DONE] * (SETTLED + 6))
+        self.assertEqual(1, self.task.logged.count(line))
+        self.assertOnlyPressed(daily.NODE_LEAVE)
+        self.task = InvestTask()
+        self.to_invest()
+        visit = self.visiting(phase=daily.TO_POTENTIAL)
+        visit["node"] = "01"
+        for _ in range(SETTLED + 6):
+            visit["nodes_done"].discard("01")
+            self.run_screens([NODE_01_DONE])
+        self.assertGreater(self.task.logged.count(line), 1)
+
+    def test_a_node_panel_showing_again_after_its_node_is_done_is_left(self):
+        """Node 02's panel, the same frame without its counter, cost and button (edited here, a done node) until it has settled,
+        then the panel again, the back arrow not taken: one Activate, counted once, then only back arrows until the third
+        stops Daily. Negative control: the node not counted as done, Activate is pressed a second time."""
+        passing = without(NODE_02, "14/4", "3,000", "Activate")
+        for counted_done in (True, False):
+            with self.subTest(counted_done=counted_done):
+                self.task = InvestTask()
+                self.to_invest()
+                visit = self.visiting(phase=daily.TO_POTENTIAL)
+                visit["node"], visit["nodes_done"] = "02", {"01"}
+                self.run_screens([NODE_02] * 5 + [passing] * SETTLED)
+                self.assertIn("02", visit["nodes_done"])
+                self.assertEqual([("Mei Lin", invest.NODE_02)], daily.invest_state(self.task)["spends"])
+                if not counted_done:
+                    visit["nodes_done"].discard("02")
+                self.run_screens([NODE_02] * 8)
+                activates = sum("Activate" in under for under in self.task.under)
+                if not counted_done:
+                    self.assertEqual(2, activates, self.task.under)
+                    continue
+                self.assertEqual(1, activates, self.task.under)
+                self.assertPressed(daily.ACTIVATE, daily.NODE_LEAVE, daily.NODE_LEAVE, daily.NODE_LEAVE)
+                self.assertStopped("back arrow was pressed 3 times")
+
+    def test_a_panel_naming_another_node_is_noted_once_however_long_it_shows(self):
+        """Node 02 opened, node 01's active panel shown past its settle, then node 01's ready panel: one note, back arrows only.
+        Negative control: counted afresh on every pass, the note repeats."""
+        visit = self.visiting(phase=daily.TO_POTENTIAL)
+        visit["node"], visit["nodes_done"] = "02", {"01"}
+        self.run_screens([NODE_01_DONE] * (SETTLED + 2) + [NODE_01_BEFORE] * 2)
+        notes = daily.invest_state(self.task)["notes"]
+        self.assertEqual(["Mei Lin: Potential node 02 opened a panel that reads 'epiphanybonus'"], notes)
+        self.assertOnlyPressed(daily.NODE_LEAVE)
+        self.task = InvestTask()
+        self.to_invest()
+        visit = self.visiting(phase=daily.TO_POTENTIAL)
+        visit["node"] = "02"
+        for _ in range(SETTLED + 2):
+            visit["nodes_done"] = {"01"}
+            self.run_screens([NODE_01_DONE])
+        self.assertGreater(len(daily.invest_state(self.task)["notes"]), 1)
+
     def test_node_02_at_its_last_level_is_not_opened(self):
         """The map's counter reads 10/10. Negative control: read as not full, node 02 is opened."""
         full = edited(MAP, ("5/10", "10/10"))
@@ -1364,6 +1490,81 @@ class TestPotential(Invest):
         with mock.patch.object(invest, "potential_map", lambda task: True), mock.patch.object(invest, "only_match", lambda *args: match):
             self.run_screens([BLENDED])
         self.assertPressed(daily.NODE_01_ENTRY)
+
+
+def NO_EFFECT_WAIT(task, signature):
+    """Never wait for a spend's effect, so a repeat on the unchanged panel meets the corner guard alone."""
+    return False
+
+
+class TestCornerGuard(Invest):
+    """The corner guard behind the effect wait: a spend panel that reads as it did at the press gets no second spend."""
+
+    def repeat(self, screen, guarded):
+        """Show a settled spend panel twice more after its press, the effect wait taken away and the guard kept or freed."""
+        freed = mock.patch.object(daily, "guard_holds", lambda task, signature: False)
+        with mock.patch.object(daily, "awaiting_spend", NO_EFFECT_WAIT), contextlib.nullcontext() if guarded else freed:
+            self.run_screens([screen] * (SETTLED + 2))
+
+    def test_level_up_is_not_spent_again_on_the_panel_it_was_pressed_on(self):
+        """Negative control: with the guard freed, Level Up is pressed again."""
+        visit = self.visiting(phase=daily.TO_LEVEL)
+        self.repeat(LEVEL_PLAIN_UNITS, guarded=True)
+        self.assertPressed(daily.LEVEL_UP)
+        self.assertEqual(1, visit["spent"][invest.LEVEL])
+        self.assertEqual(1, sum("investing in Mei Lin" in line for line in self.task.logged))
+        self.task = InvestTask()
+        self.to_invest()
+        self.visiting(phase=daily.TO_LEVEL)
+        self.repeat(LEVEL_PLAIN_UNITS, guarded=False)
+        self.assertPressed(daily.LEVEL_UP, daily.LEVEL_UP, daily.LEVEL_UP)
+
+    def test_activate_is_not_spent_again_on_the_panel_it_was_pressed_on(self):
+        """Negative control: with the guard freed, Activate is pressed again."""
+        visit = self.visiting(phase=daily.TO_POTENTIAL)
+        visit["node"], visit["nodes_done"] = "02", {"01"}
+        self.repeat(NODE_02, guarded=True)
+        self.assertPressed(daily.ACTIVATE)
+        self.assertEqual(1, visit["spent"][invest.NODE_02])
+        self.assertEqual(1, sum("investing in Mei Lin" in line for line in self.task.logged))
+        self.task = InvestTask()
+        self.to_invest()
+        visit = self.visiting(phase=daily.TO_POTENTIAL)
+        visit["node"], visit["nodes_done"] = "02", {"01"}
+        self.repeat(NODE_02, guarded=False)
+        self.assertPressed(daily.ACTIVATE, daily.ACTIVATE, daily.ACTIVATE)
+
+    def test_a_guarded_press_is_not_made_twice_on_one_reading(self):
+        """`guarded_press` on its own. Control: on another reading the same press is made."""
+        self.visiting(phase=daily.TO_POTENTIAL)
+        self.task.show(NODE_02)
+        box = invest.corner_box(self.task)
+        signature = ("node", "basiccardupgrade", 1, 14, 4, 3_000, "activate")
+        self.assertTrue(daily.guarded_press(self.task, daily.ACTIVATE, box, signature, opening=False))
+        self.assertTrue(daily.guarded_press(self.task, daily.ACTIVATE, box, signature, opening=False))
+        self.assertPressed(daily.ACTIVATE)
+        self.assertTrue(daily.guarded_press(self.task, daily.ACTIVATE, box, signature[:-1] + ("other",), opening=False))
+        self.assertPressed(daily.ACTIVATE, daily.ACTIVATE)
+
+    def test_a_promotion_panel_reading_as_it_did_at_a_corner_press_gets_no_spend(self):
+        """The one-Promotion count cannot see this, so the guard is set by hand on the panel's own reading, as a press on it
+        would leave it: nothing pressed, nothing counted or logged. Control: with no guard, Promotions is pressed."""
+        for guarded in (True, False):
+            with self.subTest(guarded=guarded):
+                self.task = InvestTask()
+                self.to_invest()
+                visit = self.visiting()
+                self.run_screens([PROMOTION_READY])
+                inv = daily.invest_state(self.task)
+                if guarded:
+                    inv["guard"] = inv["screen"]
+                self.run_screens([PROMOTION_READY] * SETTLED)
+                if guarded:
+                    self.assertEqual([], self.task.clicks)
+                    self.assertEqual(0, visit["spent"][invest.PROMOTION])
+                    self.assertFalse(any("investing in" in line for line in self.task.logged))
+                else:
+                    self.assertPressed(daily.PROMOTE)
 
 
 class TestClock(Invest):
