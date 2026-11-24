@@ -6,8 +6,12 @@ leave every in-run Credits confirm, and upstream's own asked-for deletion and re
 """
 
 import contextlib
+import gettext
 import inspect
+import json
+import os
 import re
+import subprocess
 import sys
 import time
 import types
@@ -24,9 +28,10 @@ import utils_chaos  # noqa: E402
 import utils_sortie  # noqa: E402
 import utils_story  # noqa: E402
 
-from src.en import dialog_ticks, enter, handlers, notify, reason, spend_guard  # noqa: E402
+from src.en import chaos_entry, dialog_ticks, enter, handlers, notify, ocr_text, reason, spend_guard, story_relay, stuck_stop  # noqa: E402
 from src.en.handlers import WRAPS  # noqa: E402
 from src.en.stuck import CLOCK  # noqa: E402
+from tests import TestChaosEntry  # noqa: E402
 from tests.TestChaosEntry import DETAIL, FORMATION  # noqa: E402
 from tests.fakes import HEIGHT, WIDTH, FakeBox  # noqa: E402
 
@@ -71,6 +76,13 @@ class FakeTask:
     def click_box(self, box):
         self.clicked.append(box.name)
         self.clicked_at.append(((box.x + box.width / 2) / self.width, (box.y + box.height / 2) / self.height))
+
+    def move_relative(self, x, y):
+        pass
+
+    def click(self, x, y, after_sleep=0):
+        self.clicked.append("tap")
+        self.clicked_at.append((x, y))
 
     def log_info(self, message, notify=False):
         self.logged.append(message)
@@ -1114,6 +1126,609 @@ class TestEscape(unittest.TestCase):
     def test_the_round_button_corner_is_still_the_enter_changes(self):
         self.assertEqual(enter.BUTTON, spend_guard.ROUND_BUTTON)
         self.assertEqual(enter.ENTER, spend_guard.ENTER)
+
+
+class ChaosMode(FakeTask):
+    """Chaos, whose list holds upstream's retreat handler."""
+
+
+class SortieMode(FakeTask):
+    """Sortie, whose list holds upstream's retreat handler too."""
+
+
+# The Escape box as OCR measured it on each menu's capture: centre and size in pixels at 1920 x 1080.
+MENU_ESCAPE = {"Chaos Info": (0.9365, 0.9285, 125, 49), "Stage Info": (0.9355, 0.9295, 129, 55)}
+MENUS = {"Chaos Info": CHAOS_INFO, "Stage Info": STAGE_INFO}
+MENU_TITLES = {"Chaos Info": "© Chaos Info", "Stage Info": "© Stage Info"}
+# The Escape button as drawn on both menus, wider than its text box.
+RUN_MENU_BUTTON = (0.84, 0.86, 1.0, 0.97)
+# Each caption word upstream presses at or around the round button, and the handler that presses it.
+CAPTIONS = {"进入": "handle_enter", "下一步": "handle_next_step", "继续": "handle_continue", "跳过": "handle_skip",
+            "结算": "handle_settlement", "点击屏幕": "handle_close_page"}
+# Every handler the run menu guard or the retreat gate covers, with `handle_enter`, in the order a mode's list holds them.
+GUARDED = {*CAPTIONS.values(), "handle_escape"}
+MODES = {"Chaos": (ChaosMode, utils_chaos), "Sortie": (SortieMode, utils_sortie), "Story": (StoryMode, utils_story)}
+
+
+def on_menu(mode, menu, word, drop=()):
+    """Show a run menu with its Escape box read as another word, at the box's measured place and size.
+
+    Args:
+        mode: The task class.
+        menu: "Chaos Info" or "Stage Info".
+        word: What OCR read the Escape button as.
+        drop: Names of other boxes OCR missed.
+
+    Returns:
+        The task.
+    """
+    task = mode(changed(MENUS[menu], drop=("Escape", *drop)), node_status=utils._initial_node_status())
+    x, y, width, height = MENU_ESCAPE[menu]
+    task.all_texts.append(FakeBox(word, x, y, width=width, height=height))
+    return task
+
+
+@contextlib.contextmanager
+def guarded_lists():
+    """Install `src/en/enter.py` and the guard over a copy of `utils`, three times over, into a copy of each mode's real list.
+
+    The copies are registered as modules of their own, since other tests swap the mode modules in `sys.modules`.
+
+    Yields:
+        The copy of `utils`, which carries the wrappers, and each mode's guarded list by mode name.
+    """
+    saved = [(entries, list(entries)) for _, entries in handlers.each_list()]
+    copy = types.ModuleType(utils.__name__)
+    copy.__dict__.update(vars(utils))
+    modes = {}
+    for name, (_, source) in MODES.items():
+        mode = types.ModuleType(f"fake_{name.lower()}_for_run_menu_test")
+        mode.PAGE_HANDLERS = list(source.PAGE_HANDLERS)
+        sys.modules[mode.__name__] = mode
+        modes[name] = mode.PAGE_HANDLERS
+    try:
+        for _ in range(INSTALLS):
+            enter.install(copy)
+            spend_guard.install(copy)
+        yield copy, modes
+    finally:
+        for name in MODES:
+            sys.modules.pop(f"fake_{name.lower()}_for_run_menu_test", None)
+        for entries, before in saved:
+            entries[:] = before
+
+
+def run_list(task, handler_list):
+    """Show a screen to every guarded handler in a mode's list, in the list's order, as its run loop would.
+
+    Args:
+        task: The running task.
+        handler_list: The mode's guarded list.
+
+    Returns:
+        The name of the handler that took the frame, or None.
+    """
+    for handler in handler_list:
+        if handler.__name__ in GUARDED and handler(task):
+            return handler.__name__
+    return None
+
+
+class TestRunMenus(unittest.TestCase):
+    """Chaos Info and Stage Info, whose round button is the run's Escape, and upstream's own retreat handler."""
+
+    def test_both_menus_show_a_mark_and_no_other_escape_screen_does(self):
+        for menu, texts in MENUS.items():
+            for missed in ((), (MENU_TITLES[menu],), ("End",)):
+                with self.subTest(menu=menu, missed=missed):
+                    self.assertIsNotNone(spend_guard.run_menu(FakeTask(changed(texts, drop=missed))))
+        for name, texts in (("resume prompt", RESUME), ("Blue Pot detail", DETAIL), ("Formation", FORMATION), ("Battle Prep", BATTLE_PREP),
+                            ("battle end", [("BATTLE", 0.032, 0.455), ("END", 0.032, 0.474), ("继续", 0.9, 0.93)]),
+                            ("battle", [("End Turn 1", 0.96, 0.9), ("End", 0.963, 0.950)]),
+                            ("battle key hint", [("Enter", 0.835, 0.877), ("End Turn 1", 0.96, 0.9)])):
+            with self.subTest(screen=name):
+                self.assertIsNone(spend_guard.run_menu(FakeTask(texts)))
+
+    def test_no_caption_read_on_the_escape_button_is_pressed_in_any_mode(self):
+        """Neither menu shows any of these captions, so each one read there is the Escape button misread."""
+        for mode_name, (mode, module) in MODES.items():
+            names = {handler.__name__ for handler in module.PAGE_HANDLERS}
+            for menu in MENUS:
+                for word, handler_name in CAPTIONS.items():
+                    for missed in ((), (MENU_TITLES[menu],), ("End",)):
+                        with self.subTest(mode=mode_name, menu=menu, word=word, missed=missed):
+                            with guarded_lists() as (_, lists):
+                                task = on_menu(mode, menu, word, missed)
+                                self.assertIsNone(run_list(task, lists[mode_name]))
+                            self.assertEqual([], task.clicked)
+                            # The frame is one upstream acts on: the bare handler presses the Escape button.
+                            if handler_name in names and not missed:
+                                bare = on_menu(mode, menu, word)
+                                self.assertIs(True, getattr(utils, handler_name)(bare))
+                                x, y, width, height = MENU_ESCAPE[menu]
+                                self.assertTrue(all(abs(px - x) * WIDTH <= width / 2 and abs(py - y) * HEIGHT <= height / 2
+                                                    for px, py in bare.clicked_at), bare.clicked_at)
+
+    def test_a_run_menu_is_logged_once_per_freeze(self):
+        task = on_menu(ChaosMode, "Chaos Info", "继续")
+        with guarded_lists() as (_, lists):
+            for clock in (1, 1, 1, 2):
+                setattr(task, CLOCK, clock)
+                self.assertIsNone(run_list(task, lists["Chaos"]))
+        self.assertEqual(2, sum("on a run menu" in line for line in task.logged))
+        self.assertEqual([], task.clicked)
+
+    def test_upstreams_retreat_presses_escape_only_when_a_setting_asks(self):
+        """The catalog maps Retreat, not Escape, so the button reaches upstream as 逃脱 only once a client or catalog change hands it over."""
+        for mode_name in ("Chaos", "Sortie"):
+            mode, module = MODES[mode_name]
+            for menu in MENUS:
+                for config in ({}, {key: False for key in spend_guard.LEAVE_SETTINGS}, *({key: True} for key in spend_guard.LEAVE_SETTINGS)):
+                    asked = any(config.values())
+                    with self.subTest(mode=mode_name, menu=menu, config=config):
+                        task = on_menu(mode, menu, "逃脱")
+                        task.config = dict(config)
+                        with guarded_lists() as (_, lists):
+                            claimed = run_list(task, lists[mode_name])
+                        self.assertEqual("handle_escape" if asked else None, claimed)
+                        self.assertEqual(asked, task.node_status["is_escaped"])
+                        self.assertEqual(["逃脱"] if asked else [], task.clicked)
+
+    def test_a_relayed_run_never_retreats_whatever_was_saved(self):
+        for key in spend_guard.LEAVE_SETTINGS:
+            with self.subTest(setting=key):
+                task = on_menu(ChaosMode, "Chaos Info", "逃脱")
+                task.config = {key: True}
+                setattr(task, story_relay.RELAYED, True)
+                with guarded_lists() as (copy, _):
+                    copy._get_config_value = story_relay.relayed_settings(copy._get_config_value)
+                    self.assertIs(False, copy.handle_escape(task))
+                self.assertFalse(task.node_status["is_escaped"])
+                self.assertEqual([], task.clicked)
+                self.assertEqual(1, sum("no setting asks the run to leave" in line for line in task.logged))
+
+    def test_the_resume_prompts_own_enter_is_still_pressed(self):
+        """Chaos presses it through the walk's prompt handler, Story through upstream's Enter."""
+        self.assertIsNone(spend_guard.run_menu(FakeTask(RESUME)))
+        for mode_name in ("Chaos", "Sortie"):
+            with self.subTest(mode=mode_name):
+                task = MODES[mode_name][0](RESUME, node_status=utils._initial_node_status())
+                with guarded_lists() as (_, lists):
+                    self.assertIsNone(run_list(task, lists[mode_name]))
+                self.assertEqual([], task.clicked)
+        chaos = TestChaosEntry.ChaosMode(RESUME)
+        self.assertIs(True, chaos_entry.handle_resume_prompt(chaos))
+        self.assertEqual([(0.637, 0.907)], chaos.clicks)
+        story = StoryMode(RESUME)
+        with guarded_lists() as (_, lists):
+            self.assertEqual("handle_enter", run_list(story, lists["Story"]))
+        self.assertEqual([(0.637, 0.907)], pressed_at(story))
+
+    def test_the_catalog_never_hands_escape_over_as_retreat_and_keeps_the_menu_marks(self):
+        """An Escape line in `ocr.po` would arm upstream's retreat on every run menu; a rewritten mark would hide the menu."""
+        translation = gettext.translation("ocr", str(REPO_ROOT / "i18n"), languages=["en_US"])
+        for reading in ("Escape", "escape", "Escape.", "xEscape", "Escape Q", "ESCAPE", "End", "© Chaos Info", "Chaos Info", "© Stage Info",
+                        "Stage Info"):
+            with self.subTest(reading=reading):
+                for key in (reading, reading.replace(" ", "")):
+                    self.assertEqual(key, translation.gettext(key))
+                self.assertIsNone(ocr_text.fix_for(translation, reading))
+        for msgid, msgstr in translation._catalog.items():
+            if isinstance(msgid, str) and "escape" in msgid.casefold():
+                self.assertFalse(any(word in msgstr for word in ("逃脱", "脱逃")), msgid)
+
+    def test_each_guard_is_applied_once_in_every_list(self):
+        with guarded_lists() as (copy, lists):
+            for name in (*spend_guard.RUN_MENU_HANDLERS, "handle_escape"):
+                tag = spend_guard.ESCAPE_TAG if name == "handle_escape" else spend_guard.RUN_MENU_TAG
+                guarded = getattr(copy, name)
+                self.assertEqual([tag], list(getattr(guarded, WRAPS)), name)
+                self.assertEqual(name, guarded.__name__)
+                for mode_name, handler_list in lists.items():
+                    held = [handler for handler in handler_list if handler.__name__ == name]
+                    # Story's list holds only the Next and tap-the-screen handlers of these.
+                    self.assertEqual(mode_name != "Story" or name in ("handle_next_step", "handle_close_page"), bool(held), (mode_name, name))
+                    self.assertTrue(all(handler is guarded for handler in held), (mode_name, name))
+
+
+
+# Every caption upstream's handlers read, the ones they press at the round button among them, and a few that only look close.
+LIST_CAPTIONS = ("Escape", None, "进入", "确认", "取消", "继续", "下一步", "下一", "步", "离开", "选择", "跳过", "结算", "获得", "转换", "合成", "移除",
+                 "关闭", "逃脱", "脱逃", "观测", "入场", "点击屏幕", "Enter", "End", "确", "闪光", "重新闪光", "赋予闪光", "复制", "灵光", "前往卡厄思核心",
+                 "确定", "开始", "领取", "完成")
+# Upstream's handlers outside the caption guard that press the Escape box read as their caption.
+ESCAPE_PRESSERS = {"确认": "handle_confirm", "离开": "handle_leave", "选择": "handle_select", "转换": "handle_convert", "移除": "handle_remove",
+                   "获得": "handle_obtain_reward", "复制": "handle_copy", "闪光": "handle_flash", "重新闪光": "handle_flash", "赋予闪光": "handle_flash",
+                   "前往卡厄思核心": "handle_go_to_chaos_core", "完成": "handle_story_complete"}
+# The mean colour upstream's brightness check reads left of the Escape box on each capture: lit orange, and white.
+MENU_BUTTON_COLOUR = {"Chaos Info": (41, 121, 240), "Stage Info": (255, 255, 255)}
+REPLAY_SECONDS = 300
+
+
+def replay_run_menus(spec):
+    """Apply every patch as `src/globals.py` does, then show both run menus to each mode's whole list.
+
+    Runs in a fresh interpreter: the installs patch the real handler lists for good, which the shared test process cannot take.
+
+    Args:
+        spec: What to show, as `whole_list_replay` builds it.
+
+    Returns:
+        Each list's handler names, every input made on a menu and who took the frame, and a run held on Chaos Info until it stops.
+    """
+    import importlib
+    import logging
+    import re
+    import sys
+    import time
+    from pathlib import Path
+
+    root = Path(spec["root"])
+    sys.path[:0] = [str(root), str(root / "ok_tasks")]
+    logging.disable(logging.CRITICAL)
+    from src.en import handlers
+
+    # Modules that need the running app or its window; none of them shapes a mode's list outside a debug run.
+    needs_app = {"frame_log", "remote", "sections", "forms", "task_list", "kept_forms", "picker", "shell", "game_language"}
+    failed = []
+    source = (root / "src" / "globals.py").read_text(encoding="utf-8")
+    for name, function in re.findall(r"^\s*(\w+)\.(apply\w*)\(\)", source, re.M):
+        if name in needs_app or f"{name}.{function}" in spec["leave_out"]:
+            continue
+        try:
+            getattr(importlib.import_module(f"src.en.{name}"), function)()
+        except Exception as error:
+            failed.append(f"{name}.{function}: {error!r}")
+    import numpy as np
+    import utils
+    import utils_chaos
+    import utils_sortie
+    import utils_story
+    importlib.import_module("src.en.daily")
+    for _ in range(3):
+        for install in handlers._pending:
+            try:
+                install()
+            except Exception as error:
+                failed.append(f"install: {error!r}")
+
+    width, height = 1920, 1080
+
+    class Box:
+        def __init__(self, name, cx, cy, box_width=None, box_height=30):
+            self.name = name
+            self.width = int(round(box_width if box_width is not None else max(40, 17 * len(name))))
+            self.height = int(round(box_height))
+            self.x = int(round(cx * width - self.width / 2))
+            self.y = int(round(cy * height - self.height / 2))
+            self.confidence = 0.99
+
+        def area(self):
+            return self.width * self.height
+
+    class Task:
+        def __init__(self, texts, frame):
+            self.name = "自动卡厄思模式"
+            self.width, self.height = width, height
+            self.all_texts = [Box(*text) for text in texts]
+            self.frame = frame
+            self.config = {"游戏语言": "English"}
+            self.node_status = utils._initial_node_status()
+            self.member_status = utils._initial_member_status()
+            self.inputs = []
+            self.notifications = []
+            self.disabled = False
+            self.info = {}
+            self.executor = None
+            self.trigger_interval = 0.1
+
+        def click_box(self, box, *args, **kwargs):
+            box = box[0] if isinstance(box, list) else box
+            self.inputs.append([round((box.x + box.width / 2) / width, 3), round((box.y + box.height / 2) / height, 3), box.name])
+
+        def click(self, x=-1, y=-1, *args, **kwargs):
+            if hasattr(x, "width"):
+                return self.click_box(x)
+            self.inputs.append([round(x, 3), round(y, 3), "tap"])
+
+        def click_relative(self, x, y, *args, **kwargs):
+            self.inputs.append([round(x, 3), round(y, 3), "tap"])
+
+        def send_key(self, key, *args, **kwargs):
+            self.inputs.append([None, None, f"key {key}"])
+
+        def swipe_relative(self, *args, **kwargs):
+            self.inputs.append([None, None, "swipe"])
+
+        def move_relative(self, *args, **kwargs):
+            pass
+
+        def ocr(self, *args, **kwargs):
+            return [] if args or kwargs else list(self.all_texts)
+
+        def wait_ocr(self, *args, **kwargs):
+            return []
+
+        def find_one(self, *args, **kwargs):
+            return None
+
+        def find_feature(self, *args, **kwargs):
+            return []
+
+        def get_feature_by_name(self, *args, **kwargs):
+            return None
+
+        def box_of_screen(self, x1, y1, x2, y2, *args, **kwargs):
+            return Box("", (x1 + x2) / 2, (y1 + y2) / 2, box_width=(x2 - x1) * width, box_height=(y2 - y1) * height)
+
+        def next_frame(self):
+            return self.frame
+
+        def sleep(self, *args, **kwargs):
+            pass
+
+        def log_info(self, *args, **kwargs):
+            pass
+
+        log_debug = log_warning = log_error = log_info
+
+        def info_set(self, key, value):
+            self.info[key] = value
+
+        def info_get(self, key, default=None):
+            return self.info.get(key, default)
+
+        def notification(self, message, *args, **kwargs):
+            self.notifications.append(message)
+
+        def disable(self):
+            self.disabled = True
+
+        def enable(self):
+            self.disabled = False
+
+    modes = {name: (type(name, (Task,), {}), module.PAGE_HANDLERS)
+             for name, module in (("ChaosMode", utils_chaos), ("SortieMode", utils_sortie), ("StoryMode", utils_story))}
+    errors = []
+
+    def run(task, handler_list):
+        for handler in handler_list:
+            try:
+                if handler(task):
+                    return handler.__name__
+            except Exception as error:
+                errors.append(f"{handler.__name__}: {error!r}"[:160])
+        return None
+
+    def frame_of(menu):
+        frame = np.zeros((height, width, 3), np.uint8)
+        x1, y1, x2, y2 = spec["zone"]
+        frame[int(y1 * height):int(y2 * height), int(x1 * width):int(x2 * width)] = spec["menus"][menu]["colour"]
+        return frame
+
+    def on_menu(mode, menu, word, missed):
+        texts = [text for text in spec["menus"][menu]["texts"] if text[0] != "Escape" and text[0] not in missed]
+        task = modes[mode][0](texts, frame_of(menu))
+        if word is not None:
+            x, y, box_width, box_height = spec["menus"][menu]["escape"]
+            task.all_texts.append(Box(word, x, y, box_width, box_height))
+        return task
+
+    shown = []
+    for mode, (_, handler_list) in modes.items():
+        for menu in spec["menus"]:
+            for missed in ([], [spec["menus"][menu]["title"]], ["End"]):
+                for word in spec["words"]:
+                    task = on_menu(mode, menu, word, missed)
+                    claimed = run(task, handler_list)
+                    shown.append({"mode": mode, "menu": menu, "missed": missed, "word": word, "claimed": claimed, "inputs": task.inputs})
+
+    now = [1_000_000.0]
+    time.time = lambda: now[0]
+    held = on_menu("ChaosMode", "Chaos Info", "确认", [])
+    claims = {}
+    stopped_after = None
+    for second in range(1, 2 * spec["seconds"]):
+        now[0] += 1
+        claimed = run(held, modes["ChaosMode"][1])
+        claims[claimed] = claims.get(claimed, 0) + 1
+        if held.disabled:
+            stopped_after = second
+            break
+    return {"failed": failed, "errors": sorted(set(errors)),
+            "names": {mode: [handler.__name__ for handler in handler_list] for mode, (_, handler_list) in modes.items()},
+            "shown": shown,
+            "held": {"stopped_after": stopped_after, "notifications": held.notifications, "inputs": held.inputs, "claims": claims}}
+
+
+def whole_list_replay(leave_out=()):
+    """Run `replay_run_menus` on both menus in a fresh interpreter, with their boxes as the captures read them.
+
+    Args:
+        leave_out: Apply calls in `src/globals.py` to skip, such as `"spend_guard.apply_run_menus"`.
+
+    Returns:
+        What `replay_run_menus` returns.
+    """
+    spec = {"root": str(REPO_ROOT), "leave_out": list(leave_out), "words": list(LIST_CAPTIONS), "seconds": REPLAY_SECONDS, "zone": RUN_MENU_BUTTON,
+            "menus": {menu: {"texts": [list(text) for text in MENUS[menu]], "escape": list(MENU_ESCAPE[menu]), "title": MENU_TITLES[menu],
+                             "colour": list(MENU_BUTTON_COLOUR[menu])} for menu in MENUS}}
+    code = f"import json, sys\n{inspect.getsource(replay_run_menus)}\nprint('REPLAY ' + json.dumps(replay_run_menus(json.load(sys.stdin))))\n"
+    done = subprocess.run([sys.executable, "-I", "-c", code], input=json.dumps(spec), capture_output=True, text=True, encoding="utf-8",
+                          timeout=600, cwd=str(REPO_ROOT), env={**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONDONTWRITEBYTECODE": "1"})
+    lines = [line for line in done.stdout.splitlines() if line.startswith("REPLAY ")]
+    if done.returncode != 0 or not lines:
+        raise AssertionError(f"replay failed ({done.returncode}): {done.stderr[-2000:]}")
+    return json.loads(lines[-1][len("REPLAY "):])
+
+
+def on_escape_button(press):
+    """Say whether an input landed on a run menu's Escape button.
+
+    Args:
+        press: `[x, y, what]` as the replay records it, x and y None for a key.
+
+    Returns:
+        True when it landed inside the button as drawn.
+    """
+    x, y, _ = press
+    return x is not None and RUN_MENU_BUTTON[0] <= x <= RUN_MENU_BUTTON[2] and RUN_MENU_BUTTON[1] <= y <= RUN_MENU_BUTTON[3]
+
+
+class TestWholeLists(unittest.TestCase):
+    """Each mode's whole list, shaped by every patch in the app's order, on both run menus with both first-floor settings off."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.guarded = whole_list_replay()
+        cls.unguarded = whole_list_replay(leave_out=("spend_guard.apply_run_menus",))
+
+    def test_every_install_ran_and_no_handler_failed_on_a_menu(self):
+        for name, replay in (("guarded", self.guarded), ("without the run-menu handler", self.unguarded)):
+            with self.subTest(replay=name):
+                self.assertEqual([], replay["failed"])
+                self.assertEqual([], replay["errors"])
+
+    def test_no_handler_in_any_mode_presses_anything_while_a_menu_mark_is_read(self):
+        self.assertEqual(3 * 2 * 3 * len(LIST_CAPTIONS), len(self.guarded["shown"]))
+        for screen in self.guarded["shown"]:
+            with self.subTest(mode=screen["mode"], menu=screen["menu"], word=screen["word"], missed=screen["missed"]):
+                self.assertEqual([], screen["inputs"])
+                self.assertEqual("handle_run_menu", screen["claimed"])
+
+    def test_without_it_the_same_frames_get_the_escape_button_pressed(self):
+        """The control: the frames are ones upstream's handlers act on, so a pass with nothing pressed means something."""
+        names = self.unguarded["names"]
+        pressed = {(screen["mode"], screen["word"]) for screen in self.unguarded["shown"]
+                   if not screen["missed"] and any(on_escape_button(press) for press in screen["inputs"])}
+        for mode in names:
+            for word, handler in ESCAPE_PRESSERS.items():
+                if handler in names[mode]:
+                    with self.subTest(mode=mode, word=word):
+                        self.assertIn((mode, word), pressed)
+        self.assertNotIn("handle_run_menu", {screen["claimed"] for screen in self.unguarded["shown"]})
+
+    def test_it_sits_right_behind_the_stuck_stop_and_the_language_check_once(self):
+        for mode, names in self.guarded["names"].items():
+            with self.subTest(mode=mode):
+                self.assertEqual(1, names.count("handle_run_menu"))
+                self.assertEqual(names.index("stop_when_stuck") + 1, names.index("check_game_language"))
+                self.assertEqual(names.index("check_game_language") + 1, names.index("handle_run_menu"))
+                before = names[:names.index("stop_when_stuck")]
+                self.assertTrue(set(before) <= {"handle_remote", "restore_stuck_clock"}, before)
+
+    def test_a_run_held_on_a_menu_still_says_so_at_a_minute_and_stops_at_five(self):
+        held = self.guarded["held"]
+        self.assertEqual([], held["inputs"])
+        self.assertIsNotNone(held["stopped_after"])
+        self.assertGreaterEqual(held["stopped_after"], stuck_stop.STOP_SECONDS)
+        self.assertLessEqual(held["stopped_after"], stuck_stop.STOP_SECONDS + 1)
+        self.assertEqual(["Stuck on the same screen for 60s.", stuck_stop.MESSAGE], held["notifications"])
+        self.assertEqual({"handle_run_menu", "stop_when_stuck"}, set(held["claims"]))
+        self.assertEqual(1, held["claims"]["stop_when_stuck"])
+
+
+class TestRunMenuHandler(unittest.TestCase):
+    """The handler behind the stuck stop: nothing pressed on a run menu, upstream's retreat only where its list holds it and a setting asks."""
+
+    def run_menu_handler(self, task, retreats=True):
+        with guarded_lists() as (copy, _):
+            return spend_guard.holding_run_menu(copy, retreats)(task)
+
+    def test_it_takes_a_menu_frame_and_presses_nothing_whatever_the_button_reads(self):
+        for menu in MENUS:
+            for word in ("Escape", "确认", "完成", "前往卡厄思核心", "逃脱"):
+                for missed in ((), (MENU_TITLES[menu],), ("End",)):
+                    with self.subTest(menu=menu, word=word, missed=missed):
+                        task = on_menu(ChaosMode, menu, word, missed)
+                        self.assertIs(True, self.run_menu_handler(task))
+                        self.assertEqual([], task.clicked)
+                        self.assertFalse(task.node_status["is_escaped"])
+                        self.assertEqual(1, sum("on a run menu" in line for line in task.logged))
+
+    def test_it_leaves_every_other_screen_to_the_list(self):
+        for name, texts in (("resume prompt", RESUME), ("Blue Pot detail", DETAIL), ("Formation", FORMATION), ("Battle Prep", BATTLE_PREP)):
+            with self.subTest(screen=name):
+                task = ChaosMode(texts, node_status=utils._initial_node_status())
+                self.assertIs(False, self.run_menu_handler(task))
+                self.assertEqual([], task.clicked)
+                self.assertEqual([], task.logged)
+
+    def test_a_setting_lets_upstreams_retreat_press_only_where_the_list_holds_it(self):
+        for key in spend_guard.LEAVE_SETTINGS:
+            for retreats in (True, False):
+                with self.subTest(setting=key, retreats=retreats):
+                    task = on_menu(ChaosMode if retreats else StoryMode, "Chaos Info", "逃脱")
+                    task.config = {key: True}
+                    self.assertIs(True, self.run_menu_handler(task, retreats))
+                    self.assertEqual(["逃脱"] if retreats else [], task.clicked)
+                    self.assertEqual(retreats, task.node_status["is_escaped"])
+
+    def test_a_relayed_run_never_retreats_through_it(self):
+        for key in spend_guard.LEAVE_SETTINGS:
+            with self.subTest(setting=key):
+                task = on_menu(ChaosMode, "Chaos Info", "逃脱")
+                task.config = {key: True}
+                setattr(task, story_relay.RELAYED, True)
+                with guarded_lists() as (copy, _):
+                    copy._get_config_value = story_relay.relayed_settings(copy._get_config_value)
+                    self.assertIs(True, spend_guard.holding_run_menu(copy, True)(task))
+                self.assertEqual([], task.clicked)
+                self.assertFalse(task.node_status["is_escaped"])
+
+    def test_once_the_asked_retreat_is_pressed_its_dialog_goes_to_the_list(self):
+        """The retreat dialog may open over the menu with its marks still read; the centred Confirm lets it through."""
+        task = on_menu(ChaosMode, "Chaos Info", "Escape")
+        task.config = {spend_guard.LEAVE_SETTINGS[0]: True}
+        task.node_status[spend_guard.RETREAT_ASKED] = True
+        self.assertIs(False, self.run_menu_handler(task))
+        self.assertEqual([], task.clicked)
+        unasked = on_menu(ChaosMode, "Chaos Info", "Escape")
+        unasked.node_status[spend_guard.RETREAT_ASKED] = True
+        self.assertIs(True, self.run_menu_handler(unasked))
+
+    def test_a_run_held_on_a_menu_reports_through_notifys_stuck_notice(self):
+        task = on_menu(ChaosMode, "Chaos Info", "确认")
+        for frozen, expected in ((30, 0), (61, 1), (120, 1)):
+            task._last_change_time = time.time() - frozen
+            self.run_menu_handler(task)
+            self.assertEqual(expected, len(task.notifications), frozen)
+        self.assertIn("Stuck on the same screen", task.notifications[0])
+        self.assertEqual([], task.clicked)
+
+    def test_the_install_puts_it_behind_the_stop_and_the_check_in_each_mode_once(self):
+        def named(name):
+            def handler(task):
+                return False
+
+            handler.__name__ = name
+            return handler
+
+        shapes = {"utils_chaos": ["stop_when_stuck", "check_game_language", "handle_auto_stop", "handle_escape"],
+                  "utils_sortie": ["stop_when_stuck", "handle_auto_stop", "handle_escape"],
+                  "utils_story": ["handle_remote", "handle_enter"],
+                  "src.en.daily": ["handle_remote", "stop_when_stuck", "handle_rescue_screen"]}
+        expected = {"utils_chaos": 2, "utils_sortie": 1, "utils_story": 1, "src.en.daily": None}
+        modules = {name: types.ModuleType(name) for name in shapes}
+        for name, module in modules.items():
+            module.PAGE_HANDLERS = [named(handler) for handler in shapes[name]]
+        retreated = []
+        stand_in = types.SimpleNamespace(handle_escape=lambda task: retreated.append(task) or True, _get_config_value=utils._get_config_value)
+        with mock.patch.dict(sys.modules, modules):
+            for _ in range(INSTALLS):
+                spend_guard.install_run_menus(stand_in)
+        for name, index in expected.items():
+            with self.subTest(mode=name):
+                names = [handler.__name__ for handler in modules[name].PAGE_HANDLERS]
+                self.assertEqual(int(index is not None), names.count("handle_run_menu"))
+                if index is not None:
+                    self.assertEqual(index, names.index("handle_run_menu"))
+                    # Upstream's retreat runs, when a setting asks, only from a list that holds it: not Story's.
+                    task = on_menu(ChaosMode, "Chaos Info", "逃脱")
+                    task.config = {spend_guard.LEAVE_SETTINGS[0]: True}
+                    retreated.clear()
+                    self.assertIs(True, modules[name].PAGE_HANDLERS[index](task))
+                    self.assertEqual(int(name != "utils_story"), len(retreated))
 
 
 class TestInstall(unittest.TestCase):

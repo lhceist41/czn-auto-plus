@@ -81,6 +81,8 @@ class Globals(QObject):
         notify.apply()
         stuck.apply()
         stuck_stop.apply()
+        # After stuck_stop, so the run-menu handler goes behind the stop, which still ends a run held on a menu.
+        spend_guard.apply_run_menus()
         language_check.apply()
         # After story, so a short team stops Story before the hand-over sees it, and after stuck_stop, so the stop stays first in Chaos's list.
         story_relay.apply()

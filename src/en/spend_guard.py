@@ -6,7 +6,10 @@ dialog asks. Either can buy Aether with Crystals, pay real money, drop a stored 
 now decline on any screen that can spend or discard, and a centred Confirm on a dialog that spends outside the run,
 deletes or retreats unasked is cancelled once, announced, and the run stopped. A Rescue screen or dialog stops the run
 before the centred Confirm sees it, with no input: pulls and their records are the user's to choose. Upstream's Enter
-handler is kept off an Enter that may be a run's Escape, which abandons the run.
+handler is kept off an Enter that may be a run's Escape, which abandons the run. On Chaos Info and Stage Info, the two
+in-run menus whose round button is that Escape, the run presses nothing: one handler right behind the stuck stop takes
+every frame of them, so no handler behind it reads the button as its own caption. Upstream's own retreat handler presses
+Escape only while a setting asks the run to leave after its first floor.
 
 In-run Credits stay allowed: the shop, card removal, Meditation and Extract all run on them.
 """
@@ -15,7 +18,7 @@ import re
 from typing import NamedTuple
 
 from src.en.handlers import insert_before, loaded, register, wrap
-from src.en.notify import announce
+from src.en.notify import announce, stuck as reporting_stuck
 from src.en.screen import centre_of, in_region
 from src.en.stuck import CLOCK
 
@@ -86,12 +89,37 @@ RESCUE_HEADER_REGION = (0.0, 0.0, 0.25, 0.09)
 DELETE_ASKED = "storage_delete_clicked"
 RETREAT_ASKED = "is_escaped"
 
+# Upstream's settings that send a run out after its first floor through the run menu's Escape, the only reason it has to
+# press that button.
+LEAVE_SETTINGS = ("只打第一层", "首层刷特定闪光")
+# Where upstream's `handle_escape` looks for that button.
+ESCAPE_POINT = (0.952, 0.928)
+
+# The two in-run menus, Chaos Info and Sortie's Stage Info. Both captures read the title top left at x 0.101-0.234,
+# y 0.024-0.079, behind an icon OCR reads as a stray glyph, and the End key hint beside the round button at x 0.804-0.857,
+# y 0.877-0.903. No other saved screen reads either there: battle prints its END at x 0.03 and End Turn's key at (0.96, 0.95).
+RUN_MENU_TITLES = ("chaosinfo", "stageinfo")
+RUN_MENU_TITLE_REGION = (0.0, 0.0, 0.30, 0.10)
+END_HINT = "end"
+END_HINT_REGION = (0.78, 0.86, 0.88, 0.92)
+# Upstream's caption handlers that press a box at or around the round button. Neither menu shows a caption of theirs, so
+# whatever one of them reads there is the Escape button misread.
+RUN_MENU_HANDLERS = ("handle_next_step", "handle_continue", "handle_close_page", "handle_skip", "handle_settlement")
+# The modes whose runs reach the two menus, and the handlers the run-menu handler goes behind: the stuck stop, so it still
+# ends a run held on a menu, and the Game Language check, which presses nothing. `remote`'s hold leads where there is no stop.
+RUN_MENU_MODES = ("utils_chaos", "utils_sortie", "utils_story")
+AHEAD_OF_RUN_MENU = ("stop_when_stuck", "check_game_language")
+HOLD = "handle_remote"
+
 # Upstream's stuck threshold, used only to log a declined blind tap once per freeze.
 STUCK_SECONDS = 10
 # Parked on the task: the stuck clock's value when a declined tap was last logged.
 LOGGED = "_en_spend_screen_logged"
 # The same for a declined Enter.
 ENTER_LOGGED = "_en_escape_enter_logged"
+# The same for a run menu and a declined retreat.
+MENU_LOGGED = "_en_run_menu_logged"
+ESCAPE_LOGGED = "_en_escape_declined_logged"
 
 
 class Dialog(NamedTuple):
@@ -137,8 +165,15 @@ REWARD_SKIP_AREA = (0.009, 0.33, 0.977, 0.57)
 TAPS_TAG = "no blind tap on a spend screen"
 CONFIRM_TAG = "no Confirm on an account spend"
 ENTER_TAG = "no Enter on a run's Escape"
+RUN_MENU_TAG = "presses nothing on a run menu"
+ESCAPE_TAG = "retreats only when a setting asks"
+
+# notify's stuck notice without upstream's stuck handler, which taps, under it: the run-menu handler takes the frames that
+# handler would see, and a run held on a menu still says so at a minute.
+report_stuck = reporting_stuck(lambda task: False)
 
 _patched = False
+_run_menus_patched = False
 
 
 def folded(text):
@@ -433,23 +468,61 @@ def covers(box, point, task):
     return box.x <= x <= box.x + box.width and box.y <= y <= box.y + box.height
 
 
-def escape_at_enter(task):
-    """Find what says an Enter upstream could press may be a run's Escape.
+def run_menu(task):
+    """Find what shows Chaos Info or Stage Info, whose round button is the run's Escape.
 
-    The prompt to resume an open Chaos run reads Cancel, Enter and Escape in one row, Escape in the round button's
-    corner. Read there as Enter, alone or over the Escape box, it would be pressed as the round button.
+    Either mark is enough, so a pass that misses one, or reads the Escape button as something else, still tells.
 
     Args:
         task: The running task, whose `all_texts` holds the current OCR pass.
 
     Returns:
-        The text that gave it away, a retreat word under an Enter or a Cancel or second Enter in the round button's
-        row, or None.
+        The text that gave it away, the menu's title or its End key hint, or None.
+    """
+    for box in getattr(task, "all_texts", None) or []:
+        text = cleaned(box.name)
+        if any(title in text for title in RUN_MENU_TITLES) and in_region(box, RUN_MENU_TITLE_REGION, task.width, task.height):
+            return box.name
+        if text == END_HINT and in_region(box, END_HINT_REGION, task.width, task.height):
+            return box.name
+    return None
+
+
+def log_once(task, attribute, message):
+    """Log a declined press once per freeze, rather than on every frame of it.
+
+    Args:
+        task: The running task.
+        attribute: Where on the task the stuck clock's value at the last such log is parked.
+        message: The line to log.
+    """
+    clock = getattr(task, CLOCK, None)
+    if getattr(task, attribute, None) != clock:
+        setattr(task, attribute, clock)
+        task.log_info(message)
+
+
+def escape_at_enter(task):
+    """Find what says an Enter upstream could press may be a run's Escape.
+
+    The prompt to resume an open Chaos run reads Cancel, Enter and Escape in one row, Escape in the round button's
+    corner. Read there as Enter, alone or over the Escape box, it would be pressed as the round button. On the two
+    run menus the Escape box is the round button itself, with nothing beside it, so any Enter there is refused.
+
+    Args:
+        task: The running task, whose `all_texts` holds the current OCR pass.
+
+    Returns:
+        The text that gave it away, a run menu's mark, a retreat word under an Enter or a Cancel or second Enter in
+        the round button's row, or None.
     """
     boxes = getattr(task, "all_texts", None) or []
     for box in boxes:
         if cleaned(box.name) != ENTER:
             continue
+        menu = run_menu(task)
+        if menu is not None:
+            return menu
         point = centre_of(box, task.width, task.height)
         round_button = in_region(box, ROUND_BUTTON, task.width, task.height)
         for other in boxes:
@@ -485,8 +558,114 @@ def guarding_enter(original):
     return handle_enter
 
 
+def guarding_run_menu(original):
+    """Wrap a caption handler so it presses nothing on Chaos Info or Stage Info.
+
+    Args:
+        original: The handler, as currently installed.
+
+    Returns:
+        The wrapped handler.
+    """
+    def handler(task, *args, **kwargs):
+        mark = run_menu(task)
+        if mark is None:
+            return original(task, *args, **kwargs)
+        log_once(task, MENU_LOGGED, f"on a run menu (read {mark!r}), pressing nothing: its round button is the run's Escape")
+        return False
+
+    return handler
+
+
+def asked_to_leave(task, utils):
+    """Say whether a setting asks the run to leave after its first floor.
+
+    Read through upstream's own config reader, which `src/en/story_relay.py` wraps, so a relayed Story run reads both as off.
+
+    Args:
+        task: The running task.
+        utils: Upstream's `utils`, for `_get_config_value`.
+
+    Returns:
+        True when either setting is on.
+    """
+    return any(utils._get_config_value(task, key, False) is True for key in LEAVE_SETTINGS)
+
+
+def guarding_escape(original, utils):
+    """Wrap upstream's retreat handler so it presses Escape only when a setting asks the run to leave.
+
+    Upstream presses any box at the menu's Escape that reads as Retreat, whatever the settings say, and its press is what
+    lets the centred Confirm through the retreat dialog after it.
+
+    Args:
+        original: `handle_escape`, as currently installed.
+        utils: Upstream's `utils`, for `_get_config_value`.
+
+    Returns:
+        The wrapped handler.
+    """
+    def handle_escape(task):
+        if asked_to_leave(task, utils):
+            return original(task)
+        box = utils.find_box_at_point(task, *ESCAPE_POINT)
+        if box is not None and marker_in([folded(box.name)], RETREAT):
+            log_once(task, ESCAPE_LOGGED, f"not pressing {box.name!r}: no setting asks the run to leave")
+        return False
+
+    return handle_escape
+
+
+def holding_run_menu(utils, retreats):
+    """Build the handler that takes every frame of Chaos Info or Stage Info and presses nothing.
+
+    Behind it, any handler could read the round button as its own caption and press the run's Escape; a run menu that
+    nobody closes then sits until the stuck stop ends the run.
+
+    Args:
+        utils: Upstream's `utils`, for `_get_config_value` and the guarded `handle_escape`.
+        retreats: Whether the mode's list holds upstream's retreat handler, which then still runs when a setting asks.
+
+    Returns:
+        The handler.
+    """
+    def handle_run_menu(task):
+        mark = run_menu(task)
+        if mark is None:
+            return False
+        if retreats and asked_to_leave(task, utils):
+            if utils.handle_escape(task):
+                return True
+            if (getattr(task, "node_status", None) or {}).get(RETREAT_ASKED):
+                # The retreat the setting asked for is pressed: its dialog's Confirm comes after this.
+                return False
+        report_stuck(task)
+        log_once(task, MENU_LOGGED, f"on a run menu (read {mark!r}), pressing nothing: its round button is the run's Escape")
+        return True
+
+    return handle_run_menu
+
+
+def install_run_menus(utils):
+    """Put the run-menu handler behind the stuck stop and the Game Language check in Chaos, Sortie and Story.
+
+    Args:
+        utils: The loaded `utils` module, or None when it is not importable yet.
+    """
+    if utils is None:
+        return
+    for name in RUN_MENU_MODES:
+        names = [getattr(existing, "__name__", None) for existing in getattr(loaded(name), "PAGE_HANDLERS", None) or ()]
+        ahead = [names.index(anchor) for anchor in (*AHEAD_OF_RUN_MENU, HOLD) if anchor in names]
+        index = max(ahead) + 1 if ahead else 0
+        if index < len(names):
+            insert_before(names[index], holding_run_menu(utils, "handle_escape" in names), only=(name,))
+
+
 def install(utils):
     """Wrap both of upstream's fallbacks and its Enter wherever the run reaches them, and stop on Rescue ahead of the centred Confirm.
+
+    Also keeps the caption handlers off the run menus, and upstream's retreat handler off the run's Escape unless asked.
 
     Args:
         utils: The loaded `utils` module, or None when it is not importable yet.
@@ -497,14 +676,26 @@ def install(utils):
     wrap(utils, "handle_center_confirm", guarding_confirm, CONFIRM_TAG)
     # Over `src/en/enter.py`'s wrapper, which shows upstream the round button's box alone.
     wrap(utils, "handle_enter", guarding_enter, ENTER_TAG)
+    for name in RUN_MENU_HANDLERS:
+        wrap(utils, name, guarding_run_menu, RUN_MENU_TAG)
+    wrap(utils, "handle_escape", lambda handler: guarding_escape(handler, utils), ESCAPE_TAG)
     # In Chaos and Sortie this is well ahead of their own Rescue header stop, which comes after the Confirm.
     insert_before("handle_center_confirm", handle_rescue_screen)
 
 
 def apply():
-    """Keep blind taps off spend screens and Enter off a run's Escape, stop on Rescue, and stop at a risky centred Confirm."""
+    """Keep blind taps off spend screens and upstream's button handlers off a run's Escape, stop on Rescue, and stop at a risky centred Confirm."""
     global _patched
     if _patched:
         return
     register(lambda: install(loaded("utils")))
     _patched = True
+
+
+def apply_run_menus():
+    """Press nothing on Chaos Info or Stage Info, ahead of every handler behind the stuck stop."""
+    global _run_menus_patched
+    if _run_menus_patched:
+        return
+    register(lambda: install_run_menus(loaded("utils")))
+    _run_menus_patched = True
