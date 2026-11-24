@@ -31,6 +31,12 @@ KILLS_NOW_PLANNED = (("17a45db1adc6", 3, 0.11, ("High-Power Scope", "Engagement 
                      ("17a45db1adc6", 3, 0.11, ("Engagement Fire",), ("Engagement Fire",)),
                      ("994677b1a053", 1, 0.02, ("High-Power Scope", "Engagement Fire"), ("Engagement Fire", "High-Power Scope")),
                      ("994677b1a053", 1, 0.03, ("Engagement Fire",), ("Engagement Fire",)))
+# Two recorded Chaos fights with an Aether Eater, which loses 1 HP a hit behind shields that lose 1 too, standing at x 0.83 to 0.85.
+AETHER_EATER = REPO_ROOT / "tests" / "fights" / "aether_eater.jsonl"
+AETHER_EATER_X = 0.84
+# The plans the bot made in them with a kill on the Aether Eater that today's picker no longer makes: fight and time.
+KILLS_NO_LONGER_PLANNED = (("aether-eater-1", 70.05), ("aether-eater-1", 74.7), ("aether-eater-1", 86.02), ("aether-eater-1", 90.59),
+                           ("aether-eater-2", 112.22), ("aether-eater-2", 124.48))
 Foe = board.Foe
 # The card reward's title, which only comes up after a won fight.
 REWARD = "卡牌奖励"
@@ -511,6 +517,39 @@ class TestReplay(Recording):
         self.assertEqual(report["calls"], report["same"] + len(KILLS_NOW_PLANNED))
         self.assertGreater(report["recorded"]["kill available"], 0)
         self.assertEqual(sum(line["kind"] == "end" for line in records), report["fights_ended"])
+
+    def test_no_kill_is_planned_on_the_aether_eater_once_it_lost_a_point_or_two_to_a_hit(self):
+        records, _ = replay_fights.read_lines([AETHER_EATER])
+        plans, plan = [], cards.plan
+
+        def recording(hand_cards, state):
+            chosen = plan(hand_cards, state)
+            plans.append((state, chosen))
+            return chosen
+
+        with mock.patch.object(cards, "plan", recording):
+            report = replay_fights.replay(records)
+        self.assertEqual(0, report["broken"])
+        self.assertEqual(KILLS_NO_LONGER_PLANNED, tuple((diff["fight"], diff["t"]) for diff in report["differ"]))
+        self.assertTrue(all(diff["recorded_kills"] and not diff["now_kills"] for diff in report["differ"]))
+        replanned = iter(plans)
+        shrugged, before, checked = set(), {}, 0
+        for line in records:
+            if line["kind"] == "play":
+                eater = [(foe["hp"], later["hp"]) for foe in before.get(line["fight"], ()) for later in line["foes"] or ()
+                         if abs(foe["x"] - AETHER_EATER_X) <= 0.02 and abs(later["x"] - AETHER_EATER_X) <= 0.02]
+                if any(foe is not None and later is not None and 1 <= foe - later <= 2 for foe, later in eater):
+                    shrugged.add(line["fight"])
+            elif line["kind"] == "plan":
+                before[line["fight"]] = line["foes"]
+                for _ in line["plans"]:
+                    state, chosen = next(replanned)
+                    if line["fight"] in shrugged:
+                        on_it = [card for card in chosen if card.get("kills") and (card["target"] is None and len(state.foes) == 1
+                                                                                   or abs((card["target"] or 0) - AETHER_EATER_X) <= 0.02)]
+                        self.assertEqual([], on_it, f"{line['fight']} at {line['t']}s")
+                        checked += 1
+        self.assertGreater(checked, 5)
 
     def test_a_fight_just_recorded_replays_exactly(self):
         cards.HITS["Selena"] = deque([72.0, 80.0, 95.0], maxlen=cards.HIT_MEMORY)

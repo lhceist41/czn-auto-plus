@@ -94,6 +94,10 @@ TYPICAL_HIT = 0.5
 HIT_MEMORY = 50
 # How far apart two reads of one enemy can stand, as a share of the frame's width. Enemies stand 0.06 or more apart.
 SAME_ENEMY = 0.03
+# The most HP an enemy may lose to an aimed hit planned at `SHRUG_PLANNED` or more and be taken for one that shrugs off hits. The Aether
+# Eater loses 1 a hit behind shields that lose 1 too, so a multi-hit card took 2 off it, while a real hit takes tens.
+SHRUG_LOSS = 2
+SHRUG_PLANNED = 20
 # Where in a turn the cards that kill go: after a chance to escape or the glowing card, before everything a fight that ends never needs.
 PHASE_KILL = PHASE_UPGRADE - 0.5
 # How many states of the search for a sure kill's order to remember, and of its bounds. Ten attacks against four tough enemies, planned
@@ -191,7 +195,9 @@ Board = namedtuple("Board", [
     "foes",
     # The share of the team's HP it has now, from the readout over the team bar. A heal cannot store HP for a hit still to come. None when not read.
     "team",
-], defaults=[BASE_ACTION_POINTS, None, None, (), (), (), (), 0, (), DECK, False, 1, None, (), None])
+    # Where each enemy stands that shrugged off an aimed hit this fight, from `shrugging_after`. No kill is planned on one.
+    "shrugging",
+], defaults=[BASE_ACTION_POINTS, None, None, (), (), (), (), 0, (), DECK, False, 1, None, (), None, ()])
 
 # How many distinct readings to remember the folding of. OCR invents new misspellings all session, so this
 # is bounded rather than unlimited, and it is far larger than the ten names one frame ever asks about.
@@ -722,7 +728,8 @@ def rated(name, board):
     matched = board.weakness is not None and attribute_of(name) == board.weakness
     if wasted(name, board):
         return 0
-    hit = doing.damage + doing.spread * (board.enemies - 1)
+    # Damage on an enemy that shrugs off hits is worth nothing, so damage to all enemies counts once for each of the others.
+    hit = doing.damage + doing.spread * (max(1, board.enemies - sum(shrugs(foe, board) for foe in board.foes)) - 1)
     full = board.team is not None and board.team >= 1
     heal = 0 if full or board.health is not None and board.health >= HEALTHY else doing.heal
     shield = doing.shield if hit_coming(board) else 0
@@ -823,18 +830,97 @@ def hit_coming(board):
     return any(foe.counter is not None and foe.counter <= reach for foe in board.foes)
 
 
-def note_hit(name, before, after):
+def paired(before, after):
+    """Match each enemy read before a card was played to its read after, by where it stands.
+
+    Args:
+        before: The `board.Foe` reads the card was chosen against.
+        after: The reads of the frame that showed it played.
+
+    Returns:
+        Pairs of reads of one enemy, for each enemy before with an HP read and exactly one read after with one.
+    """
+    pairs = []
+    for foe in before:
+        later = [other for other in after if abs(other.x - foe.x) <= SAME_ENEMY]
+        if foe.health is not None and len(later) == 1 and later[0].health is not None:
+            pairs.append((foe, later[0]))
+    return pairs
+
+
+def shrugs(foe, board):
+    """Say whether an enemy has shrugged off an aimed hit this fight.
+
+    Args:
+        foe: The `board.Foe`.
+        board: The `Board`, whose `shrugging` says where such enemies stand.
+
+    Returns:
+        True when it stands where one did.
+    """
+    return any(abs(foe.x - x) <= SAME_ENEMY for x in board.shrugging)
+
+
+def shrugging_after(name, target, board, after, absorbed=()):
+    """Work out which enemies shrug off hits, as the Aether Eater does, from what a card the game took did to them.
+
+    A card aimed at one enemy, planned at `SURE_HIT` to take `SHRUG_PLANNED` HP or more off it, counts only while every other enemy
+    kept its HP and stayed. The enemy shrugs off hits once such a card took 1 to `SHRUG_LOSS` HP off it, or a second one took none: a
+    Shield can take one hit whole, and so can a card an Epiphany turned into one with no damage while it was played. An enemy that
+    then loses `SHRUG_PLANNED` or more at once, on reads the zoomed crop and the full-frame pass agree on, shrugs off nothing after
+    all: one that loses a point a hit drops a few at most to a card of several hits. Nothing is learnt on an invulnerable turn, which
+    the badge already covers.
+
+    Args:
+        name: The card the game took.
+        target: The x of the enemy a planned kill aimed it at, None otherwise.
+        board: The `Board` the card was chosen against.
+        after: The reads of the frame that showed it played.
+        absorbed: Where each enemy stands that took one such card whole, from the last call.
+
+    Returns:
+        Where each enemy stands that shrugs off hits, as `Board.shrugging` holds them, and the new `absorbed`.
+    """
+    pairs = paired(board.foes, after)
+    landed = [foe.x for foe, later in pairs if foe.agreed and later.agreed and foe.health - later.health >= SHRUG_PLANNED]
+    marked = [x for x in board.shrugging if not any(abs(x - other) <= SAME_ENEMY for other in landed)]
+    absorbed = [x for x in absorbed if not any(abs(x - other) <= SAME_ENEMY for other in landed)]
+    if not aimed(name) or board.invulnerable:
+        return tuple(marked), tuple(absorbed)
+    if target is None and len(board.foes) == 1 and board.enemies <= 1:
+        # Alone, an enemy is where any aimed card goes.
+        target = board.foes[0].x
+    estimate = expected_damage(name, SURE_HIT)
+    if target is None or estimate is None or estimate[0] * on_target(name) + estimate[1] < SHRUG_PLANNED:
+        return tuple(marked), tuple(absorbed)
+    hit = [(foe, later) for foe, later in pairs if abs(foe.x - target) <= SAME_ENEMY]
+    others = [(foe, later) for foe, later in pairs if abs(foe.x - target) > SAME_ENEMY]
+    # An enemy gone or hurt besides the target says the card may have landed elsewhere, as when a Taunt holds the reticle.
+    if not hit or len(pairs) != len(board.foes) or any(later.health != foe.health for foe, later in others):
+        return tuple(marked), tuple(absorbed)
+    foe, later = hit[0]
+    loss = foe.health - later.health
+    if not (foe.sure and later.sure and 0 <= loss <= SHRUG_LOSS) or any(abs(foe.x - x) <= SAME_ENEMY for x in marked):
+        return tuple(marked), tuple(absorbed)
+    seen = [x for x in absorbed if abs(foe.x - x) <= SAME_ENEMY]
+    if loss or seen:
+        return (*marked, foe.x), tuple(x for x in absorbed if x not in seen)
+    return tuple(marked), (*absorbed, foe.x)
+
+
+def note_hit(name, before, after, shrugging=()):
     """Learn what one of a combatant's attacks did, from the enemies read before it was played and after.
 
     Only a plain hit on one enemy teaches anything: an attack with damage to all enemies, with a figure the text leaves as X or with
-    no owner is skipped, and so is any pair of reads where not exactly one enemy lost HP, any enemy gained some, or the HP of the one
-    that lost it was not read the same by the zoomed crop and the full-frame pass both times. A hit that kills leaves no HP to compare,
-    so the figures lean low, the safe way.
+    no owner is skipped, and so is any pair of reads where an enemy read before is gone after, not exactly one enemy lost HP, any
+    enemy gained some, the one that lost it shrugs off hits, or its HP was not read the same by the zoomed crop and the full-frame pass
+    both times. A hit that kills leaves no HP to compare, and whatever else lost HP on that frame may have lost it to something else.
 
     Args:
         name: The card the game took.
         before: The `board.Foe` reads the card was chosen against.
         after: The reads of the frame that showed it played.
+        shrugging: Where each enemy stands that shrugs off hits, as `Board.shrugging` holds them.
 
     Returns:
         The damage per 100% printed it did, now remembered for its owner, or None when it taught nothing.
@@ -843,16 +929,14 @@ def note_hit(name, before, after):
     who = owner(canonical(name))
     if who is None or not doing.damage or doing.spread or UNKNOWN_FIGURE.search(on_play(name)):
         return None
-    pairs = []
-    for foe in before:
-        later = [other for other in after if abs(other.x - foe.x) <= SAME_ENEMY]
-        if foe.health is not None and len(later) == 1 and later[0].health is not None:
-            pairs.append((foe, later[0]))
+    if any(not any(abs(other.x - foe.x) <= SAME_ENEMY for other in after) for foe in before):
+        return None
+    pairs = paired(before, after)
     dropped = [(foe, later) for foe, later in pairs if later.health < foe.health]
     if len(dropped) != 1 or any(later.health > foe.health for foe, later in pairs):
         return None
     foe, later = dropped[0]
-    if not (foe.agreed and later.agreed):
+    if not (foe.agreed and later.agreed) or any(abs(foe.x - x) <= SAME_ENEMY for x in shrugging):
         return None
     figure = (foe.health - later.health) * 100 / doing.damage
     HITS.setdefault(who, deque(maxlen=HIT_MEMORY)).append(figure)
@@ -959,15 +1043,15 @@ def kill_plan(picked, board):
 
     Args:
         picked: Per attack, its HP figures to one enemy and to all, as `expected_damage` gives them at `SURE_HIT`, and whether it is aimed.
-        board: The `Board`, whose enemies with a sure HP read can be killed. An enemy without one, or not read at all, still stands
-            and still draws a random hit.
+        board: The `Board`, whose enemies with a sure HP read can be killed. An enemy without one, one that shrugs off hits, or one
+            not read at all, still stands and still draws a random hit.
 
     Returns:
         The enemies killed, how many aimed hits need moving off the leftmost enemy, and per attack in `picked` that hits only one
         enemy, in the order to play them, its index and the x of the enemy it is aimed at, None when it is not aimed at one.
     """
     spread = sum(every for _, every, _ in picked)
-    lefts = [foe.health - spread if foe.sure and foe.health is not None else None for foe in board.foes]
+    lefts = [foe.health - spread if foe.sure and foe.health is not None and not shrugs(foe, board) else None for foe in board.foes]
     standing = [foe for foe, left in zip(board.foes, lefts) if left is None or left > 0]
     killed = len(board.foes) - len(standing)
     lefts = [left for left in lefts if left is None or left > 0]
@@ -1131,7 +1215,7 @@ def lethal(fixed, board):
     attacks = [(card, expected_damage(card["name"], SURE_HIT)) for card in fixed if features(card["name"]).damage]
     attacks = [(card, (estimate[0] * on_target(card["name"]), estimate[1], aimed(card["name"]))) for card, estimate in attacks if estimate]
     best, best_key, best_order = (), (0,), []
-    healths = list(accumulate(sorted(foe.health for foe in board.foes if foe.sure and foe.health is not None)))
+    healths = list(accumulate(sorted(foe.health for foe in board.foes if foe.sure and foe.health is not None and not shrugs(foe, board))))
     for size in range(1, len(attacks) + 1):
         for picked in combinations(attacks, size):
             spent = sum(price(card) for card, _ in picked)

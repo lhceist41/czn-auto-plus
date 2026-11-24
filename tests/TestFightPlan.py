@@ -59,6 +59,29 @@ def one(health, sure=True, counter=None):
     return (Foe(0.566, health, counter, None, sure, sure),)
 
 
+def read(x, health, source="both"):
+    """Build one enemy read the way a fight record writes it.
+
+    Args:
+        x: Where it stands.
+        health: Its HP.
+        source: Which reader gave the HP: "both" when the crop and the full-frame pass agreed, "crop" for the crop alone.
+
+    Returns:
+        The `board.Foe`.
+    """
+    return Foe(x, health, None, None, source in ("both", "crop"), source == "both")
+
+
+def reads(*foes):
+    """Build the enemy reads of one frame from (x, HP, reader) triples.
+
+    Returns:
+        The enemies, as `Board.foes` holds them.
+    """
+    return tuple(read(*foe) for foe in foes)
+
+
 def played(chosen):
     """Reduce a plan to the names it plays, in order.
 
@@ -442,6 +465,145 @@ class TestLearningHits(unittest.TestCase):
         self.assertEqual(6, min(cards.HITS["Mei Lin"]))
 
 
+class TestShruggingOffHits(unittest.TestCase):
+    """An enemy that loses next to nothing to aimed hits, as the Aether Eater does, is no kill target, and teaches no hit figure.
+
+    The reads are those of the recorded fights the change was built on, where the bot threw nine cards at an Aether Eater on 8 HP.
+    """
+
+    def setUp(self):
+        self.enterContext(hits(CALIBRATED))
+
+    def test_a_hit_that_takes_one_or_two_hp_marks_the_enemy_at_once(self):
+        # Engagement Fire took the lone Aether Eater from 8 to 7.
+        before, after = reads((0.845, 8)), reads((0.85, 7, "crop"))
+        self.assertEqual(((0.845,), ()), cards.shrugging_after("Engagement Fire", None, cards.Board(foes=before), after))
+
+    def test_one_hit_taken_whole_is_not_enough_but_a_second_is(self):
+        # Two kill shots at the Aether Eater beside a 99 HP enemy left it on 8 both times.
+        first = cards.shrugging_after("Strike", 0.835, cards.Board(foes=reads((0.464, 99), (0.835, 8)), enemies=2),
+                                      reads((0.462, 99), (0.833, 8)))
+        self.assertEqual(((), (0.835,)), first)
+        second = cards.shrugging_after("Strike", 0.837, cards.Board(foes=reads((0.466, 99), (0.837, 8)), enemies=2, shrugging=first[0]),
+                                       reads((0.466, 99), (0.837, 8)), first[1])
+        self.assertEqual(((0.837,), ()), second)
+
+    def test_a_card_an_epiphany_took_the_damage_from_marks_nothing(self):
+        # Target Spotted turned into a shield card while it was played, and the 73 HP enemy it was aimed at kept its HP.
+        before = reads((0.462, 73), (0.556, 77), (0.655, 82), (0.739, 90), (0.845, 8, "crop"))
+        after = reads((0.465, 73), (0.561, 77), (0.66, 82), (0.743, 90), (0.848, 8, "crop"))
+        shrugging, absorbed = cards.shrugging_after("Target Spotted", 0.462, cards.Board(foes=before, enemies=5), after)
+        self.assertEqual(((), (0.462,)), (shrugging, absorbed))
+        self.assertTrue(cards.plan(hand("Strike"), cards.Board(foes=before, enemies=5, shrugging=shrugging))[0].get("kills"))
+
+    def test_a_hit_that_lands_clears_the_mark(self):
+        # An ordinary Shield can take a hit whole, or all but a point or two of it. Once a hit takes more, the enemy is a target again.
+        before, after = reads((0.55, 300)), reads((0.55, 195))
+        for card in ("Water Barrier", "Strike"):
+            for shrugging, absorbed in (((0.55,), ()), ((), (0.55,)), ((), ())):
+                with self.subTest(card=card, shrugging=shrugging, absorbed=absorbed):
+                    self.assertEqual(((), ()), cards.shrugging_after(card, None, cards.Board(foes=before, shrugging=shrugging), after, absorbed))
+
+    def test_a_drop_the_readers_do_not_agree_on_or_of_two_hp_keeps_the_mark(self):
+        # The crop alone read the Aether Eater as 18, then both readers as 8. A multi-hit card took 2 off it.
+        cases = {"crop alone before": (reads((0.831, 18, "crop")), reads((0.834, 8))),
+                 "crop alone, a hit's worth": (reads((0.831, 38, "crop")), reads((0.834, 8))),
+                 "two HP": (reads((0.834, 8)), reads((0.834, 6)))}
+        for case, (before, after) in cases.items():
+            with self.subTest(case):
+                self.assertEqual(((0.831,), ()), cards.shrugging_after("Water Barrier", None, cards.Board(foes=before, shrugging=(0.831,)),
+                                                                       after))
+
+    def test_a_drop_short_of_a_planned_hit_keeps_the_mark(self):
+        # The Aether Eater loses a point a hit, so a card of three hits takes 3 off it. A hit that lands takes what was planned.
+        for card in ("Water Barrier", "Strike"):
+            for start, end, kept in ((6, 3, (0.834,)), (100, 81, (0.834,)), (100, 80, ())):
+                with self.subTest(card=card, drop=start - end):
+                    before, after = reads((0.834, start)), reads((0.834, end))
+                    board_read = cards.Board(foes=before, shrugging=(0.834,))
+                    self.assertEqual((kept, ()), cards.shrugging_after(card, None, board_read, after))
+
+    def test_nothing_is_learnt_on_an_invulnerable_turn(self):
+        board_read = cards.Board(foes=reads((0.55, 300)), invulnerable=True)
+        self.assertEqual(((), (0.55,)), cards.shrugging_after("Strike", 0.55, board_read, reads((0.55, 299)), (0.55,)))
+
+    def test_a_card_that_may_have_landed_elsewhere_marks_nothing(self):
+        # A Taunt holds the reticle, so the card meant for the 8 HP enemy can hit another one.
+        before = reads((0.55, 300), (0.75, 8))
+        for case, after in (("another enemy lost HP", reads((0.55, 195), (0.75, 8))), ("another enemy is gone", reads((0.75, 8))),
+                            ("the target is gone", reads((0.55, 300)))):
+            with self.subTest(case):
+                self.assertEqual(((), (0.75,)), cards.shrugging_after("Strike", 0.75, cards.Board(foes=before, enemies=2), after, (0.75,)))
+
+    def test_only_an_aimed_hit_planned_at_twenty_or_more_counts(self):
+        before, after = reads((0.55, 8)), reads((0.55, 7))
+        self.assertEqual(((), ()), cards.shrugging_after("Drone Bombing", None, cards.Board(foes=before), after))
+        for seen in ([10, 10, 10], SELENA_HITS[:2]):
+            with self.subTest(seen=seen), hits({"Mei Lin": seen}):
+                self.assertEqual(((), ()), cards.shrugging_after("Strike", None, cards.Board(foes=before), after))
+
+    def test_a_hit_on_one_of_several_enemies_needs_a_planned_kill_to_name_it(self):
+        before = reads((0.55, 300), (0.75, 8))
+        self.assertEqual(((), ()), cards.shrugging_after("Strike", None, cards.Board(foes=before, enemies=2), before))
+        self.assertEqual(((), ()), cards.shrugging_after("Strike", None, cards.Board(foes=before[1:], enemies=2), before[1:]))
+
+    def test_an_unsure_read_marks_nothing(self):
+        unsure = (Foe(0.55, 8, None, None, False, False),)
+        self.assertEqual(((), ()), cards.shrugging_after("Strike", None, cards.Board(foes=unsure), reads((0.55, 7))))
+        self.assertEqual(((), ()), cards.shrugging_after("Strike", None, cards.Board(foes=reads((0.55, 8))), unsure))
+
+    def test_an_enemy_that_gained_hp_marks_nothing(self):
+        self.assertEqual(((), ()), cards.shrugging_after("Strike", None, cards.Board(foes=reads((0.55, 8))), reads((0.55, 9))))
+
+    def test_an_enemy_is_marked_once(self):
+        board_read = cards.Board(foes=reads((0.834, 6)), shrugging=(0.837,))
+        self.assertEqual(((0.837,), ()), cards.shrugging_after("Strike", None, board_read, reads((0.834, 5))))
+
+    def test_no_kill_is_planned_on_an_enemy_that_shrugs_off_hits(self):
+        alone = cards.plan(hand("Strike", "Engagement Fire"), cards.Board(foes=reads((0.834, 5)), shrugging=(0.837,)))
+        self.assertFalse(any(card.get("kills") for card in alone))
+        two = cards.plan(hand("Strike", "Engagement Fire"), cards.Board(foes=reads((0.55, 60), (0.834, 5)), enemies=2, shrugging=(0.837,)))
+        self.assertEqual([0.55], [card["target"] for card in two if card.get("kills")])
+        two_hits = [(100, 0, True), (100, 0, True)]
+        self.assertEqual(1, cards.kill_plan(two_hits, cards.Board(foes=reads((0.55, 60), (0.834, 5)), enemies=2, shrugging=(0.837,)))[0])
+
+    def test_damage_to_all_enemies_counts_nothing_on_one_that_shrugs_off_hits(self):
+        foes = reads((0.465, 55), (0.836, 8))
+        marked = cards.value("Drone Bombing", cards.Board(foes=foes, enemies=2, shrugging=(0.836,)))
+        self.assertEqual(cards.value("Drone Bombing", cards.Board(foes=foes[:1], enemies=1)), marked)
+        self.assertLess(marked, cards.value("Drone Bombing", cards.Board(foes=foes, enemies=2)))
+
+    def test_no_set_is_searched_that_could_only_kill_an_enemy_that_shrugs_off_hits(self):
+        board_read = cards.Board(foes=reads((0.45, 500), (0.83, 8)), enemies=2, shrugging=(0.83,))
+        with mock.patch.object(cards, "kill_plan", wraps=cards.kill_plan) as searched:
+            self.assertFalse(any(card.get("kills") for card in cards.plan(hand("Strike", "Engagement Fire"), board_read)))
+        searched.assert_not_called()
+
+    def test_a_frame_where_an_enemy_died_teaches_nothing(self):
+        # Each kill left another enemy that lost HP on the same frame, and its loss was learnt as the hit: 58, 47, 35, 35, 272 and 70.
+        frames = {
+            "58": ("Target Spotted", reads((0.463, 119), (0.838, 237)), reads((0.642, 230), (0.833, 150))),
+            "47": ("Target Spotted", reads((0.426, 113), (0.557, 105), (0.824, 103)), reads((0.551, 105), (0.682, 111, "crop"), (0.818, 33))),
+            "35": ("Strike", reads((0.436, 36), (0.567, 38), (0.658, 798)), reads((0.559, 3), (0.651, 798))),
+            "35 again": ("Engagement Fire", reads((0.434, 37), (0.565, 35), (0.656, 335), (0.84, 36)), reads((0.565, 35), (0.656, 300), (0.84, 36))),
+            "272": ("Strike", reads((0.565, 35), (0.656, 300), (0.84, 36)), reads((0.656, 28), (0.84, 36))),
+            "70": ("Strike", reads((0.465, 73), (0.561, 77), (0.66, 82), (0.743, 90), (0.848, 8, "crop")),
+                   reads((0.554, 77), (0.654, 82), (0.736, 20), (0.844, 8, "crop"))),
+        }
+        cards.HITS.clear()
+        for case, (card, before, after) in frames.items():
+            with self.subTest(case):
+                self.assertIsNone(cards.note_hit(card, before, after))
+        self.assertEqual({}, cards.HITS)
+
+    def test_a_hit_on_an_enemy_that_shrugs_off_hits_teaches_nothing(self):
+        # Engagement Fire took the Aether Eater from 5 to 4, and 1 per 100% went into Selena's hits.
+        before, after = reads((0.834, 5)), reads((0.834, 4))
+        self.assertIsNone(cards.note_hit("Engagement Fire", before, after, (0.837,)))
+        self.assertEqual(SELENA_HITS, list(cards.HITS["Selena"]))
+        self.assertEqual(1, cards.note_hit("Engagement Fire", before, after))
+
+
 class TestHitsInBattle(unittest.TestCase):
     """The battle learns each hit from the frame that shows its card played, and keeps the hits for the next run."""
 
@@ -473,6 +635,76 @@ class TestHitsInBattle(unittest.TestCase):
         self.assertEqual([105], list(cards.HITS["Mei Lin"]))
         self.assertEqual({"Mei Lin": [105]}, json.loads(self.file.read_text(encoding="utf-8")))
         self.assertTrue(any("hit for 105 per 100% printed" in line for line in task.logged))
+
+    def test_an_enemy_that_shrugs_off_a_kill_is_not_planned_on_again(self):
+        self.file.parent.mkdir(parents=True)
+        self.file.write_text(json.dumps(CALIBRATED), encoding="utf-8")
+        frames = [one(8), one(7)]
+        with upstream(hand("Strike", "Strike")) as (utils_sortie, task), mock.patch.object(board, "enemies", lambda task: frames[0]):
+            battle.install()
+            utils_sortie._try_all_card_keys(task, 2)
+            frames.pop(0)
+            task.hand_cards = hand("Strike")
+            utils_sortie._try_all_card_keys(task, 1)
+            self.assertEqual((0.566,), getattr(task, battle.TURN).shrugging)
+        plays = [line for line in task.logged if line.startswith("playing Strike")]
+        self.assertEqual([True, False], [line.endswith("to kill an enemy") for line in plays])
+        self.assertTrue(any("the enemy at 0.566 shrugged off Strike" in line for line in task.logged))
+        self.assertEqual(MEI_LIN_HITS, list(cards.HITS["Mei Lin"]))
+
+    def test_what_shrugs_off_hits_is_kept_for_the_fight(self):
+        with upstream(hand("Strike")) as (utils_sortie, task):
+            battle.install()
+            task.node_status = {"node_count": 1}
+            turn = battle.turn_of(task, 1)
+            turn.shrugging, turn.absorbed, turn.ended = (0.83,), (0.45,), True
+            turn = battle.turn_of(task, 2)
+            self.assertEqual(((0.83,), (0.45,)), (turn.shrugging, turn.absorbed))
+            task.node_status = {"node_count": 2}
+            turn = battle.turn_of(task, 2)
+            self.assertEqual(((), ()), (turn.shrugging, turn.absorbed))
+        # With no node to tell fights apart, the next turn may be the next fight's.
+        with upstream(hand("Strike")) as (utils_sortie, task):
+            battle.install()
+            turn = battle.turn_of(task, 1)
+            turn.shrugging, turn.absorbed, turn.ended = (0.83,), (0.45,), True
+            turn = battle.turn_of(task, 2)
+            self.assertEqual(((), ()), (turn.shrugging, turn.absorbed))
+
+    def test_the_frame_after_a_card_on_a_marked_enemy_teaches_nothing(self):
+        # A drop of 3 keeps the mark, and a hit that lands clears it, but the card was chosen against the mark either way.
+        for start, end, kept in ((6, 3, (0.566,)), (300, 195, ())):
+            with self.subTest(drop=start - end), upstream(hand("Strike", "Strike")) as (utils_sortie, task):
+                frames = [one(start), one(end)]
+                with mock.patch.object(board, "enemies", lambda task: frames[0]):
+                    battle.install()
+                    task.node_status = {"node_count": 1}
+                    battle.turn_of(task, 2).shrugging = (0.566,)
+                    utils_sortie._try_all_card_keys(task, 2)
+                    frames.pop(0)
+                    task.hand_cards = hand("Strike")
+                    utils_sortie._try_all_card_keys(task, 1)
+                    self.assertEqual(kept, getattr(task, battle.TURN).shrugging)
+                self.assertEqual({}, cards.HITS)
+                self.assertFalse(self.file.exists())
+
+    def test_a_kill_shot_one_of_several_enemies_shrugs_off_is_not_planned_again(self):
+        # Strike is aimed at the 8 on the right, one TAB from where the game raises it, and takes one point off it.
+        self.file.parent.mkdir(parents=True)
+        self.file.write_text(json.dumps(CALIBRATED), encoding="utf-8")
+        frames = [(Foe(0.55, 300, 4, None, True, True), Foe(0.75, 8, None, None, True, True)),
+                  (Foe(0.55, 300, 3, None, True, True), Foe(0.75, 7, None, None, True, True))]
+        rings = iter([0.62, 0.82])
+        with upstream(hand("Strike", "Strike")) as (utils_sortie, task), mock.patch.object(board, "enemies", lambda task: frames[0]), \
+                mock.patch.object(board, "reticle_x", lambda frame: next(rings, None)):
+            battle.install()
+            utils_sortie._try_all_card_keys(task, 2)
+            frames.pop(0)
+            task.hand_cards = hand("Strike")
+            utils_sortie._try_all_card_keys(task, 1)
+            self.assertEqual((0.75,), getattr(task, battle.TURN).shrugging)
+        plays = [line for line in task.logged if line.startswith("playing Strike")]
+        self.assertEqual([True, False], [line.endswith("to kill an enemy") for line in plays])
 
     def test_the_hits_an_earlier_run_saved_are_planned_on(self):
         self.file.parent.mkdir(parents=True)

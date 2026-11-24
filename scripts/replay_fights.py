@@ -107,12 +107,13 @@ def foes_of(foes):
                            foe["hp_source"] == "both") for foe in foes)
 
 
-def board_of(line, points):
+def board_of(line, points, shrugging=()):
     """Rebuild the board a plan was made against.
 
     Args:
         line: A plan line.
         points: The Action Points that call planned against.
+        shrugging: Where each enemy stands that shrugs off hits, as the fight's earlier lines showed them.
 
     Returns:
         The `cards.Board`.
@@ -120,7 +121,7 @@ def board_of(line, points):
     return cards.Board(action_points=points, weakness=line["weakness"], hand=tuple(card["name"] for card in line["hand"]),
                        played=tuple(line["played"]), last_turn=tuple(line["last_turn"]), battle=tuple(line["battle"]),
                        hand_size=line["hand_size"], kept=tuple(line["kept"]), invulnerable=line["invulnerable"], enemies=line["enemies"],
-                       health=line["after_hit"], foes=foes_of(line["foes"]), team=line["team_share"])
+                       health=line["after_hit"], foes=foes_of(line["foes"]), team=line["team_share"], shrugging=tuple(shrugging))
 
 
 @contextmanager
@@ -179,6 +180,9 @@ def replay(records):
         The report as a dict.
     """
     hits, decks = defaultdict(dict), {}
+    # Per fight, where each enemy stands that shrugs off hits and each that took one aimed hit whole, and the card its last plan line
+    # chose with its kill target and board.
+    shrugging, absorbed, chosen = defaultdict(tuple), defaultdict(tuple), {}
     report = {"plans": 0, "broken": 0, "calls": 0, "same": 0, "differ": [], "fights": 0, "fights_ended": 0, "outcomes": Counter(),
               "recorded": Counter(), "replayed": Counter(), "plays_per_turn": {}}
     plays = Counter()
@@ -191,6 +195,14 @@ def replay(records):
         if line["kind"] == "play":
             if line.get("result") == "played":
                 plays[(fight, line.get("turn"))] += 1
+            pending = chosen.pop(fight, None)
+            if pending and line.get("result") == "played" and line.get("seen") == "hand" and line.get("card") == pending[0]:
+                try:
+                    with as_recorded(hits[fight], decks.get(fight, {})):
+                        shrugging[fight], absorbed[fight] = cards.shrugging_after(*pending, foes_of(line.get("foes") or ()), absorbed[fight])
+                except (KeyError, TypeError, ValueError, AttributeError):
+                    # A play line cut short or edited by hand says nothing about what the card did, so the fight's memory stays as it was.
+                    pass
             continue
         if fight not in decks:
             report["fights"] += 1
@@ -201,7 +213,7 @@ def replay(records):
                 raise TypeError(f"deck is a {type(deck).__name__}")
             hits[fight].update(line.get("hits") or {})
             decks[fight] = deck
-            replan(line, hits[fight], decks[fight], report)
+            chosen[fight] = replan(line, hits[fight], decks[fight], report, shrugging[fight])
         except (KeyError, TypeError, ValueError, IndexError, AttributeError):
             # Valid JSON that is no plan line this code can rebuild, such as one cut short or edited by hand.
             report["broken"] += 1
@@ -212,7 +224,7 @@ def replay(records):
     return report
 
 
-def replan(line, hits, deck, report):
+def replan(line, hits, deck, report, shrugging=()):
     """Re-run every plan one plan line holds and add what it finds to the report.
 
     Args:
@@ -220,13 +232,20 @@ def replan(line, hits, deck, report):
         hits: The hits its fight's lines have carried so far.
         deck: The deck texts its fight's lines have carried so far.
         report: The report being built.
+        shrugging: Where each enemy stands that shrugs off hits, as the fight's earlier lines showed them.
+
+    Returns:
+        The card the bot chose, the x of the enemy the first plan re-run aims it at as a kill, None when it aims it at none, and the
+        board it was chosen against, for `cards.shrugging_after`; None when the bot chose nothing.
     """
     hand = hand_of(line)
-    calls = []
+    calls, aims = [], {}
     with as_recorded(hits, deck):
         for call in line["plans"]:
-            state = board_of(line, call["ap"])
+            state = board_of(line, call["ap"], shrugging)
             plan = cards.plan([hand[at] for at in call["offered"]], state)
+            if not calls:
+                aims = {card["name"]: card["target"] for card in reversed(plan) if card.get("kills")}
             calls.append((call, state, [card["name"] for card in plan], [at for at, card in enumerate(plan) if card.get("kills")]))
         report["plans"] += 1
         replayed = next((now[0] for _, _, now, _ in calls if now), None)
@@ -244,6 +263,9 @@ def replan(line, hits, deck, report):
             kill = bool(first_kills)
             count(report["recorded"], chosen and chosen["name"], kill, bool(chosen and chosen["kills"]), first)
             count(report["replayed"], replayed, kill, kill, first)
+            if chosen:
+                return chosen["name"], aims.get(chosen["name"]), first
+    return None
 
 
 def count(tally, name, kill, killing, state):

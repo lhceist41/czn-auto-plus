@@ -427,7 +427,7 @@ class Turn:
     a frame or two - so it is read once and kept, and a turn that never manages to read one keeps trying.
     """
 
-    def __init__(self, hand_count, last_turn=(), kept=(), earlier=(), fight=None, retrieved=(), status=None):
+    def __init__(self, hand_count, last_turn=(), kept=(), earlier=(), fight=None, retrieved=(), status=None, shrugging=((), ())):
         """Start a turn that has learnt nothing yet.
 
         Args:
@@ -438,6 +438,7 @@ class Turn:
             fight: The fight it belongs to, from `fight_of`.
             retrieved: How many times each card has come back to hand this battle, from the turn before.
             status: The task's `node_status` the fight began under, None in a mode that keeps none.
+            shrugging: Where each enemy stands that shrugs off hits this fight, and each that took one aimed hit whole, from the turn before.
         """
         self.hand_count = hand_count
         self.fight = fight
@@ -447,8 +448,12 @@ class Turn:
         self.retrieved = collections.Counter(retrieved)
         self.attempted = None
         self.attempted_copies = 0
-        # The enemies the card tried was chosen against, so the frame that shows it played can say what it did to them.
-        self.attempted_foes = ()
+        # The board the card tried was chosen against and the enemy a planned kill aimed it at, so the frame that shows it played can
+        # say what it did to them.
+        self.attempted_board = None
+        self.attempted_target = None
+        # Where each enemy stands that shrugs off hits and each that took one aimed hit whole, from `cards.shrugging_after`, kept for the fight.
+        self.shrugging, self.absorbed = shrugging
         # The draw toasts up when that card's key was pressed, so one it brings up can be told from those already there.
         self.draws_at_press = 0
         self.refused = set()
@@ -1311,7 +1316,8 @@ def turn_of(task, hand_count):
             fight_log.resolved(task, turn.attempted, "played", "deal")
         # With no node to tell fights apart, the battle is only known back to the turn before.
         earlier = (*turn.earlier, *played) if fight is not None else played
-        turn = Turn(hand_count, played, turn.hand, earlier, fight, turn.retrieved if fight is not None else (), status)
+        turn = Turn(hand_count, played, turn.hand, earlier, fight, turn.retrieved if fight is not None else (), status,
+                    (turn.shrugging, turn.absorbed) if fight is not None else ((), ()))
         setattr(task, TURN, turn)
     turn.hand_count = hand_count
     return turn
@@ -1477,7 +1483,15 @@ def install():
 
         drew = bool(cards.DRAW.search(cards.description(turn.attempted or ""))) and draws_shown(task) > turn.draws_at_press
         if turn.attempted is not None and not was_refused(turn.attempted, turn.attempted_copies, names, drew):
-            hit = cards.note_hit(turn.attempted, turn.attempted_foes, foes)
+            chosen_on = turn.attempted_board or cards.Board()
+            shrugging, turn.absorbed = cards.shrugging_after(turn.attempted, turn.attempted_target, chosen_on, foes, turn.absorbed)
+            for x in sorted(set(shrugging) - set(turn.shrugging)):
+                task.log_info(f"the enemy at {x:.3f} shrugged off {turn.attempted}, so no kill is planned on it this fight")
+            for x in sorted(set(turn.shrugging) - set(shrugging)):
+                task.log_info(f"the enemy at {x:.3f} lost HP to a hit after all, so kills are planned on it again")
+            turn.shrugging = shrugging
+            # The marks the card was chosen against count too, so the frame that clears one teaches nothing.
+            hit = cards.note_hit(turn.attempted, chosen_on.foes, foes, (*chosen_on.shrugging, *shrugging))
             if hit is not None:
                 task.log_info(f"{turn.attempted} hit for {hit:.0f} per 100% printed, {len(cards.HITS[cards.owner(turn.attempted)])} hit(s) seen")
                 save_hits()
@@ -1523,7 +1537,7 @@ def install():
             task.log_info(f"turn opens with {budget}, {turn.enemies} enemy counter(s), {against}, hand {names}")
         state = cards.Board(action_points=points, weakness=turn.weakness, hand=tuple(names), played=tuple(turn.played),
                             last_turn=turn.last_turn, battle=(*turn.earlier, *turn.played), hand_size=count or 0, kept=turn.kept, invulnerable=turn.invulnerable, enemies=turn.enemies or 1,
-                            health=board.team_after_hit(frame_of(task)), foes=foes, team=team_share(task))
+                            health=board.team_after_hit(frame_of(task)), foes=foes, team=team_share(task), shrugging=turn.shrugging)
         task.log_info(f"board {board_line(state, unread)}")
         made = []
         card = choose(hand, state, turn.refused, made)
@@ -1563,7 +1577,8 @@ def install():
                       f"worth {cards.value(name, state):.0f}{', to kill an enemy' if card.get('kills') else ''}")
         turn.attempted = name
         turn.attempted_copies = names.count(name)
-        turn.attempted_foes = state.foes
+        turn.attempted_board = state
+        turn.attempted_target = card.get("target")
         turn.draws_at_press = draws_shown(task)
         tested.played(name)
         if not play_key(task, card["key"], name, card.get("target"), tuple(foe.x for foe in state.foes), state.enemies > len(state.foes)):
