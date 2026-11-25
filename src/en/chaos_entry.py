@@ -4,7 +4,7 @@ Upstream starts Chaos only on the Team Formation or inside a run, and stops it o
 shown or faded), the Chaos hub, the Chaos Manifestation map or the prompt to resume an open run, Chaos now presses the one
 caption each of those screens leads on with: the Lobby's Chaos, the hub's Chaos Manifestation, the map's The Blue Pot and
 the prompt's Enter. The Blue Pot's detail and the Formation are pressed by `handle_enter` as before. A target pressed three
-times without the screen moving on, a refused word under a press, and a map without The Blue Pot stop the run. A run Story handed over never walks.
+times without the screen moving on, a refused word under a press, and a map still without The Blue Pot after a few seconds stop the run. A run Story handed over never walks.
 
 The resume prompt also carries Escape, which abandons the open run, and Cancel. Only the Enter box read left of both is
 ever pressed there.
@@ -60,11 +60,17 @@ PLANET_REGION = (0.20, 0.62, 0.50, 0.72)
 RESUME_LINE = "enterthestageinprogress"
 RESUME_LINE_REGION = (0.30, 0.79, 0.70, 0.87)
 RESUME_ENTER_REGION = (0.55, 0.87, 0.72, 0.95)
-# Parked on Chaos for one run: how often each target was pressed, and when the faded Lobby was last woken.
+# Parked on Chaos for one run: how often each target was pressed, when the faded Lobby was last woken, and since when the
+# map has read without The Blue Pot.
 TAPS = "_en_chaos_walk_taps"
 WOKEN = "_en_chaos_walk_woken"
-MARKS = (TAPS, WOKEN)
+NO_PLANET_SINCE = "_en_chaos_walk_no_planet_since"
+MARKS = (TAPS, WOKEN, NO_PLANET_SINCE)
 
+# How long the map may read its title and Content Introduction without The Blue Pot before Chaos stops. The map fades in
+# with those two legible first: one capture 2.5 s after that read still showed the planet barely visible. Kept under the
+# 10 s of an unchanged frame after which upstream's stuck handler, ahead of the walk, taps at random.
+PLANET_WAIT = 6
 NO_PLANET = "Stopped: Chaos could not find The Blue Pot on the Chaos Manifestation map. Open it in the game, then press Start again."
 
 _patched = False
@@ -161,18 +167,32 @@ def handle_resume_prompt(task):
 
 
 def handle_manifestation_planet(task):
-    """Open The Blue Pot from the Chaos Manifestation map, or stop on a map that does not show it."""
+    """Open The Blue Pot from the Chaos Manifestation map, or stop on a map that has not shown it for `PLANET_WAIT` seconds.
+
+    Until then the frame is held with nothing pressed, so no handler further down taps the map. Any other frame this
+    handler sees starts the wait afresh.
+    """
     if not walking(task) or box_in(task, reads_manifestation, MAP_TITLE_REGION) is None:
-        return False
+        return restart_planet_wait(task)
     if enter_box(task, BUTTON) is not None or resume_prompt(task):
-        return False
+        return restart_planet_wait(task)
     planet = box_in(task, reads_blue_pot, PLANET_REGION)
     if planet is not None:
+        restart_planet_wait(task)
         return press_box(task, PLANET, planet)
     # Only the map itself is a reason to stop: its title alone also shows while The Blue Pot's detail draws in.
     if text_in_region(task, *MAP_INTRODUCTION) is None:
-        return False
+        return restart_planet_wait(task)
+    now = time.monotonic()
+    if now - vars(task).setdefault(NO_PLANET_SINCE, now) < PLANET_WAIT:
+        return True
     return stop(task, NO_PLANET)
+
+
+def restart_planet_wait(task):
+    """Forget since when the map has read without The Blue Pot, and decline the frame by returning False."""
+    vars(task).pop(NO_PLANET_SINCE, None)
+    return False
 
 
 def handle_chaos_hub(task):

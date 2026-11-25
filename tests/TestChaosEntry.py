@@ -62,6 +62,9 @@ MAP_BACK = [("卡厄思显现", 0.176, 0.047), ("0/4+", 0.838, 0.049), ("N", 0.9
             ("Unconfirmed", 0.52, 0.31), ("2.", 0.873, 0.306), ("Chaos", 0.92, 0.345), ("Unconfirmed", 0.941, 0.309), ("The Blue Pot", 0.32, 0.676),
             ("?", 0.663, 0.678), ("Unconfirmed", 0.731, 0.679), ("Exploration: 15", 0.304, 0.728), ("Chaos", 0.709, 0.715), ("Small", 0.268, 0.767),
             ("Chaos Size", 0.866, 0.922)]
+# The same map still fading in: its title, top bar, Content Introduction and Chaos Size read, The Blue Pot not yet.
+FADING_MAP = [entry for entry in MAP if entry[0] in ("卡厄思显现", "0/4+", "N", "Content Introduction", "Chaos Size")]
+NO_PLANET = "Stopped: Chaos could not find The Blue Pot on the Chaos Manifestation map. Open it in the game, then press Start again."
 # The Blue Pot's detail, on the way in and on the way back out.
 DETAIL = [("卡厄思显现", 0.176, 0.045), ("0/4+", 0.84, 0.047), ("The Blue Pot", 0.76, 0.215), ("0", 0.967, 0.252),
           ("· A street in a city completely consumed", 0.833, 0.348), ("by Chaos.", 0.744, 0.381), ("· [Alert] The Chaos Order is inhabiting", 0.828, 0.491),
@@ -325,11 +328,53 @@ class TestManifestationMap(WalkCase):
         self.assertEqual([], task.clicks)
         self.assertEqual(0, task.stops)
 
-    def test_a_map_without_the_blue_pot_stops_with_nothing_pressed(self):
-        task = ChaosMode(without(MAP, "The Blue Pot"))
+    def test_a_fading_map_is_held_with_nothing_pressed_until_the_wait_is_up(self):
+        task = ChaosMode(FADING_MAP)
+        for seconds in (0, 2.5, chaos_entry.PLANET_WAIT - 0.1):
+            with self.subTest(seconds=seconds):
+                self.clock.now = START + seconds
+                self.assertTrue(chaos_entry.handle_manifestation_planet(task))
+                self.assertEqual([], task.clicks)
+                self.assertEqual(0, task.stops)
+                self.assertEqual([], task.notifications)
+
+    def test_the_blue_pot_drawing_in_during_the_wait_is_pressed(self):
+        task = ChaosMode(FADING_MAP)
         self.assertTrue(chaos_entry.handle_manifestation_planet(task))
-        self.assertEqual([], task.clicks)
-        self.assertStopped(task, "could not find The Blue Pot on the Chaos Manifestation map")
+        self.clock.now = START + 2.5
+        self.assertTrue(chaos_entry.handle_manifestation_planet(task.show(MAP)))
+        self.assertEqual([(0.32, 0.676)], task.clicks)
+        self.assertEqual(0, task.stops)
+
+    def test_a_map_still_without_the_blue_pot_once_the_wait_is_up_stops_with_nothing_pressed(self):
+        for label, texts in (("fading", FADING_MAP), ("drawn", without(MAP, "The Blue Pot"))):
+            with self.subTest(label):
+                self.clock.now = START
+                task = ChaosMode(texts)
+                self.assertTrue(chaos_entry.handle_manifestation_planet(task))
+                self.clock.now = START + chaos_entry.PLANET_WAIT
+                self.assertTrue(chaos_entry.handle_manifestation_planet(task))
+                self.assertEqual([], task.clicks)
+                self.assertStopped(task, NO_PLANET)
+
+    def test_the_stop_line_is_unchanged(self):
+        self.assertEqual(NO_PLANET, chaos_entry.NO_PLANET)
+
+    def test_another_screen_between_two_fading_maps_starts_the_wait_afresh(self):
+        for label, texts in (("the hub", HUB), ("the detail", DETAIL), ("the detail still drawing its Enter", without(DETAIL, "进入")),
+                             ("the drawn map", MAP_BACK), ("the resume prompt over the map", FADING_MAP + RESUME)):
+            with self.subTest(label):
+                self.clock.now = START
+                task = ChaosMode(FADING_MAP)
+                self.assertTrue(chaos_entry.handle_manifestation_planet(task))
+                self.clock.now = START + chaos_entry.PLANET_WAIT - 1
+                chaos_entry.handle_manifestation_planet(task.show(texts))
+                task.clicks.clear()
+                self.assertTrue(chaos_entry.handle_manifestation_planet(task.show(FADING_MAP)))
+                self.clock.now = START + chaos_entry.PLANET_WAIT + 1
+                self.assertTrue(chaos_entry.handle_manifestation_planet(task))
+                self.assertEqual([], task.clicks)
+                self.assertEqual(0, task.stops)
 
 
 class TestResumePrompt(WalkCase):
@@ -455,10 +500,11 @@ class TestPress(WalkCase):
         for method in ("enable", "disable"):
             with self.subTest(method):
                 task = Task()
-                vars(task).update({chaos_entry.TAPS: {"x": 3}, chaos_entry.WOKEN: START})
+                vars(task).update({chaos_entry.TAPS: {"x": 3}, chaos_entry.WOKEN: START, chaos_entry.NO_PLANET_SINCE: START})
                 self.assertEqual(f"{method}d", getattr(task, method)())
                 self.assertNotIn(chaos_entry.TAPS, vars(task))
                 self.assertNotIn(chaos_entry.WOKEN, vars(task))
+                self.assertNotIn(chaos_entry.NO_PLANET_SINCE, vars(task))
 
 
 def pressing(name):
