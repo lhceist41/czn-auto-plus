@@ -127,6 +127,62 @@ MISSION = (
     ("生命值", 0.757, 0.445), ("273 >", 0.905, 0.445), ("277", 0.956, 0.445), ("0/32", 0.758, 0.791), ("150,000", 0.944, 0.842),
     ("Clear the Promotion Mission [Veteran Captain]", 0.852, 0.920),
 )
+# Selena's Stats tab below her cap; her Level Up panel before and after Auto Register; the first frame of its result card,
+# its title alone; the card whole; and the Promotion panel the game opened on its own once Level Up reached the cap, its
+# counter's red `1` of `1/32` dropped by OCR, then not read at all. Then her Stats tab at 30/30, her Partners tab (Rosaria
+# at 20/20) and her Potential map.
+SELENA_STATS = (
+    ("Detailsi", 0.139, 0.046), ("N", 0.972, 0.030), ("Selena", 0.765, 0.166), ("A", 0.742, 0.213), ("Stats", 0.121, 0.259),
+    ("Lv.20/30", 0.768, 0.259), ("Cards", 0.124, 0.351), ("Stats", 0.753, 0.332), ("攻击力", 0.759, 0.377), ("320", 0.959, 0.378),
+    ("Partners", 0.133, 0.444), ("防御力", 0.765, 0.425), ("72", 0.963, 0.425), ("生命值", 0.758, 0.471), ("170", 0.960, 0.473),
+    ("回", 0.098, 0.514), ("Save Data", 0.140, 0.538), ("Critical Chance", 0.789, 0.519), ("3.0%", 0.954, 0.519),
+    ("Critical Damage", 0.790, 0.567), ("125.0%", 0.947, 0.566), ("Potential", 0.134, 0.631), ("Memory Fragments", 0.173, 0.725),
+    ("Ego Manifestation", 0.169, 0.818), ("30610 TB", 0.915, 0.819), ("Growth Guide", 0.185, 0.922), ("Level Up", 0.861, 0.922),
+)
+SELENA_LEVEL = (
+    ("Details ?", 0.139, 0.045), ("□", 0.755, 0.044), ("2667K", 0.837, 0.049), ("N", 0.973, 0.031), ("Level Up", 0.851, 0.119),
+    ("Lv.20", 0.751, 0.207), ("0/1500", 0.953, 0.215), ("攻击力", 0.757, 0.294), ("320", 0.957, 0.294), ("防御力", 0.762, 0.344),
+    ("72", 0.961, 0.344), ("生命值", 0.757, 0.394), ("170", 0.958, 0.394), ("0/649", 0.754, 0.717), ("0/250", 0.819, 0.718),
+    ("0/28", 0.882, 0.718), ("□", 0.745, 0.769), ("0", 0.968, 0.769), ("Auto Register", 0.852, 0.837), ("Level Up", 0.859, 0.920),
+)
+SELENA_REGISTERED = (
+    ("Details i", 0.139, 0.044), ("□", 0.755, 0.044), ("2667K", 0.836, 0.049), ("N", 0.973, 0.031), ("Level Up", 0.852, 0.120),
+    ("Lv.20+10", 0.768, 0.206), ("+434000/1500", 0.921, 0.214), ("攻击力", 0.757, 0.295), ("320", 0.899, 0.294), ("360", 0.957, 0.295),
+    ("防御力", 0.762, 0.343), ("72 >", 0.908, 0.344), ("83", 0.961, 0.345), ("生命值", 0.757, 0.394), ("170 >", 0.906, 0.394),
+    ("205", 0.957, 0.394), ("0/649", 0.754, 0.717), ("0/250", 0.820, 0.717), ("22/28", 0.882, 0.717), ("□", 0.744, 0.769),
+    ("13,020", 0.948, 0.769), ("Auto Register", 0.852, 0.838), ("Level Up", 0.859, 0.920),
+)
+SELENA_LEVELLED_DRAWING = (("Level Up", 0.561, 0.350),)
+SELENA_LEVELLED = (
+    ("Level Up", 0.561, 0.350), ("攻击力", 0.556, 0.438), ("320", 0.738, 0.436), ("360", 0.834, 0.438), ("防御力", 0.562, 0.498),
+    ("72", 0.733, 0.498), (">", 0.796, 0.498), ("83", 0.839, 0.498), ("生命值", 0.556, 0.561), ("170", 0.737, 0.560), (">", 0.795, 0.559),
+    ("205", 0.834, 0.559), ("点击屏幕关闭窗口", 0.500, 0.938),
+)
+SELENA_RETURN = (("Return item", 0.501, 0.378), ("√", 0.499, 0.881), ("点击屏幕关闭窗口", 0.501, 0.935), ("进入", 0.499, 0.978))
+SELENA_MISSION = (
+    ("Details i", 0.139, 0.044), ("62", 0.715, 0.047), ("□", 0.756, 0.045), ("2654K", 0.836, 0.048), ("N", 0.973, 0.031),
+    ("Promotions", 0.853, 0.121), ("八八", 0.948, 0.201), ("Lv.30/30", 0.785, 0.259), ("Lv.30/40", 0.922, 0.259), ("攻击力", 0.757, 0.344),
+    ("360 >", 0.904, 0.344), ("376", 0.957, 0.345), ("防御力", 0.762, 0.395), ("83 >", 0.909, 0.395), ("89", 0.961, 0.397),
+    ("生命值", 0.757, 0.445), ("205 >", 0.905, 0.446), ("209", 0.957, 0.445), ("/32", 0.758, 0.791), ("150,000", 0.944, 0.842),
+    ("Clear the Promotion Mission [Veteran Captain]", 0.852, 0.920),
+)
+SELENA_MISSION_NO_COUNTER = tuple(("：", 0.354, 0.696) if text == "/32" else (text, x, y) for text, x, y in SELENA_MISSION)
+SELENA_STATS_30 = edited(SELENA_STATS, ("Lv.20/30", "Lv.30/30"), ("320", "360"), ("72", "83"), ("170", "205"), ("Level Up", "Promotions"))
+SELENA_PARTNERS = (
+    ("Details ?", 0.139, 0.045), ("N", 0.973, 0.030), ("Rosaria", 0.799, 0.118), ("日", 0.966, 0.116), ("AAAAA", 0.766, 0.170),
+    ("Stats", 0.122, 0.258), ("Lv.20/20", 0.769, 0.217), ("In Formation", 0.903, 0.219), ("Check Stats", 0.781, 0.296), ("Cards", 0.124, 0.350),
+    ("Partners", 0.131, 0.443), ("Lv.1", 0.753, 0.451), ("Lv.1", 0.826, 0.452), ("Lv.1", 0.889, 0.453), ("Financial Support Lv. 1", 0.848, 0.505),
+    ("Save Data", 0.140, 0.538), ("Q", 0.757, 0.540), ("Partner Passives", 0.821, 0.540), ("KRanger Additional Effect", 0.819, 0.588),
+    ("く", 0.965, 0.587), ("Potential", 0.134, 0.631), ("Increase the assigned Combatant's", 0.846, 0.648), ("Attack by 8%.", 0.779, 0.677),
+    ("Memory Fragments", 0.172, 0.724), ("Ego Manifestation", 0.168, 0.817), ("Growth Guide", 0.184, 0.921), ("强化", 0.804, 0.924),
+    ("Change", 0.938, 0.925),
+)
+SELENA_MAP = (
+    ("Detailsi", 0.139, 0.046), ("25", 0.781, 0.049), ("N", 0.973, 0.031), ("Stats", 0.121, 0.258), ("Cards", 0.124, 0.351),
+    ("Partners", 0.133, 0.444), ("0/10", 0.411, 0.480), ("0/5", 0.545, 0.482), ("0/5", 0.682, 0.453), ("Save Data", 0.140, 0.538),
+    ("Potential", 0.133, 0.630), ("0/10", 0.428, 0.679), ("Memory Fragments", 0.173, 0.724), ("03-1", 0.522, 0.744),
+    ("Ego Manifestation", 0.170, 0.815), ("Growth Guide", 0.184, 0.922), ("5/10", 0.441, 0.888),
+)
 # `Obtain by Merging`'s dialog and its Items Obtained: never reached by the step, read here only to show nothing is pressed.
 MERGE_DIALOG = (
     ("Confirm Merge", 0.501, 0.286), ("Would you like to use the above materials to gain 2 Advanced Striker Manual so that this option can be", 0.499, 0.568),
@@ -206,6 +262,8 @@ PARTNER_MISSION = (
     ("+2", 0.961, 0.395), ("Ego Manifestation", 0.098, 0.444), ("生命值", 0.756, 0.445), ("+44 >", 0.905, 0.445), ("+49", 0.957, 0.445),
     ("8/12", 0.759, 0.791), ("□", 0.744, 0.842), ("28,000", 0.947, 0.841), ("Clear thePtinissioIteepn]", 0.852, 0.919),
 )
+# Selena's Partner Rosaria's Promotion panel at 20/20, 8/12 certificates, offering to replenish.
+ROSARIA_REPLENISH = edited(PARTNER_MISSION, ("Clear thePtinissioIteepn]", "Replenish Materials"))
 # Mei Lin's Potential map, node 02 at 5/10.
 MAP = (
     ("Details i", 0.139, 0.045), ("2企", 0.843, 0.048), ("N", 0.973, 0.031), ("品-", 0.132, 0.194), ("Stats", 0.120, 0.258),
@@ -329,9 +387,15 @@ class Invest(Daily):
         visit.update(checked=True, arrived=True, phase=phase, below_cap=False)
         return visit
 
-    def lines(self):
+    def goal_file(self):
         with open(self.goals_file, encoding="utf-8") as file:
             return json.load(file)
+
+    def lines(self):
+        return self.goal_file()["lines"]
+
+    def units_read(self):
+        return {row["unit"]: row["read"] for row in self.goal_file()["units"]}
 
     def assertNeverPressed(self):
         for under in self.task.under:
@@ -391,6 +455,20 @@ class TestReaders(unittest.TestCase):
         for text in ("15/15", "70,000", "2656K", "Lv.20/20", "LV.20/30", "Promotions"):
             with self.subTest(text=text):
                 self.assertIsNone(self.read(invest.promotion_panel, without(PROMOTION_READY, text)))
+
+    def test_a_short_panel_reads_though_ocr_dropped_its_counter_s_red_first_number(self):
+        """Selena's self-opened panel read `/32` or no counter at all for 30 s. Its button is not `Promotions`, so it is short
+        either way; a `Promotions` button still needs the whole counter. Negative control: Mei Lin's `0/32` reads its numbers."""
+        for screen in (SELENA_MISSION, SELENA_MISSION_NO_COUNTER):
+            with self.subTest(screen=screen[-3][0]):
+                panel = self.read(invest.promotion_panel, screen)
+                self.assertEqual(("combatant", 30, 30, 40, None, None, 150_000, 2_654_000), panel[:8])
+                self.assertEqual("the button reads 'Clear the Promotion Mission [Veteran Captain]'", invest.promotion_go(panel, 0))
+                self.assertFalse(invest.held_by_units(panel, invest.promotion_go(panel, 0)))
+        self.assertEqual((0, 32), self.read(invest.promotion_panel, MISSION)[4:6])
+        ready_unread = edited(PROMOTION_READY, ("15/15", "/15"))
+        self.assertIsNone(self.read(invest.promotion_panel, ready_unread))
+        self.assertIsNotNone(self.read(invest.promotion_panel, replaced_at(ready_unread, (0.860, 0.920), "Replenish Materials")))
 
     def test_the_units_header_reads_thousands_with_k_or_whole_units(self):
         """`2656K`, and under a million `888,680` or plain digits; a million-style or garbled header is no read."""
@@ -557,21 +635,22 @@ class TestGoalFile(unittest.TestCase):
         self.addCleanup(folder.cleanup)
         self.path = os.path.join(folder.name, "data", "farm_goals.json")
 
-    def test_the_file_is_json_with_one_short_action_per_line(self):
+    def test_the_file_is_json_with_one_goal_unit_and_one_short_action_per_line(self):
+        units = [{"unit": "Mei Lin", "read": invest.VISITED}, {"unit": "Selena", "read": invest.UNVISITED}]
         lines = [invest.goal_line("Mei Lin", invest.PROMOTION, 13, 15, 70_000, "Obtain by Merging", "Combatant Promotion Materials - Striker", "t"),
                  invest.goal_line("Mei Lin", invest.NODE_02, 6, 3, 12_000, "Promotion required", "", "t")]
-        invest.write_goals(lines, self.path)
+        invest.write_goals(units, lines, self.path)
         text = Path(self.path).read_text(encoding="utf-8")
-        self.assertEqual(lines, json.loads(text))
-        self.assertEqual(4, len(text.splitlines()))
-        self.assertEqual(["unit", "action", "have", "need", "units", "caption", "stage", "read_at"], list(json.loads(text)[0]))
+        self.assertEqual({"units": units, "lines": lines}, json.loads(text))
+        self.assertEqual(10, len(text.splitlines()))
+        self.assertEqual(["unit", "action", "have", "need", "units", "caption", "stage", "read_at"], list(json.loads(text)["lines"][0]))
 
     def test_no_short_action_writes_an_empty_list(self):
-        invest.write_goals([], self.path)
-        self.assertEqual([], json.loads(Path(self.path).read_text(encoding="utf-8")))
+        invest.write_goals([{"unit": "Mei Lin", "read": invest.VISITED}], [], self.path)
+        self.assertEqual({"units": [{"unit": "Mei Lin", "read": invest.VISITED}], "lines": []}, json.loads(Path(self.path).read_text(encoding="utf-8")))
 
     def test_a_write_that_fails_halfway_leaves_the_old_file_whole(self):
-        invest.write_goals([invest.goal_line("Mei Lin", invest.PROMOTION, 1, 2, 3, "c", "s", "t")], self.path)
+        invest.write_goals([], [invest.goal_line("Mei Lin", invest.PROMOTION, 1, 2, 3, "c", "s", "t")], self.path)
         before = Path(self.path).read_bytes()
         real_dumps = json.dumps
         calls = []
@@ -583,13 +662,13 @@ class TestGoalFile(unittest.TestCase):
             return real_dumps(*args, **kwargs)
 
         with mock.patch.object(invest.json, "dumps", failing), self.assertRaises(OSError):
-            invest.write_goals([invest.goal_line("Selena", invest.PROMOTION, 1, 2, 3, "c", "s", "t")] * 3, self.path)
+            invest.write_goals([], [invest.goal_line("Selena", invest.PROMOTION, 1, 2, 3, "c", "s", "t")] * 3, self.path)
         self.assertEqual(before, Path(self.path).read_bytes())
         self.assertEqual(["farm_goals.json"], os.listdir(os.path.dirname(self.path)))
 
     def test_the_negative_control_a_direct_write_would_leave_half_a_file(self):
         """Writing straight into the file, the same failure leaves it cut short: the file beside it is what keeps it whole."""
-        invest.write_goals([invest.goal_line("Mei Lin", invest.PROMOTION, 1, 2, 3, "c", "s", "t")], self.path)
+        invest.write_goals([], [invest.goal_line("Mei Lin", invest.PROMOTION, 1, 2, 3, "c", "s", "t")], self.path)
         before = Path(self.path).read_bytes()
         with self.assertRaises(OSError), mock.patch.object(invest.json, "dumps", side_effect=OSError("disk full")):
             with open(self.path, "w", encoding="utf-8") as file:
@@ -1123,6 +1202,96 @@ class TestLevelHold(Invest):
         self.earlier(STATS)
         self.selena_levels()
         self.assertPressed(daily.AUTO_REGISTER, daily.LEVEL_UP)
+
+
+class TestLevelUpToTheCap(Invest):
+    """Selena's visit as the game showed it: Level Up to her cap, its result card (its first frame only its title), the
+    `Return item` card, then the next Promotion panel opened by the game itself, its mission caption over a counter OCR misread."""
+
+    goals = ("Mei Lin", "Selena", "Mika", "Rei")
+
+    def after_mei_lin(self):
+        """Stand where the list shows Selena's card next, Mei Lin's visit ended."""
+        self.visiting("Mei Lin", phase=daily.TO_POTENTIAL)
+        daily.end_visit(self.task)
+
+    def to_cap(self, drawing=True):
+        """Selena's card, Stats, Level Up to the cap, its cards; with `drawing`, the result card's first frame is its title alone."""
+        return ([LIST, SELENA_STATS, SELENA_LEVEL] + [SELENA_REGISTERED] * SETTLED + ([SELENA_LEVELLED_DRAWING] if drawing else [])
+                + [SELENA_LEVELLED, SELENA_RETURN])
+
+    def assertCardsAndPressed(self, *targets):
+        """Check the first tap was Selena's card, the last Mika's when given as UNIT_CARD, and the taps between were these targets."""
+        self.assertAlmostEqual(0.501 - invest.CARD_LEFT_OF_NAME, self.task.clicks[0][0], delta=0.002)
+        clicks = self.task.clicks[1:]
+        if targets[-1] == daily.UNIT_CARD:
+            self.assertAlmostEqual(0.799 - invest.CARD_LEFT_OF_NAME, clicks[-1][0], delta=0.002)
+            clicks, targets = clicks[:-1], targets[:-1]
+        self.task.clicks = clicks
+        self.assertPressed(*targets)
+
+    REST = [SELENA_STATS_30, SELENA_PARTNERS, ROSARIA_REPLENISH, SELENA_PARTNERS, SELENA_MAP] + [SELENA_NODE_01_DONE] * SETTLED + [SELENA_MAP, LIST]
+
+    def test_the_self_opened_promotion_panel_gets_only_the_back_arrow_and_the_step_goes_on_to_the_next_unit(self):
+        """The mission panel is left by the back arrow at once, Selena's visit runs on, and Mika's card is pressed next.
+        Negative control: with the panel's counter required again, the panel is a screen Daily does not know and it stops."""
+        self.after_mei_lin()
+        self.run_screens(self.to_cap() + [SELENA_MISSION, SELENA_MISSION_NO_COUNTER] + self.REST)
+        self.assertNeverPressed()
+        self.assertCardsAndPressed(daily.OPEN_LEVEL_UP, daily.AUTO_REGISTER, daily.LEVEL_UP, daily.RESULT_CLOSE, daily.RESULT_CLOSE,
+                                   daily.PANEL_LEAVE, daily.PARTNERS_TAB, daily.PARTNER_UPGRADE, daily.PANEL_LEAVE, daily.POTENTIAL_TAB,
+                                   daily.NODE_01_ENTRY, daily.NODE_LEAVE, daily.DETAILS_LEAVE, daily.UNIT_CARD)
+        self.assertEqual(0, self.task.disabled)
+        inv = daily.invest_state(self.task)
+        self.assertEqual([("Selena", invest.LEVEL)], inv["spends"])
+        self.assertEqual("Mika", inv["visit"]["unit"])
+        self.assertEqual({"Mei Lin": invest.VISITED, "Selena": invest.VISITED, "Mika": invest.UNVISITED, "Rei": invest.UNVISITED}, self.units_read())
+        self.task = InvestTask(self.goals)
+        self.to_invest()
+        self.after_mei_lin()
+        whole = invest.promotion_panel
+
+        def counter_needed(task):
+            panel = whole(task)
+            return None if panel is not None and panel.have is None else panel
+
+        with mock.patch.object(invest, "promotion_panel", counter_needed):
+            self.run_screens(self.to_cap() + [SELENA_MISSION] * (daily.UNKNOWN_SECONDS + 1))
+        self.assertStopped("does not know this screen")
+
+    def test_with_the_name_read_the_self_opened_panel_writes_its_mission_line_and_presses_only_the_back_arrow(self):
+        """No half-drawn card drops the name check, so the panel is read: short, written without a stage and a counter, and left."""
+        self.after_mei_lin()
+        self.run_screens(self.to_cap(drawing=False) + [SELENA_MISSION, SELENA_STATS_30])
+        self.assertNeverPressed()
+        self.assertCardsAndPressed(daily.OPEN_LEVEL_UP, daily.AUTO_REGISTER, daily.LEVEL_UP, daily.RESULT_CLOSE, daily.RESULT_CLOSE,
+                                   daily.PANEL_LEAVE, daily.PARTNERS_TAB)
+        line = next(line for line in self.lines() if line["unit"] == "Selena")
+        self.assertEqual((invest.PROMOTION, None, None, 150_000, "Clear the Promotion Mission [Veteran Captain]", ""),
+                         (line["action"], line["have"], line["need"], line["units"], line["caption"], line["stage"]))
+        self.assertEqual({"Mei Lin": invest.VISITED, "Selena": invest.PARTIAL, "Mika": invest.UNVISITED, "Rei": invest.UNVISITED}, self.units_read())
+        self.assertIn("Selena: level, short: promotion counter unread (Clear the Promotion Mission [Veteran Captain])",
+                      daily.invest_summary(daily.invest_state(self.task)))
+
+    def test_a_stop_midway_leaves_the_lines_read_and_the_units_not_reached_marked_unvisited(self):
+        """Daily stops on a screen it does not know in Selena's visit: the file holds her Partner's line, Selena partly read, Mika and Rei
+        unvisited. Negative control: written only once every unit is visited, the stop leaves no file."""
+        self.after_mei_lin()
+        stopped_in_visit = self.to_cap(drawing=False) + [SELENA_MISSION, SELENA_STATS_30, SELENA_PARTNERS, ROSARIA_REPLENISH]
+        self.run_screens(stopped_in_visit + [()] * (daily.UNKNOWN_SECONDS + 1))
+        self.assertStopped("does not know this screen")
+        self.assertEqual([("Selena", invest.PROMOTION), ("Selena", invest.PARTNER_PROMOTION)], [(line["unit"], line["action"]) for line in self.lines()])
+        self.assertEqual("Partner Promotion Materials - Ranger", self.lines()[1]["stage"])
+        self.assertEqual([{"unit": "Mei Lin", "read": invest.VISITED}, {"unit": "Selena", "read": invest.PARTIAL},
+                          {"unit": "Mika", "read": invest.UNVISITED}, {"unit": "Rei", "read": invest.UNVISITED}], self.goal_file()["units"])
+        self.task = InvestTask(self.goals)
+        self.to_invest()
+        os.remove(self.goals_file)
+        with mock.patch.object(daily, "save_goals", lambda task: None):
+            self.after_mei_lin()
+            self.run_screens(stopped_in_visit + [()] * (daily.UNKNOWN_SECONDS + 1))
+        self.assertStopped("does not know this screen")
+        self.assertFalse(os.path.exists(self.goals_file))
 
 
 class TestPartner(Invest):

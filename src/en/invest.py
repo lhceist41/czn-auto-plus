@@ -8,7 +8,8 @@ spend is allowed only when that caption equals the go word, read on the same pas
 in the header, and every other caption, known or not, counts as short.
 
 A screen is known only by its whole signature: each caption in its own region and every number parsed. Anything less is
-no screen at all, and Daily presses nothing on it.
+no screen at all, and Daily presses nothing on it. The one exception is a Promotion panel's counter under a button that is
+not the go word, which makes the panel short whatever the counter says.
 
 Positions are screen fractions read off the Global client's captures at 1920x1080.
 """
@@ -23,8 +24,12 @@ from src.en.game_quality import COMBATANT_CLASS
 from src.en.screen import centre_of, in_region
 from src.en.spend_guard import folded
 
-# What each goal unit is still short of, written whole at the end of every invest step with a goal list. `data/` is in `.gitignore`.
+# What each goal unit is still short of, and how far each was read, written whole whenever the invest step learns more, so a
+# stop midway keeps what was read. `data/` is in `.gitignore`.
 GOALS_FILE = os.path.join("data", "farm_goals.json")
+# How far a goal unit was read, as the goal file names it: its visit ran to its end; it began but ended early or was under
+# way when the step stopped, so the unit may be short of more than its lines say; or nothing of it was read.
+VISITED, PARTIAL, UNVISITED = "visited", "partial", "unvisited"
 
 # Every Details, panel and node screen writes what it is at the top left: `Details`, `Growth` over a Partner's panels and
 # `Potential` over a node panel, OCR adding a stray `i`, `?` or `C` after it.
@@ -226,6 +231,9 @@ def stats_screen(task):
 def promotion_panel(task):
     """Read a Promotions panel, a combatant's under `Details` or a Partner's under `Growth`, every number parsed.
 
+    OCR can drop the red first number of a short counter (`1/32` read as `/32`, or not at all). A button that is not
+    `Promotions` makes the panel short whatever the counter says, so such a panel still reads, its counter None.
+
     Returns:
         A `Panel`, or None when any part does not read.
     """
@@ -235,9 +243,10 @@ def promotion_panel(task):
     now = only_match(task, LEVEL_PAIR, LEVEL_NOW_REGION)
     after = only_match(task, LEVEL_PAIR, LEVEL_NEXT_REGION)
     have_need, cost, units, caption = counter(task), cost_in(task, COST_REGION), units_held(task), corner_box(task)
-    if None in (now, after, have_need, cost, units, caption):
+    if None in (now, after, cost, units, caption) or (have_need is None and folded(caption.name) == PROMOTE_WORD):
         return None
-    return Panel(owner, int(now.group(1)), int(now.group(2)), int(after.group(2)), *have_need, cost, units, folded(caption.name), caption)
+    have, need = have_need or (None, None)
+    return Panel(owner, int(now.group(1)), int(now.group(2)), int(after.group(2)), have, need, cost, units, folded(caption.name), caption)
 
 
 def panel_owner(task):
@@ -442,6 +451,8 @@ def promotion_go(panel, floor):
     """
     if panel.caption != PROMOTE_WORD:
         return f"the button reads {panel.caption_box.name.strip()!r}"
+    if panel.have is None:
+        return "the counter did not read"
     if panel.have < panel.need:
         return f"{panel.have}/{panel.need}"
     return blocked(panel.cost, panel.units, floor)
@@ -466,7 +477,7 @@ def node_go(node, floor):
 
 def held_by_units(panel, reason):
     """Say whether a Combatant's Promotion panel was ready but for the Units: `Promotions` over a met counter, held back only by the floor or an unread header."""
-    return reason is not None and panel.caption == PROMOTE_WORD and panel.have >= panel.need
+    return reason is not None and panel.caption == PROMOTE_WORD and panel.have is not None and panel.have >= panel.need
 
 
 def level_go(panel, floor):
@@ -558,13 +569,17 @@ def level_allowed(units, index, held):
     return not any(unit in held for unit in units[:index])
 
 
-def write_goals(lines, path=None):
-    """Write the goal file whole, one short action per line, so a reader never meets half of it.
+def write_goals(units, lines, path=None):
+    """Write the goal file whole, one goal unit and one short action per line, so a reader never meets half of it.
+
+    The file is an object: `units` names every goal unit with how far it was read, and `lines` holds the short actions.
+    A unit with no line is short of nothing only when it reads `visited`.
 
     The lines go to a file beside it first, which then replaces it in one step: a write that fails leaves the old file
     as it was.
 
     Args:
+        units: Each goal unit as `{"unit": name, "read": VISITED, PARTIAL or UNVISITED}`, in goal order.
         lines: The goal lines, in goal order.
         path: Where the file lives, `GOALS_FILE` when None.
     """
@@ -575,9 +590,14 @@ def write_goals(lines, path=None):
     partial = path + ".tmp"
     try:
         with open(partial, "w", encoding="utf-8") as file:
-            file.write("[\n" + ",\n".join(json.dumps(line, ensure_ascii=False) for line in lines) + ("\n" if lines else "") + "]\n")
+            file.write("{\n" + ",\n".join(f'"{key}": ' + listed(rows) for key, rows in (("units", units), ("lines", lines))) + "\n}\n")
         os.replace(partial, path)
     except BaseException:
         if os.path.exists(partial):
             os.remove(partial)
         raise
+
+
+def listed(rows):
+    """Write a JSON list one row per line."""
+    return "[\n" + ",\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + ("\n" if rows else "") + "]"

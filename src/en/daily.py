@@ -21,8 +21,8 @@ skill is ever pressed.
 With a goal list set, the last chore invests in the listed Combatants, one at a time in the list's order, from materials
 the account already holds: a Promotion, Level Up to the cap, the assigned Partner's Promotion and Level Up, Potential node
 01 on each and node 02 on the first. `invest` reads every panel, and a spend is pressed only when its button reads the go
-word on the same pass as a met counter and a Units cost that leaves the Units to keep. What each one is still short of is
-written to `invest.GOALS_FILE`. Nothing is merged, replenished, bought or dismantled.
+word on the same pass as a met counter and a Units cost that leaves the Units to keep. What each one is still short of, and
+how far each was read, is written to `invest.GOALS_FILE` as the step goes. Nothing is merged, replenished, bought or dismantled.
 
 Imported by ok-script before `ok_tasks/` is on `sys.path`, so upstream is reached only through `handlers.loaded`.
 """
@@ -637,11 +637,12 @@ def new_invest():
         visit under way, the units holding the shared materials back, the goal file's lines by unit and action, the spends
         made, the notes for the finish line, spends in a row that changed nothing, the screen showing and since when, the
         screen the last corner or node press was made on, the spend awaiting its effect, when and on what screen each
-        target was last pressed, whether every goal unit has been visited, and why the goal file could not be written.
+        target was last pressed, whether every goal unit has been visited, why the goal file could not be written, and how
+        far each goal unit whose visit ended was read.
     """
     return {"started": None, "goals": None, "floor": None, "index": 0, "visit": None, "held": set(), "lines": {}, "spends": [],
             "notes": [], "misses": 0, "screen": None, "since": None, "guard": None, "spend": None, "pressed": {}, "ended": False,
-            "unwritten": None}
+            "unwritten": None, "read": {}}
 
 
 def pending_step(task):
@@ -2271,6 +2272,8 @@ def end_visit(task, why=None):
         inv["held"].add(visit["unit"])
     visit["phase"], visit["checked"] = VISITED, False
     inv["index"] = visit["index"] + 1
+    inv["read"][visit["unit"]] = invest.UNVISITED if not visit["arrived"] else invest.VISITED if why is None else invest.PARTIAL
+    save_goals(task)
 
 
 def level_held(task):
@@ -2304,6 +2307,7 @@ def record_short(task, action, have, need, units, caption_box, reason):
     stage = invest.stage_for(visit["unit"], action, visit["partner"], caption)
     inv["lines"][(visit["unit"], action)] = invest.goal_line(visit["unit"], action, have, need, units, caption_box.name.strip(), stage,
                                                              datetime.now().isoformat(timespec="seconds"))
+    save_goals(task)
 
 
 def spend(task, target, box, action, signature, detail):
@@ -2370,16 +2374,36 @@ def awaiting_spend(task, signature):
 
 
 def end_invest(task):
-    """Write the goal file with every short action, in goal order, once every goal unit is visited. The step is done back on the Lobby."""
+    """Write the goal file a last time once every goal unit is visited. The step is done back on the Lobby."""
+    invest_state(task)["ended"] = True
+    save_goals(task)
+
+
+def save_goals(task):
+    """Write the goal file whole: how far each goal unit was read, and every short action so far, in goal order.
+
+    Written each time a line is kept or a visit ends, so a stop midway leaves what was read, and a goal unit not reached
+    reads as such rather than as one short of nothing.
+    """
     inv = invest_state(task)
-    inv["ended"] = True
     order = {unit: place for place, unit in enumerate(inv["goals"])}
     lines = [inv["lines"][key] for key in sorted(inv["lines"], key=lambda key: order.get(key[0], len(order)))]
+    units = [{"unit": unit, "read": unit_read(inv, unit)} for unit in inv["goals"]]
     try:
-        invest.write_goals(lines)
+        invest.write_goals(units, lines)
     except Exception as error:
         logger.warning(f"could not write {invest.GOALS_FILE}: {error}")
         inv["unwritten"] = str(error)
+    else:
+        inv["unwritten"] = None
+
+
+def unit_read(inv, unit):
+    """Say how far a goal unit was read: as its visit ended, partly while its name has been read on a visit under way, else not at all."""
+    if unit in inv["read"]:
+        return inv["read"][unit]
+    visit = inv["visit"]
+    return invest.PARTIAL if visit is not None and visit["unit"] == unit and visit["arrived"] else invest.UNVISITED
 
 
 def invest_summary(inv):
@@ -2399,7 +2423,8 @@ def invest_summary(inv):
         short = next((line for (who, _), line in inv["lines"].items() if who == unit), None)
         words = ", ".join(f"{action} x{count}" if count > 1 else action for action, count in spent.items()) or "nothing spent"
         if short is not None:
-            words += f", short: {short['action']} {short['have']}/{short['need']} ({short['caption']})"
+            counted = f"{short['have']}/{short['need']}" if short["have"] is not None else "counter unread"
+            words += f", short: {short['action']} {counted} ({short['caption']})"
         parts.append(f"{unit}: {words}")
     summary = "Invest: " + "; ".join(parts)
     stageless = [f"{line['unit']} {line['action']} ({line['caption']})" for line in inv["lines"].values() if not line["stage"]]
