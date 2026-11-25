@@ -43,6 +43,9 @@ LOST_TITLES = ("战斗失败",)
 # The Global client's own loss line, which it shows untranslated. It is matched as a whole box, as `battle` tells a result screen, so
 # longer text that holds the words ends no fight.
 LOST_LINES = (fold("Battle failed"),)
+# A won fight's result screen on Global, where no card reward comes up: the MVP beside the loot panel's title, both as
+# whole boxes, as `battle` tells a result screen. An exploration result shows the MVP and a promotion's detail the title on their own.
+WON_LINES = (fold("MVP"), fold("Reward"))
 # Whether an error with no fight to log it against has been logged this run.
 _warned = False
 
@@ -434,3 +437,6 @@ def settle(task, record):
         end(task, record, "won", "reward title")
     elif any(title in text for text in texts for title in LOST_TITLES) or any(fold(text) in LOST_LINES for text in texts):
         end(task, record, "lost", "defeat title")
+    elif all(line in {fold(text) for text in texts} for line in WON_LINES):
+        # Behind the loss, so a loss screen that also showed an MVP would still end lost.
+        end(task, record, "won", "result screen")

@@ -397,12 +397,24 @@ class TestRecorder(Recording):
                 self.fight(task_class=StoryMode, end_texts=[text for text, *_ in texts])
                 self.assertEqual(ends, self.ends())
 
+    def test_a_global_result_screen_ends_the_fight_won_only_with_the_mvp_beside_reward(self):
+        # A Story or Promotion win on Global shows no card reward. Either word alone, or inside longer text, leaves the fight open.
+        won = [("won", "result screen")]
+        for name, texts, ends in (("won", WIN_RESULT, won), ("other case and spacing", [(" mvp ",), ("REWARD",)], won),
+                                  ("exploration result", EXPLORATION_RESULT, []), ("promotion detail", PROMOTION_DETAIL, []),
+                                  ("battle frame", BATTLE_FRAME, []), ("mvp inside a line", [("Reward",), ("MVP Bonus",)], []),
+                                  ("lost beside an mvp", DEFEAT_RESULT + (("MVP",),), [("lost", "defeat title")])):
+            with self.subTest(name):
+                self.file.unlink(missing_ok=True)
+                self.fight(task_class=StoryMode, end_texts=[text for text, *_ in texts])
+                self.assertEqual(ends, self.ends())
+
     def test_a_title_that_ends_the_fight_drops_the_devour_flag(self):
         # Story counts no nodes, so only the end of the fight tells the next one, starting inside the gap, from the devouring boss's.
-        for title, ends in ((REWARD, True), ("战斗失败", True), ("Battle failed", True), ("Battle failed to sync", False),
-                            ("a hand prompt", False)):
+        for titles, ends in (((REWARD,), True), (("战斗失败",), True), (("Battle failed",), True), (("Battle failed to sync",), False),
+                             (("MVP", "Reward"), True), (("MVP",), False), (("a hand prompt",), False)):
             now = [100.0]
-            with self.subTest(title=title), upstream(hand()) as (utils_sortie, task), mock.patch.object(battle.time, "monotonic", lambda: now[0]):
+            with self.subTest(titles=titles), upstream(hand()) as (utils_sortie, task), mock.patch.object(battle.time, "monotonic", lambda: now[0]):
                 self.stand_up(utils_sortie, task, StoryMode)
                 task.node_status = None
                 with mock.patch.object(board, "devours_summons", lambda task: True):
@@ -410,10 +422,11 @@ class TestRecorder(Recording):
                 play_fight(utils_sortie, task, TWO_TURNS[:1], two_foes(), end_texts=None)
                 self.assertTrue(battle.fight_devours(task))
                 now[0] += 1
-                play_fight(utils_sortie, task, [], [], end_texts=(title,))
+                play_fight(utils_sortie, task, [], [], end_texts=titles)
                 now[0] += battle.DEVOUR_GAP - 2
                 self.assertEqual(not ends, battle.fight_devours(task, seen=True))
                 # The next fight's intro sets it again, and a frame off the battle screen after the ended fight leaves it standing.
+                task.all_texts = []
                 with mock.patch.object(board, "devours_summons", lambda task: True):
                     battle.handle_devour_text(task)
                 play_fight(utils_sortie, task, [], [], end_texts=("a hand prompt",))
