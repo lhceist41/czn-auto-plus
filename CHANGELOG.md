@@ -8,25 +8,41 @@ The newest changes come first. Each section is the day a change reached the proj
 
 ---
 
+## 2026-11-25
+
+Daily saves the screen it stops on when it does not know it, Chaos waits a moment for The Blue Pot on a map still fading in, and the fight record tells wins and losses on the Global client.
+
+### New
+
+- **Daily:** when Daily stops on a screen it does not know, it first saves that screen as a picture in the `logs\unknown` folder, named by the date and time, and the log names the file. Attach it when you report the stop. The stop and its message are as before, and if the picture cannot be saved, Daily still stops.
+
+### Fixed
+
+- **Chaos Manifestation:** on the walk from the Lobby, Chaos no longer stops on its first look at the Chaos Manifestation map while the map is still fading in. It waits up to 6 seconds with nothing pressed, opens The Blue Pot as soon as it reads, and only then stops with the usual message.
+- **Fights:** the fight record in the `data` folder now ends a fight on the Global client as lost when the screen shows Battle failed, and as won when its result screen shows MVP beside Reward, instead of leaving the result unknown when neither the team's HP nor a next fight in the same run told it.
+
 ## 2026-11-24
 
-Daily claims the Activity rewards, achievements, the Carnival's attendance and The Path of a Captain's tiers and can invest in the Combatants you name, Chaos opens the chests in event rooms, kill plans skip an enemy that shrugs off hits, and the bot presses nothing while a run's menu is open.
+Daily claims the Activity rewards, achievements, the Carnival's attendance and The Path of a Captain's tiers and can invest in the Combatants you name, Chaos opens the chests in event rooms, kill plans skip an enemy that shrugs off hits and hit a boss's summons with damage to all before it eats them, and the bot presses nothing while a run's menu is open or one of its safety rules is missing.
 
 ### New
 
 - **Daily:** after the mail, Daily claims every reward that reads ready in the Activity window: Growth Guide cards and stage rewards, the daily schedule's Claim All, finished weekly goals and milestones, and the Achievement Log's reward. Then it presses Claim All in each of the Achievement screen's four categories. A claim is pressed only while its button reads ready, never a Move button that leaves the window, and Daily stops when two claims in a row open nothing. The finish message counts what was taken: weekly goals, milestone tiers, Achievement Log levels, Carnival days and Path of a Captain tiers, even when one press took several, and names each Claim All press.
 - **Daily:** while the Nightmare Carnival runs, Daily opens it from the Lobby's banner and claims every pending attendance day with one press. It never presses Check-In Make-Up or the Exchange, and once the banner is gone the chore is skipped.
 - **Daily:** on the Event list, Daily opens The Path of a Captain before Dream Park and claims each tier your Captain level has reached.
-- **Daily:** new **Goal Combatants** and **Units to Keep** settings. With Goal Combatants set, Daily ends by investing in the listed Combatants, one at a time in the list's order, from materials and Units already owned: each one's Promotion, Level Up to the cap, its Partner's Promotion and Level Up, Potential node 01, and node 02 for the first in the list. A spend is pressed only when the game's button reads Promotions, Level Up or Activate, the counter shows enough and the Units left stay at or above Units to Keep (300,000 by default). Nothing is merged, replenished, dismantled or bought. A Combatant later in the list is not levelled while one before it is below its cap or has a Promotion ready that only Units to Keep holds back. What each Combatant is still short of goes to `data/farm_goals.json` and the finish message. Empty, the default, skips the step.
+- **Daily:** new **Goal Combatants** and **Units to Keep** settings. With Goal Combatants set, Daily ends by investing in the listed Combatants, one at a time in the list's order, from materials and Units already owned: each one's Promotion, Level Up to the cap, its Partner's Promotion and Level Up, Potential node 01, and node 02 for the first in the list. A spend is pressed only when the game's button reads Promotions, Level Up or Activate, the counter shows enough and the Units left stay at or above Units to Keep (300,000 by default). Activate is pressed once per node level, and a node's panel that shows again afterwards is left by its back arrow. Nothing is merged, replenished, dismantled or bought. A Combatant later in the list is not levelled while one before it is below its cap or has a Promotion ready that only Units to Keep holds back. What each Combatant is still short of goes to `data/farm_goals.json` and the finish message. Empty, the default, skips the step.
+- **Spending safety:** Chaos, Sortie, Story and Daily now check as they start that each of the bot's safety rules for that mode is in place, such as the ones that keep it off a run's Escape, heal only with Credits and claim Sortie loot with Reason only. When one is missing, the mode stops before any press and the notification reads "Safety guard missing:" with the rules' names.
 
 ### Changed
 
 - **Fights:** in the fights the bot plays itself, an enemy that loses only 1 or 2 HP to a hit planned to take 20 or more, or nothing to two such hits, such as the Aether Eater, is no longer aimed at as a kill, its share of damage that hits all enemies no longer counts toward a card's worth, and it teaches the bot no hit values. A later hit that takes 20 HP or more from it makes it a target again.
+- **Fights:** in the fights the bot plays itself, when a boss's intro or Enemy Info says it devours or kills the monsters beside it, cards that hit all enemies are played before the kills while one of its summons stands, and no hit on a single enemy is planned to kill a summon. Attacks that kill the boss for sure count as ending the fight, summons and all. This holds for that fight only and is forgotten once its result screen shows.
 - **Spending safety:** while a run's menu is open (Chaos Info or Stage Info) in Chaos, Sortie or Story, the bot presses nothing, so a misread caption can no longer press the menu's Escape, which abandons the run. Only the retreat that **First Floor Only**, or in Chaos **Farm a Specific Epiphany on Floor 1**, asks for is still allowed there, in Chaos and Sortie, and it does not leave the run yet (see Known issues).
 
 ### Fixed
 
 - **Chaos Manifestation:** in an Unidentified Area event such as the treasure room, the bot no longer presses the event's grey Enter, which made it treat the run as just started and stay in the room. It now opens the room's chests and carries on with Continue. A lit Enter is still pressed.
+- **Chaos Manifestation:** **Farm Gaps** and **Farm Starting Card** no longer try to restart a run on the Global client, which only opened the run's menu and left the run waiting there until the five-minute stop. The run plays on and the log says so once a run, and Farm Gaps leaves the Chaos start page's Adaptation Distortion switch as it is. Farm Gaps' card removal and Farm Starting Card's place at the top of the card reward priority stay as they were.
 - **Fights:** the bot no longer learns how hard a combatant hits from a card after which an enemy disappeared from the board, which could record a wrong value.
 
 ### Known issues
