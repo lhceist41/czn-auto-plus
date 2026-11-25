@@ -135,8 +135,13 @@ merges, replenishes, dismantles or buys, so a button offering one of those count
 promoted at most once a run, and a Combatant later in the list is not levelled while one before it is below its level cap
 or has a Promotion ready that only Units to Keep holds back, so the Combat Memories, Support Data and Units the first can
 use stay for it. What each one is
-still short of is written to `data/farm_goals.json` and named in the finish message. A Combatant whose card is not on the
-Combatant List's visible row is skipped. Empty, the default, skips this step.
+still short of is written to `data/farm_goals.json` and named in the finish message. The file is written again each time
+Daily learns more, so a stop keeps what was read (a stop before Daily first writes it leaves the file from the run
+before). It marks each Goal Combatant `visited`, `partial` or `unvisited`. The marks say how far each visit got, not
+that every panel was read: any Combatant may be short of more than its lines show, above all one marked `partial`. A
+Promotion panel whose button does not read Promotions is left by its back arrow even when its counter does not read;
+where the finish message names it as short, it says "counter unread". A Combatant whose card is not on the Combatant
+List's visible row is skipped. Empty, the default, skips this step.
 
 ### Chaos Manifestation
 

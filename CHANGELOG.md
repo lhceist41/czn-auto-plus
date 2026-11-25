@@ -10,7 +10,7 @@ The newest changes come first. Each section is the day a change reached the proj
 
 ## 2026-11-25
 
-Daily saves the screen it stops on when it does not know it, Chaos waits a moment for The Blue Pot on a map still fading in, and the fight record tells wins and losses on the Global client.
+Daily saves the screen it stops on when it does not know it and goes on investing after a Level Up reaches the cap, Chaos waits a moment for The Blue Pot on a map still fading in, and the fight record tells wins and losses on the Global client.
 
 ### New
 
@@ -18,8 +18,10 @@ Daily saves the screen it stops on when it does not know it, Chaos waits a momen
 
 ### Fixed
 
-- **Chaos Manifestation:** on the walk from the Lobby, Chaos no longer stops on its first look at the Chaos Manifestation map while the map is still fading in. It waits up to 6 seconds with nothing pressed, opens The Blue Pot as soon as it reads, and only then stops with the usual message.
-- **Fights:** the fight record in the `data` folder now ends a fight on the Global client as lost when the screen shows Battle failed, and as won when its result screen shows MVP beside Reward, instead of leaving the result unknown when neither the team's HP nor a next fight in the same run told it.
+- **Chaos Manifestation:** on the walk from the Lobby, Chaos no longer stops on its first look at the Chaos Manifestation map while the map is still fading in. It waits up to 6 seconds with nothing pressed and opens The Blue Pot as soon as it reads. Only when The Blue Pot still has not read after the wait does it stop, with the usual message.
+- **Fights:** the fight record in the `data` folder now ends a fight on the Global client as lost when the screen shows Battle failed, and as won when its result screen shows MVP beside Reward, instead of leaving the result unknown when neither a card reward, the team's HP nor a next fight in the same run told it.
+- **Daily:** with Goal Combatants set, Daily no longer stops on an unknown screen when a Level Up reaches the cap, the game opens that Combatant's Promotion panel by itself, its button reads something other than Promotions and its material counter does not read, for example a short counter whose red first number is missed. It leaves the panel by its back arrow and goes on to the Partner, Potential and the next Combatant. Nothing new can be spent: a panel whose button reads Promotions is still pressed only with its counter read whole. Where the finish message names such a Promotion as short, it says "counter unread".
+- **Daily:** `data/farm_goals.json` is now written each time Daily notes what a Goal Combatant is short of or finishes with one, and once more at the end, so a stop keeps what was read (a stop before the first note leaves the file from the run before). The file now lists every Goal Combatant first, marked `visited`, `partial` or `unvisited`, then the short actions. The marks say how far each visit got, not that every panel was read: any Combatant may be short of more than its lines show, above all one marked `partial`.
 
 ## 2026-11-24
 
