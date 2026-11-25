@@ -386,9 +386,21 @@ class TestRecorder(Recording):
         self.fight(end_texts=("战斗失败",))
         self.assertEqual(("lost", "defeat title"), (self.lines()[-1]["outcome"], self.lines()[-1]["why"]))
 
+    def test_the_global_defeat_line_ends_the_fight_lost_only_as_a_whole_box(self):
+        # Global shows the loss line untranslated. The other screens, and the words inside longer text, leave the fight open.
+        lost = [("lost", "defeat title")]
+        for name, texts, ends in (("lost", DEFEAT_RESULT, lost), ("other case and punctuation", [("Battle Failed.",)], lost),
+                                  ("defeat inside a line", [("Battle failed to sync",)], []), ("battle frame", BATTLE_FRAME, []),
+                                  ("promotion detail", PROMOTION_DETAIL, []), ("exploration result", EXPLORATION_RESULT, [])):
+            with self.subTest(name):
+                self.file.unlink(missing_ok=True)
+                self.fight(task_class=StoryMode, end_texts=[text for text, *_ in texts])
+                self.assertEqual(ends, self.ends())
+
     def test_a_title_that_ends_the_fight_drops_the_devour_flag(self):
         # Story counts no nodes, so only the end of the fight tells the next one, starting inside the gap, from the devouring boss's.
-        for title, ends in ((REWARD, True), ("战斗失败", True), ("a hand prompt", False)):
+        for title, ends in ((REWARD, True), ("战斗失败", True), ("Battle failed", True), ("Battle failed to sync", False),
+                            ("a hand prompt", False)):
             now = [100.0]
             with self.subTest(title=title), upstream(hand()) as (utils_sortie, task), mock.patch.object(battle.time, "monotonic", lambda: now[0]):
                 self.stand_up(utils_sortie, task, StoryMode)

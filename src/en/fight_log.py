@@ -18,6 +18,7 @@ import uuid
 from ok import Logger
 
 from src.en import board, cards, ego
+from src.en.quality import fold
 from src.en.screen import frame_of, in_region
 
 logger = Logger.get_logger(__name__)
@@ -39,6 +40,9 @@ FIGHT_GAP = 30
 # Titles that only come up after a fight: the card reward after a win, and upstream's own name for a loss.
 WON_TITLES = ("获得卡牌", "卡牌奖励")
 LOST_TITLES = ("战斗失败",)
+# The Global client's own loss line, which it shows untranslated. It is matched as a whole box, as `battle` tells a result screen, so
+# longer text that holds the words ends no fight.
+LOST_LINES = (fold("Battle failed"),)
 # Whether an error with no fight to log it against has been logged this run.
 _warned = False
 
@@ -428,5 +432,5 @@ def settle(task, record):
     texts = [box.name for box in getattr(task, "all_texts", None) or []]
     if any(title in text for text in texts for title in WON_TITLES):
         end(task, record, "won", "reward title")
-    elif any(title in text for text in texts for title in LOST_TITLES):
+    elif any(title in text for text in texts for title in LOST_TITLES) or any(fold(text) in LOST_LINES for text in texts):
         end(task, record, "lost", "defeat title")
