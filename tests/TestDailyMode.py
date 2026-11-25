@@ -12,6 +12,7 @@ import ast
 import importlib
 import re
 import sys
+import tempfile
 import textwrap
 import types
 import unittest
@@ -854,6 +855,13 @@ class Daily(unittest.TestCase):
         patcher = mock.patch.object(daily, "time", self.clock)
         patcher.start()
         self.addCleanup(patcher.stop)
+        # A screen Daily stops on without knowing it is saved, so no test may reach the real `logs/unknown`.
+        root = tempfile.TemporaryDirectory()
+        self.addCleanup(root.cleanup)
+        self.unknown_folder = Path(root.name) / "logs" / "unknown"
+        patcher = mock.patch.object(daily, "UNKNOWN_FOLDER", self.unknown_folder)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.task = Task()
 
     def tick(self, seconds=1):
@@ -1456,6 +1464,26 @@ class TestTutorial(Daily):
 
 class TestStops(Daily):
 
+    UNKNOWN_STOP = "Stopped: Daily does not know this screen and pressed nothing for 30s. Go back to the Lobby, then press Start again."
+
+    def setUp(self):
+        super().setUp()
+        patcher = mock.patch.object(daily, "logger")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def unknown_frame(self):
+        frame = np.zeros((HEIGHT, WIDTH, 3), dtype=np.uint8)
+        frame[100:200, 300:500] = (10, 200, 30)
+        return frame
+
+    def stay_unknown(self, frame):
+        """Show a screen Daily does not know for `UNKNOWN_SECONDS`, one pass a second, then once more."""
+        for elapsed in range(daily.UNKNOWN_SECONDS):
+            self.assertTrue(run_pass(self.task.show(SETTINGS, frame)), elapsed)
+            self.tick()
+        self.assertTrue(run_pass(self.task))
+
     def test_an_unknown_screen_gets_no_press_and_stops_after_thirty_seconds(self):
         for elapsed in range(30):
             self.assertTrue(run_pass(self.task.show(SETTINGS)), elapsed)
@@ -1472,6 +1500,54 @@ class TestStops(Daily):
         self.tick()
         run_pass(self.task.show(SETTINGS))
         self.assertEqual(0, self.task.disabled)
+
+    def test_the_unknown_stop_saves_its_frame_once_before_it_stops(self):
+        folder, frame = self.unknown_folder, self.unknown_frame()
+        for elapsed in range(daily.UNKNOWN_SECONDS):
+            run_pass(self.task.show(SETTINGS, frame))
+            self.assertFalse(folder.exists(), elapsed)
+            self.tick()
+        self.assertTrue(run_pass(self.task))
+        saved = list(folder.iterdir())
+        self.assertEqual(1, len(saved), saved)
+        self.assertRegex(saved[0].name, r"^\d{4}-\d{2}-\d{2}_\d{6}\.png$")
+        self.assertTrue(np.array_equal(frame, cv2.imdecode(np.fromfile(saved[0], np.uint8), cv2.IMREAD_COLOR)))
+        self.assertEqual([], self.task.clicks)
+        self.assertStopped(self.UNKNOWN_STOP)
+        self.assertEqual([self.UNKNOWN_STOP], self.task.notifications)
+        self.assertIn(str(saved[0]), daily.logger.info.call_args.args[0])
+        daily.logger.warning.assert_not_called()
+
+    def test_a_failed_save_still_stops_with_the_same_message_and_leaves_no_file(self):
+        def partial_write(path, data):
+            with open(path, "wb") as file:
+                file.write(data[:8])
+            raise OSError("disk full")
+
+        failures = {
+            "encoder": mock.patch.object(daily.cv2, "imencode", return_value=(False, None)),
+            "folder": mock.patch.object(Path, "mkdir", side_effect=OSError("access denied")),
+            "write": mock.patch.object(Path, "write_bytes", partial_write),
+        }
+        for name, failure in failures.items():
+            with self.subTest(failure=name):
+                self.task = Task()
+                daily.logger.reset_mock()
+                folder = self.unknown_folder
+                with failure:
+                    self.stay_unknown(self.unknown_frame())
+                self.assertEqual([], list(folder.iterdir()) if folder.exists() else [])
+                self.assertEqual([], self.task.clicks)
+                self.assertStopped(self.UNKNOWN_STOP)
+                self.assertEqual([self.UNKNOWN_STOP], self.task.notifications)
+                self.assertEqual(1, daily.logger.warning.call_count)
+
+    def test_an_unknown_stop_without_a_frame_still_stops_and_saves_nothing(self):
+        folder = self.unknown_folder
+        self.stay_unknown(None)
+        self.assertFalse(folder.exists())
+        self.assertStopped(self.UNKNOWN_STOP)
+        self.assertEqual(1, daily.logger.warning.call_count)
 
     def test_a_rescue_screen_or_dialog_stops_at_once_with_nothing_pressed(self):
         for screen in (RESCUE, PAID_RESCUE):

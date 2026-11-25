@@ -31,6 +31,7 @@ import math
 import re
 import time
 from collections import Counter, namedtuple
+from contextlib import suppress
 from datetime import datetime
 from pathlib import Path
 
@@ -461,6 +462,8 @@ CAPTAIN_CLAIMS = ("Claim Reward", (0.25, 0.89, 0.99, 0.94))
 # Lobby whose UI has faded out after a few idle seconds, which OCR reads as nothing but the odd low-confidence scrap:
 # `rort` at 0.585 off the art on one capture, against 0.8 and up for every caption Daily reads.
 UNKNOWN_SECONDS = 30
+# Where the frame of that stop goes, since a release run keeps no frames of its own.
+UNKNOWN_FOLDER = Path("logs") / "unknown"
 FADED_SECONDS = 20
 FADED_CONFIDENCE = 0.7
 # Right of this the Lobby writes its captions, Story to Combatants, and the right of its top bar. A faded Lobby reads at
@@ -2909,7 +2912,37 @@ def handle_daily_unknown_screen(task):
         state["unknown_since"] = now
     if now - state["unknown_since"] < UNKNOWN_SECONDS:
         return True
+    save_unknown_frame(task)
     return stop(task, f"Stopped: Daily does not know this screen and pressed nothing for {UNKNOWN_SECONDS}s. Go back to the Lobby, then press Start again.")
+
+
+def save_unknown_frame(task):
+    """Save the frame of the screen Daily stops on without knowing it, as a PNG in `UNKNOWN_FOLDER` named by the time.
+
+    Encoded in memory and written as bytes, since `cv2.imwrite` reports a failed write only by returning False. A failure
+    is logged, leaves no part of the file behind and changes nothing else.
+
+    Args:
+        task: The running task.
+    """
+    frame = frame_of(task)
+    if frame is None:
+        logger.warning("could not save the screen Daily does not know: there is no frame")
+        return
+    path = UNKNOWN_FOLDER / f"{datetime.now():%Y-%m-%d_%H%M%S}.png"
+    try:
+        encoded, png = cv2.imencode(".png", frame)
+        if not encoded:
+            raise ValueError("the PNG encoder returned nothing")
+        UNKNOWN_FOLDER.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(png.tobytes())
+    except Exception as error:
+        logger.warning(f"could not save the screen Daily does not know to {path}: {error}")
+        # The warning above already covers a part file that cannot be removed either.
+        with suppress(OSError):
+            path.unlink(missing_ok=True)
+        return
+    logger.info(f"saved the screen Daily does not know to {path}")
 
 
 # The run loop takes the first handler returning True. `remote` puts its handler first and `stuck_stop` its stop ahead
